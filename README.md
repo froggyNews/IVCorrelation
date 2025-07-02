@@ -1,5 +1,21 @@
 # IVCorrelation
 
+This repository contains helper functions for calculating option-related weights.
+
+## Correlation weights `ρ_i`
+The function `correlation_weights` computes a normalized weight for each stock
+based on its empirical return correlation with a theme proxy series. By
+default, absolute correlations are used so weights remain non‐negative and sum
+to one.
+
+## Liquidity weights `ω_i(K, T)`
+The function `liquidity_weights` produces strike‑ and maturity‑level liquidity
+weights using smoothed option volume. Volume is smoothed across neighbouring
+strikes before being normalized within each maturity.
+
+See `weights.py` for implementation details.
+=======
+=======
 This repository provides a small helper for combining normalized option
 volatility surfaces across multiple tickers into a synthetic ETF surface.
 
@@ -38,6 +54,7 @@ Run the script directly to see sample output:
 python pricing.py
 
 
+
 This repository provides a Python script to compute weighted implied volatility statistics across multiple days and tickers.
 
 The script `compute_volatility.py` expects a CSV file containing the following columns:
@@ -61,6 +78,7 @@ python compute_volatility.py your_data.csv -o output.csv
 ```
 
 If the `-o` option is omitted, results are printed to stdout.
+
 
 Utilities for processing implied volatility surfaces for correlation analysis.
 
