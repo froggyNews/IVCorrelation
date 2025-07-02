@@ -20,6 +20,24 @@ Where:
 The function returns a `(K, T)` grid for each trading day present in the
 input data.
 =======
+=======
+This repository contains utilities for smoothing implied volatility surfaces using thin-plate splines. Use `fit_spline.py` to fit continuous volatility surfaces from scattered data.
+=======
+
+This repository contains a simple option pricing example.
+
+## Scripts
+
+- `pricing.py` &ndash; example pricing utility providing conservative, baseline, 
+  and aggressive prices calculated using Black--Scholes or Bachelier models 
+  depending on the interest rate.
+
+Run the script directly to see sample output:
+
+```bash
+python pricing.py
+
+
 This repository provides a Python script to compute weighted implied volatility statistics across multiple days and tickers.
 
 The script `compute_volatility.py` expects a CSV file containing the following columns:
