@@ -1,0 +1,10 @@
+# Configuration for IVCorrelation
+peer_tickers:
+  quantum:
+    - QUBT
+    - IONQ
+    - RGTI
+D: 180  # number of trading days of history to collect
+min_maturity_days: 30
+max_maturity_days: 365
+output_dir: ./output
