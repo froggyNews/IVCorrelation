@@ -1,16 +1,21 @@
 # IVCorrelation
 
-This repository configures peer tickers and data collection parameters for
-implied volatility analysis.
 
-## Configuration
 
-Edit `config.yaml` to customize:
+This project provides a skeleton framework for constructing synthetic ETF volatility surfaces.
 
-- `peer_tickers` organized by theme, such as the default `quantum` tickers
-  (`QUBT`, `IONQ`, `RGTI`).
-- `D`: number of trading days of history to collect.
-- `min_maturity_days` and `max_maturity_days`: range for option maturities.
-- `output_dir`: directory where data should be written.
+The code base is organized into several modules:
 
-The provided configuration is an example and can be adjusted as needed.
+- **data_collection** – routines to download or scrape option chain data.
+- **preprocessing** – tools for building individual volatility surfaces.
+- **aggregation** – utilities for combining ETF surfaces into theme-level surfaces.
+- **smoothing** – helpers for surface smoothing and option pricing.
+- **validation** – backtesting and validation scripts.
+
+Run the pipeline using the package entry point:
+
+```bash
+python -m volsurf
+```
+
+Each module currently contains placeholder functions that should be filled in with concrete implementations.
