@@ -15,6 +15,46 @@ strikes before being normalized within each maturity.
 
 See `weights.py` for implementation details.
 =======
+=======
+This repository provides a small helper for combining normalized option
+volatility surfaces across multiple tickers into a synthetic ETF surface.
+
+The main entry point is `combine_surfaces` located in `src/synthetic_etf.py`.
+It implements the formula
+
+```
+σ_ETF(K, T) = sum_i[ρ_i * ω_i(K,T) * σ_i(K,T)] / sum_i[ρ_i * ω_i(K,T)]
+```
+
+Where:
+
+- `σ_i(K,T)` is the implied volatility surface for ticker `i` at strike `K`
+  and maturity `T`.
+- `ρ_i` is the weight assigned to each ticker.
+- `ω_i(K,T)` is an optional weight grid for each ticker.
+
+The function returns a `(K, T)` grid for each trading day present in the
+input data.
+=======
+=======
+This repository contains utilities for smoothing implied volatility surfaces using thin-plate splines. Use `fit_spline.py` to fit continuous volatility surfaces from scattered data.
+=======
+
+This repository contains a simple option pricing example.
+
+## Scripts
+
+- `pricing.py` &ndash; example pricing utility providing conservative, baseline, 
+  and aggressive prices calculated using Black--Scholes or Bachelier models 
+  depending on the interest rate.
+
+Run the script directly to see sample output:
+
+```bash
+python pricing.py
+
+
+
 This repository provides a Python script to compute weighted implied volatility statistics across multiple days and tickers.
 
 The script `compute_volatility.py` expects a CSV file containing the following columns:
