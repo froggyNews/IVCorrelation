@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 from pysabr import Hagan2002LognormalSABR, Hagan2002NormalSABR
 from sabr import hagan_lognormal_vol
+from svi import fit_svi_smile, svi_implied_vol
+from fit_spline import fit_surfaces
 
 
 def fit_sabr_smile(strikes, vols, f, t, beta=1.0):
@@ -130,7 +132,7 @@ def fit_sabr_smile(strikes, vols, f, t, beta=1.0):
         return None
 
 
-def weighted_stats(df):
+def weighted_stats(df, *, fit_method: str = "sabr"):
     """Compute weighted stats for each T (maturity).
 
     The DataFrame must contain columns:
@@ -159,26 +161,44 @@ def weighted_stats(df):
         variance = (w * (s - mean) ** 2).sum() / w_sum if w_sum > 0 else float('nan')
         std = variance ** 0.5 if w_sum > 0 else float('nan')
         
-        # SABR fitting for this maturity
         strikes = group['K'].values
         vols = group['sigma'].values
         f = strikes.mean() if len(strikes) > 0 else float('nan')
         t = group['T'].iloc[0] if len(group) > 0 else float('nan')
-        sabr_params = fit_sabr_smile(strikes, vols, f, t)
-        if sabr_params is not None:
-            alpha, beta, rho, nu = sabr_params
+
+        if fit_method == "svi":
+            params = fit_svi_smile(strikes, vols, f, t)
+            if params is None:
+                a = b = rho = m = sigma = float('nan')
+            else:
+                a, b, rho, m, sigma = params
+            return pd.Series({
+                'sigma_med': mean,
+                'sigma_std': std,
+                'sigma_low': s.min() if len(s) > 0 else float('nan'),
+                'sigma_high': s.max() if len(s) > 0 else float('nan'),
+                'svi_a': a,
+                'svi_b': b,
+                'svi_rho': rho,
+                'svi_m': m,
+                'svi_sigma': sigma,
+            })
         else:
-            alpha = beta = rho = nu = float('nan')
-        return pd.Series({
-            'sigma_med': mean,
-            'sigma_std': std,
-            'sigma_low': s.min() if len(s) > 0 else float('nan'),
-            'sigma_high': s.max() if len(s) > 0 else float('nan'),
-            'sabr_alpha': alpha,
-            'sabr_beta': beta,
-            'sabr_rho': rho,
-            'sabr_nu': nu,
-        })
+            sabr_params = fit_sabr_smile(strikes, vols, f, t)
+            if sabr_params is not None:
+                alpha, beta, rho, nu = sabr_params
+            else:
+                alpha = beta = rho = nu = float('nan')
+            return pd.Series({
+                'sigma_med': mean,
+                'sigma_std': std,
+                'sigma_low': s.min() if len(s) > 0 else float('nan'),
+                'sigma_high': s.max() if len(s) > 0 else float('nan'),
+                'sabr_alpha': alpha,
+                'sabr_beta': beta,
+                'sabr_rho': rho,
+                'sabr_nu': nu,
+            })
 
     # Group by T (maturity) only
     result = df.groupby('T').apply(agg).reset_index()
@@ -186,18 +206,49 @@ def weighted_stats(df):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compute weighted volatility statistics with SABR fitting")
-    parser.add_argument('csv', help='CSV file with columns K,T,sigma,corr_weight,liq_weight')
-    parser.add_argument('-o', '--output', help='Output CSV file (optional)')
-    parser.add_argument('--sabr-only', action='store_true', help='Output only SABR parameters')
+    parser = argparse.ArgumentParser(
+        description="Compute weighted volatility statistics with surface fitting"
+    )
+    parser.add_argument(
+        "csv",
+        help="CSV file with columns K,T,sigma,corr_weight,liq_weight",
+    )
+    parser.add_argument("-o", "--output", help="Output CSV or pickle file")
+    parser.add_argument(
+        "--fit-method",
+        choices=["sabr", "svi", "tps"],
+        default="sabr",
+        help="Fitting method: SABR (default), SVI, or thin-plate spline",
+    )
+    parser.add_argument(
+        "--sabr-only",
+        action="store_true",
+        help="Output only SABR parameters (if using SABR)",
+    )
     args = parser.parse_args()
 
     data = pd.read_csv(args.csv)
-    result = weighted_stats(data)
 
-    if args.sabr_only:
-        # Output only SABR parameters
-        sabr_cols = ['T', 'sabr_alpha', 'sabr_beta', 'sabr_rho', 'sabr_nu']
+    if args.fit_method == "tps":
+        pts = [tuple(row) for row in data[["K", "T", "sigma"]].values]
+        surfaces = fit_surfaces(pts, pts, pts)
+        if args.output:
+            import pickle
+
+            with open(args.output, "wb") as f:
+                pickle.dump(surfaces, f)
+        else:
+            k0 = float(data["K"].median())
+            t0 = float(data["T"].median())
+            print(
+                f"Median surface value at K={k0:.2f}, T={t0:.2f}: {surfaces[1](k0, t0):.4f}"
+            )
+        return
+
+    result = weighted_stats(data, fit_method=args.fit_method)
+
+    if args.fit_method == "sabr" and args.sabr_only:
+        sabr_cols = ["T", "sabr_alpha", "sabr_beta", "sabr_rho", "sabr_nu"]
         result = result[sabr_cols].dropna()
 
     if args.output:
