@@ -1198,8 +1198,32 @@ def add_correlation_confidence_bands(ax, strikes, vols, f, t, sabr_params, all_d
         lower_band = np.array(fitted_range) - margin_of_error
         
         # Plot confidence bands
-        ax.fill_between(strike_range, lower_band, upper_band, alpha=0.3, color='orange', 
-                       label=f'Correlation-Weighted {confidence_level*100:.0f}% Confidence')
+        ax.fill_between(
+            strike_range,
+            lower_band,
+            upper_band,
+            alpha=0.3,
+            color="orange",
+            label=f"Correlation-Weighted {confidence_level*100:.0f}% Confidence",
+        )
+
+        # Draw the individual bounds for clarity
+        ax.plot(
+            strike_range,
+            upper_band,
+            color="orange",
+            linestyle="--",
+            linewidth=1.5,
+            label="Weighted Upper Bound",
+        )
+        ax.plot(
+            strike_range,
+            lower_band,
+            color="orange",
+            linestyle="--",
+            linewidth=1.5,
+            label="Weighted Lower Bound",
+        )
         
         # Add correlation info
         ax.text(0.02, 0.70, f'Avg Correlation: {avg_correlation:.3f}\nAdjusted Std: {adjusted_std_error:.4f}', 
@@ -1405,7 +1429,12 @@ def plot_smile_with_correlation_ci_bands(ax, strikes, vols, f, t, sabr_params, a
 
 
 def add_correlation_confidence_bands_adjustable(ax, strikes, vols, f, t, sabr_params, all_data, weights, confidence_level=0.95):
-    """Add confidence bands based on correlation-weighted uncertainty with adjustable CI."""
+    """Add confidence bands based on correlation-weighted uncertainty with adjustable CI.
+
+    Besides filling the region between the bounds, this also draws dashed lines
+    for the individual upper and lower limits so the constituents of the band
+    are clearly labeled in the legend.
+    """
     if sabr_params is None:
         return
     
@@ -1442,8 +1471,32 @@ def add_correlation_confidence_bands_adjustable(ax, strikes, vols, f, t, sabr_pa
         lower_band = np.array(fitted_range) - margin_of_error
         
         # Plot confidence bands
-        ax.fill_between(strike_range, lower_band, upper_band, alpha=0.3, color='orange', 
-                       label=f'Correlation-Weighted {confidence_level*100:.0f}% Confidence')
+        ax.fill_between(
+            strike_range,
+            lower_band,
+            upper_band,
+            alpha=0.3,
+            color="orange",
+            label=f"Correlation-Weighted {confidence_level*100:.0f}% Confidence",
+        )
+
+        # Draw the individual bounds for clarity
+        ax.plot(
+            strike_range,
+            upper_band,
+            color="orange",
+            linestyle="--",
+            linewidth=1.5,
+            label="Weighted Upper Bound",
+        )
+        ax.plot(
+            strike_range,
+            lower_band,
+            color="orange",
+            linestyle="--",
+            linewidth=1.5,
+            label="Weighted Lower Bound",
+        )
         
         # Add correlation info
         ax.text(0.02, 0.55, f'Avg Correlation: {avg_correlation:.3f}\nAdjusted Std: {adjusted_std_error:.4f}\nCI Level: {confidence_level*100:.0f}%', 
