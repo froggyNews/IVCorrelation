@@ -1776,7 +1776,7 @@ def run_analysis_with_gui(target_ticker, reference_tickers, options):
                 print(f"Synthetic ETF constructed: {len(synthetic_df)} options")
                 
                 # Analyze synthetic ETF
-                analyze_synthetic_etf(synthetic_df)
+                analyze_synthetic_etf(synthetic_df, weights)
                 
                 # Run interactive browsers if selected
                 if options['run_interactive']:
@@ -1801,8 +1801,16 @@ def run_analysis_with_gui(target_ticker, reference_tickers, options):
     print(f"{'='*60}")
 
 
-def analyze_synthetic_etf(synthetic_df):
-    """Analyze the synthetic ETF data."""
+def analyze_synthetic_etf(synthetic_df, weights=None):
+    """Analyze the synthetic ETF data.
+
+    Parameters
+    ----------
+    synthetic_df : pandas.DataFrame
+        DataFrame containing the synthetic ETF options.
+    weights : dict, optional
+        Mapping of ticker -> weight used in construction.
+    """
     print(f"\nSynthetic ETF Analysis:")
     print(f"Total options: {len(synthetic_df)}")
     
@@ -1815,6 +1823,11 @@ def analyze_synthetic_etf(synthetic_df):
     
     print(f"Call maturities: {calls_df['T'].nunique()}")
     print(f"Put maturities: {puts_df['T'].nunique()}")
+
+    if weights:
+        print("\nTicker weights used in construction:")
+        for ticker, weight in weights.items():
+            print(f"  {ticker}: {weight:.3f}")
     
     # IV statistics
     print(f"\nCall IV stats:")
