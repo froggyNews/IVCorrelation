@@ -385,6 +385,7 @@ def interactive_sabr_smile_browser(df):
     import matplotlib.pyplot as plt
     from matplotlib.widgets import Button, Slider
     import numpy as np
+    import pandas as pd
     from compute_volatility import fit_sabr_smile
     from sabr import hagan_lognormal_vol
 
@@ -1233,8 +1234,24 @@ def add_correlation_confidence_bands(ax, strikes, vols, f, t, sabr_params, all_d
     except Exception as e:
         print(f"Warning: Could not add correlation confidence bands: {e}")
 
-def interactive_correlated_etf_browser(all_data, synthetic_df, weights=None):
-    """Interactive browser for correlated ETF analysis with calls/puts separation and CI slider."""
+def interactive_correlated_etf_browser(all_data, synthetic_df, weights=None, target_ticker=None, reference_tickers=None):
+    """Interactive browser for correlated ETF analysis with calls/puts separation and CI slider.
+
+    Parameters
+    ----------
+    all_data : dict
+        Mapping of ticker -> option DataFrame used to build the synthetic ETF.
+    synthetic_df : pandas.DataFrame
+        Aggregated synthetic ETF data with ``K``, ``T`` and ``sigma`` columns.
+    weights : dict, optional
+        Correlation based weights used for the ETF construction.
+    target_ticker : str, optional
+        The primary ticker used for the analysis. When provided the raw option
+        data for this ticker is plotted separately from the reference tickers.
+    reference_tickers : list[str], optional
+        List of tickers that make up the reference basket. Their data is
+        displayed using a different colour from the target.
+    """
     import matplotlib.pyplot as plt
     from matplotlib.widgets import Button, Slider
     import numpy as np
@@ -1296,17 +1313,50 @@ def interactive_correlated_etf_browser(all_data, synthetic_df, weights=None):
         if len(calls_data) > 0:
             call_moneyness = calls_data['moneyness'].values
             call_vols = calls_data['sigma'].values
-            
+
+            target_calls = None
+            ref_calls = None
+            if target_ticker and target_ticker in all_data:
+                df_target = all_data[target_ticker]
+                tdf = df_target[(df_target['T'] == T) & (df_target['type'] == 'call')]
+                if len(tdf) > 0:
+                    target_calls = (tdf['moneyness'].values, tdf['sigma'].values)
+
+            if reference_tickers:
+                ref_frames = []
+                for tick in reference_tickers:
+                    df_ref = all_data.get(tick)
+                    if df_ref is not None:
+                        rdf = df_ref[(df_ref['T'] == T) & (df_ref['type'] == 'call')]
+                        if len(rdf) > 0:
+                            ref_frames.append(rdf)
+                if ref_frames:
+                    ref_df = pd.concat(ref_frames)
+                    ref_calls = (ref_df['moneyness'].values, ref_df['sigma'].values)
+
             # Try SABR fit for calls
             if len(call_moneyness) >= 3:
                 f = call_moneyness.mean()
                 sabr_params = fit_sabr_smile(call_moneyness, call_vols, f, T)
-                
+
                 # Plot with correlation-based confidence bands
-                plot_smile_with_correlation_ci_bands(ax_calls, call_moneyness, call_vols, f, T, sabr_params, all_data, weights, "Synthetic ETF Calls", ci_level)
+                plot_smile_with_correlation_ci_bands(
+                    ax_calls,
+                    call_moneyness,
+                    call_vols,
+                    f,
+                    T,
+                    sabr_params,
+                    all_data,
+                    weights,
+                    "Synthetic ETF Calls",
+                    ci_level,
+                    target_data=target_calls,
+                    reference_data=ref_calls,
+                )
             else:
-                ax_calls.scatter(call_moneyness, call_vols, color='blue', alpha=0.6, s=20, label='Synthetic ETF Calls')
-                ax_calls.text(0.02, 0.98, 'Insufficient data for SABR fit', transform=ax_calls.transAxes, 
+                ax_calls.scatter(call_moneyness, call_vols, color='black', alpha=0.6, s=20, label='Synthetic ETF Calls')
+                ax_calls.text(0.02, 0.98, 'Insufficient data for SABR fit', transform=ax_calls.transAxes,
                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
         
         # Plot synthetic ETF puts
@@ -1314,17 +1364,50 @@ def interactive_correlated_etf_browser(all_data, synthetic_df, weights=None):
         if len(puts_data) > 0:
             put_moneyness = puts_data['moneyness'].values
             put_vols = puts_data['sigma'].values
-            
+
+            target_puts = None
+            ref_puts = None
+            if target_ticker and target_ticker in all_data:
+                df_target = all_data[target_ticker]
+                tdf = df_target[(df_target['T'] == T) & (df_target['type'] == 'put')]
+                if len(tdf) > 0:
+                    target_puts = (tdf['moneyness'].values, tdf['sigma'].values)
+
+            if reference_tickers:
+                ref_frames = []
+                for tick in reference_tickers:
+                    df_ref = all_data.get(tick)
+                    if df_ref is not None:
+                        rdf = df_ref[(df_ref['T'] == T) & (df_ref['type'] == 'put')]
+                        if len(rdf) > 0:
+                            ref_frames.append(rdf)
+                if ref_frames:
+                    ref_df = pd.concat(ref_frames)
+                    ref_puts = (ref_df['moneyness'].values, ref_df['sigma'].values)
+
             # Try SABR fit for puts
             if len(put_moneyness) >= 3:
                 f = put_moneyness.mean()
                 sabr_params = fit_sabr_smile(put_moneyness, put_vols, f, T)
-                
+
                 # Plot with correlation-based confidence bands
-                plot_smile_with_correlation_ci_bands(ax_puts, put_moneyness, put_vols, f, T, sabr_params, all_data, weights, "Synthetic ETF Puts", ci_level)
+                plot_smile_with_correlation_ci_bands(
+                    ax_puts,
+                    put_moneyness,
+                    put_vols,
+                    f,
+                    T,
+                    sabr_params,
+                    all_data,
+                    weights,
+                    "Synthetic ETF Puts",
+                    ci_level,
+                    target_data=target_puts,
+                    reference_data=ref_puts,
+                )
             else:
-                ax_puts.scatter(put_moneyness, put_vols, color='red', alpha=0.6, s=20, label='Synthetic ETF Puts')
-                ax_puts.text(0.02, 0.98, 'Insufficient data for SABR fit', transform=ax_puts.transAxes, 
+                ax_puts.scatter(put_moneyness, put_vols, color='black', alpha=0.6, s=20, label='Synthetic ETF Puts')
+                ax_puts.text(0.02, 0.98, 'Insufficient data for SABR fit', transform=ax_puts.transAxes,
                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
         
         # Set labels and title
@@ -1384,10 +1467,50 @@ def interactive_correlated_etf_browser(all_data, synthetic_df, weights=None):
     plt.show()
 
 
-def plot_smile_with_correlation_ci_bands(ax, strikes, vols, f, t, sabr_params, all_data, weights, title_prefix="", ci_level=0.95):
-    """Plot smile with SABR fit and correlation-based confidence bands with adjustable CI."""
-    # Plot observed data
-    ax.scatter(strikes, vols, color='blue', alpha=0.6, s=20, label='Observed')
+def plot_smile_with_correlation_ci_bands(
+    ax,
+    strikes,
+    vols,
+    f,
+    t,
+    sabr_params,
+    all_data,
+    weights,
+    title_prefix="",
+    ci_level=0.95,
+    target_data=None,
+    reference_data=None,
+):
+    """Plot smile with SABR fit and correlation-based confidence bands with adjustable CI.
+
+    Parameters
+    ----------
+    ax : matplotlib axis
+        Axis to plot on.
+    strikes, vols : array-like
+        Synthetic ETF observations for this maturity.
+    target_data : tuple(array, array), optional
+        Tuple of strikes and volatilities for the target ticker.
+    reference_data : tuple(array, array), optional
+        Tuple of strikes and volatilities for all reference tickers.
+    """
+    # Plot observed data from target and references if provided
+    if target_data is not None:
+        ts, tv = target_data
+        ax.scatter(ts, tv, color="blue", alpha=0.6, s=20, label="Observed Target")
+    if reference_data is not None:
+        rs, rv = reference_data
+        ax.scatter(rs, rv, color="green", alpha=0.6, s=20, label="Observed Reference")
+
+    # Plot synthetic observed points
+    ax.scatter(
+        strikes,
+        vols,
+        color="black",
+        alpha=0.6,
+        s=20,
+        label="Synthetic Observed",
+    )
     
     # Try SABR fit
     if sabr_params is not None:
@@ -1790,7 +1913,13 @@ def run_analysis_with_gui(target_ticker, reference_tickers, options):
                     
                     # Interactive correlated ETF browser
                     print("Opening interactive correlated ETF browser...")
-                    interactive_correlated_etf_browser(all_data, synthetic_df, weights)
+                    interactive_correlated_etf_browser(
+                        all_data,
+                        synthetic_df,
+                        weights,
+                        target_ticker=target_ticker,
+                        reference_tickers=reference_tickers,
+                    )
             else:
                 print("Failed to construct synthetic ETF")
         else:
