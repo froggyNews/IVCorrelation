@@ -1,0 +1,28 @@
+"""Download raw chains, enrich via pipeline, persist to DB."""
+from __future__ import annotations
+from typing import Iterable
+
+from .db_utils import get_conn, ensure_initialized, insert_quotes
+from .data_downloader import download_raw_option_data
+from .data_pipeline import enrich_quotes
+
+def save_for_tickers(tickers: Iterable[str], max_expiries: int = 8, r: float = 0.0, q: float = 0.0) -> int:
+    conn = get_conn()
+    ensure_initialized(conn)
+    total = 0
+    for t in tickers:
+        raw = download_raw_option_data(t, max_expiries=max_expiries)
+        if raw is None or raw.empty:
+            print(f"No raw rows for {t}")
+            continue
+        enriched = enrich_quotes(raw, r=r, q=q)
+        if enriched is None or enriched.empty:
+            print(f"No enriched rows for {t}")
+            continue
+        total += insert_quotes(conn, enriched.to_dict(orient="records"))
+        print(f"Inserted {t}: {len(enriched)} rows")
+    return total
+
+if __name__ == "__main__":
+    inserted = save_for_tickers(["SPY", "QQQ"], max_expiries=6, r=0.00, q=0.00)
+    print(f"Total inserted: {inserted}")

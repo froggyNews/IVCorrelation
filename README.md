@@ -1,0 +1,197 @@
+# CleanIV Correlation Analysis Tool
+
+A comprehensive Python application for analyzing implied volatility correlations across equity options markets. This tool provides advanced analytics for volatility surface construction, correlation analysis, and synthetic ETF modeling.
+
+## 🚀 Features
+
+### Core Analytics
+- **Implied Volatility Surface Construction**: Build clean, interpolated IV surfaces from raw options data
+- **Correlation Analysis**: Compute correlations across different modes (ATM, term structure, full surface)
+- **Synthetic ETF Modeling**: Create synthetic volatility surfaces using correlation-weighted combinations
+- **Greeks Calculation**: Full Black-Scholes Greeks computation with risk-free rates and dividend yields
+
+### Advanced Modeling
+- **SVI & SABR Volatility Models**: Fit industry-standard volatility models with confidence intervals
+- **ATM Pillar Analysis**: Extract and analyze at-the-money volatilities across standardized maturities
+- **Relative Value Analysis**: Compare target assets against synthetic benchmarks using correlation weights
+
+### Interactive GUI
+- **Real-time Data Browser**: Download and analyze options data with an intuitive interface
+- **Preset Management**: Save and load commonly used ticker combinations
+- **Multiple Plot Types**: Volatility smiles, term structures, correlation matrices, and synthetic surfaces
+- **Dynamic Overlays**: Compare target assets with correlation-weighted synthetic alternatives
+
+## 📦 Installation
+
+### Prerequisites
+- Python 3.11+
+- Virtual environment (recommended)
+
+### Setup
+```bash
+# Clone the repository
+git clone https://github.com/froggyNews/IVCorrelation.git
+cd IVCorrelation
+
+# Create and activate virtual environment
+python -m venv venv
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+## 🎯 Quick Start
+
+### Launch the GUI Application
+```bash
+python display/gui/browser.py
+```
+
+### Command Line Analysis
+```python
+from analysis.analysis_pipeline import *
+
+# Download and process data
+tickers = ["SPY", "QQQ", "AAPL", "MSFT"]
+ingest_and_process(tickers, max_expiries=6)
+
+# Build correlation-weighted synthetic ETF
+weights = {"AAPL": 0.3, "MSFT": 0.3, "GOOGL": 0.4}
+synthetic_surface = build_synthetic_surface(weights)
+
+# Compute volatility betas
+betas = compute_betas("iv_atm", benchmark="SPY")
+```
+
+## 🏗️ Project Structure
+
+```
+CleanIV_Correlation/
+├── analysis/           # Core analytics engine
+│   ├── analysis_pipeline.py    # Main orchestration
+│   ├── correlation_builder.py  # Correlation calculations
+│   ├── surface_builder.py      # IV surface construction
+│   ├── syntheticETFBuilder.py  # Synthetic ETF modeling
+│   └── pillars.py              # ATM pillar analysis
+├── data/               # Data management
+│   ├── data_downloader.py      # Yahoo Finance integration
+│   ├── data_pipeline.py        # Data enrichment
+│   ├── ticker_groups.py        # Preset management
+│   └── db_utils.py             # Database operations
+├── display/            # User interface
+│   ├── gui/                    # Tkinter GUI components
+│   └── plotting/               # Matplotlib visualizations
+├── volModel/           # Volatility modeling
+│   ├── sviFit.py              # SVI model implementation
+│   ├── sabrFit.py             # SABR model implementation
+│   └── volModel.py            # Unified model interface
+└── requirements.txt    # Dependencies
+```
+
+## 🔧 Key Components
+
+### Analysis Pipeline
+The `analysis_pipeline.py` provides a unified interface for:
+- Data ingestion and enrichment
+- Surface grid construction
+- Correlation analysis across multiple modes
+- Synthetic ETF construction
+- Relative value analysis
+
+### Volatility Models
+- **SVI Model**: Stochastic Volatility Inspired parameterization
+- **SABR Model**: Stochastic Alpha Beta Rho model
+- **Polynomial Fallback**: Robust local quadratic fitting
+
+### Database Schema
+SQLite-based storage with tables for:
+- Options quotes (enriched with Greeks)
+- Ticker group presets
+- Automated schema migrations
+
+## 📊 Usage Examples
+
+### GUI Preset Management
+1. **Load Preset**: Select from dropdown (e.g., "Tech Giants vs SPY")
+2. **Save Preset**: Enter tickers, click Save, provide name/description
+3. **Analyze**: Choose plot type and run correlation analysis
+
+### Correlation Analysis Modes
+- **Underlying (`ul`)**: Based on stock price returns
+- **IV ATM (`iv_atm`)**: Using at-the-money implied volatilities
+- **Surface (`surface`)**: Full volatility surface correlations
+
+### Synthetic ETF Construction
+```python
+# Build synthetic surface from correlation weights
+target = "SPY"
+peers = ["AAPL", "MSFT", "GOOGL", "AMZN"]
+synthetic = build_synthetic_surface_corrweighted(target, peers)
+```
+
+## 🎨 GUI Features
+
+### Preset Management
+- **Default Groups**: Tech Giants, Semiconductors, Financials, QQQ vs Tech
+- **Custom Presets**: Save your own ticker combinations
+- **Quick Load**: One-click preset application
+
+### Plot Types
+1. **Smile Plots**: K/S vs IV with model fits and confidence bands
+2. **Term Structure**: ATM vol vs time to expiry
+3. **Correlation Matrix**: Heatmaps with data quality indicators
+4. **Synthetic Surface**: Compare target vs synthetic smiles
+
+### Advanced Controls
+- Model selection (SVI/SABR)
+- Confidence interval levels
+- Time units (days/years)
+- Correlation weight modes
+- Pillar day customization
+
+## 🔬 Technical Details
+
+### Data Sources
+- **Yahoo Finance**: Real-time options data via `yfinance`
+- **Enrichment Pipeline**: Greeks, moneyness, ATM flagging
+- **Quality Filters**: Volume, bid-ask, expiry density
+
+### Correlation Methodologies
+- **Pearson/Spearman**: Configurable correlation methods
+- **Rolling Windows**: Lookback period customization
+- **Missing Data**: Robust handling with minimum period requirements
+
+### Performance Optimization
+- **LRU Caching**: In-memory caching for GUI responsiveness
+- **Parquet Export**: Fast reload for large datasets
+- **Vectorized Operations**: NumPy/Pandas optimizations
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Yahoo Finance for options data
+- Scientific Python ecosystem (NumPy, Pandas, SciPy, Matplotlib)
+- Volatility modeling research community
+
+## 📧 Contact
+
+For questions or collaboration opportunities, please open an issue or reach out through GitHub.
+
+---
+
+*Built with ❤️ for the quantitative finance community*
