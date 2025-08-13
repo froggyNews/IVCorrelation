@@ -35,6 +35,7 @@ from data.db_utils import get_conn
 from analysis.syntheticETFBuilder import build_surface_grids, DEFAULT_TENORS, DEFAULT_MNY_BINS
 from analysis.syntheticETFBuilder import combine_surfaces, build_synthetic_iv as build_synthetic_iv_pillars
 from analysis.correlation_builder import build_vol_betas, save_correlations, peer_weights_from_correlations
+from analysis.pca_builder import pca_weights
 from analysis.pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 
 
@@ -173,6 +174,90 @@ def build_synthetic_iv_series(
 ) -> pd.DataFrame:
     """Create a weighted ATM pillar IV time series."""
     return build_synthetic_iv_pillars(weights, pillar_days=pillar_days, tolerance_days=tolerance_days)
+
+
+def compute_peer_weights(
+    target: str,
+    peers: Iterable[str],
+    weight_mode: str = "iv_atm",
+    asof: str | None = None,
+    pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
+    tenor_days: Iterable[int] = DEFAULT_TENORS,
+    mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
+) -> pd.Series:
+    """Compute peer weights via correlation or PCA metrics vs a target."""
+    target = target.upper()
+    peers = [p.upper() for p in peers]
+    mode = (weight_mode or "iv_atm").lower()
+    if mode.startswith("pca"):
+        if asof is None:
+            dates = available_dates(ticker=target, most_recent_only=True)
+            asof = dates[0] if dates else None
+        if asof is None:
+            return pd.Series(dtype=float)
+        return pca_weights(
+            get_smile_slice=get_smile_slice,
+            mode=mode,
+            target=target,
+            peers=peers,
+            asof=asof,
+            pillars_days=pillar_days,
+            tenors=tenor_days,
+            mny_bins=mny_bins,
+        )
+    return peer_weights_from_correlations(
+        benchmark=target,
+        peers=peers,
+        mode=mode,
+        pillar_days=pillar_days,
+        tenor_days=tenor_days,
+        mny_bins=mny_bins,
+        clip_negative=True,
+        power=1.0,
+    )
+
+
+def build_synthetic_surface_corrweighted(
+    target: str,
+    peers: Iterable[str],
+    weight_mode: str = "iv_atm",
+    cfg: PipelineConfig = PipelineConfig(),
+    most_recent_only: bool = True,
+    asof: str | None = None,
+) -> Tuple[Dict[pd.Timestamp, pd.DataFrame], pd.Series]:
+    """Build synthetic surface where peer weights derive from correlation/PCA metrics."""
+    w = compute_peer_weights(
+        target=target,
+        peers=peers,
+        weight_mode=weight_mode,
+        asof=asof,
+        pillar_days=cfg.pillar_days,
+        tenor_days=cfg.tenors,
+        mny_bins=cfg.mny_bins,
+    )
+    surfaces = build_surfaces(tickers=list(w.index), cfg=cfg, most_recent_only=most_recent_only)
+    synth = combine_surfaces(surfaces, w.to_dict())
+    return synth, w
+
+
+def build_synthetic_iv_series_corrweighted(
+    target: str,
+    peers: Iterable[str],
+    weight_mode: str = "iv_atm",
+    pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLARS_DAYS,
+    tolerance_days: float = 7.0,
+    asof: str | None = None,
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """Build correlation/PCA-weighted synthetic ATM pillar IV series."""
+    w = compute_peer_weights(
+        target=target,
+        peers=peers,
+        weight_mode=weight_mode,
+        asof=asof,
+        pillar_days=pillar_days,
+    )
+    df = build_synthetic_iv_pillars(w.to_dict(), pillar_days=pillar_days, tolerance_days=tolerance_days)
+    return df, w
 
 
 # =========================
