@@ -20,6 +20,11 @@ from typing import Dict, Iterable, Optional, Tuple, List, Mapping, Union
 import json
 import os
 
+import sys
+from pathlib import Path
+import sqlite3
+
+
 import numpy as np
 import pandas as pd
 
@@ -37,6 +42,17 @@ from .syntheticETFBuilder import (
 )
 from .beta_builder import pca_weights, ul_betas, iv_atm_betas, surface_betas
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
+
+# Module-level read-only connection cache for lightweight queries
+_RO_CONN: Optional[sqlite3.Connection] = None
+
+
+def _get_ro_conn() -> sqlite3.Connection:
+    """Return a cached sqlite3 connection for read-only queries."""
+    global _RO_CONN
+    if _RO_CONN is None:
+        _RO_CONN = get_conn()
+    return _RO_CONN
 
 # =========================
 # Config (GUI friendly)
@@ -395,42 +411,50 @@ def get_atm_pillars_cached() -> pd.DataFrame:
     return atm
 
 
+@lru_cache(maxsize=1)
 def available_tickers() -> List[str]:
     """Unique tickers present in DB (for GUI dropdowns)."""
-    conn = get_conn()
-    tickers = pd.read_sql_query("SELECT DISTINCT ticker FROM options_quotes ORDER BY 1", conn)["ticker"].tolist()
+    conn = _get_ro_conn()
+    tickers = pd.read_sql_query(
+        "SELECT DISTINCT ticker FROM options_quotes ORDER BY 1", conn
+    )["ticker"].tolist()
     return tickers
 
 
+@lru_cache(maxsize=None)
 def available_dates(ticker: Optional[str] = None, most_recent_only: bool = False) -> List[str]:
-    """
-    Get available asof_date strings.
-    
-    Parameters:
-    -----------
-    ticker : Optional[str]
-        Filter by specific ticker
-    most_recent_only : bool
-        If True, return only the most recent date
-    """
-    conn = get_conn()
-    
+    """Get available asof_date strings."""
+
+    conn = _get_ro_conn()
+
     if most_recent_only:
         from data.db_utils import get_most_recent_date
         recent = get_most_recent_date(conn, ticker)
         return [recent] if recent else []
-    
+
     base = "SELECT DISTINCT asof_date FROM options_quotes"
     if ticker:
-        df = pd.read_sql_query(f"{base} WHERE ticker = ? ORDER BY 1", conn, params=[ticker])
+        df = pd.read_sql_query(
+            f"{base} WHERE ticker = ? ORDER BY 1", conn, params=[ticker]
+        )
     else:
         df = pd.read_sql_query(f"{base} ORDER BY 1", conn)
     return df["asof_date"].tolist()
 
 
+def invalidate_cache() -> None:
+    """Clear cached ticker/date queries and reset shared connection."""
+    available_tickers.cache_clear()
+    available_dates.cache_clear()
+    global _RO_CONN
+    if _RO_CONN is not None:
+        _RO_CONN.close()
+        _RO_CONN = None
+
+
 def get_most_recent_date_global() -> Optional[str]:
     """Get the most recent date across all tickers."""
-    conn = get_conn()
+    conn = _get_ro_conn()
     from data.db_utils import get_most_recent_date
     return get_most_recent_date(conn)
 
