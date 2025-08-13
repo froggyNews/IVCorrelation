@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS options_quotes (
 CREATE INDEX IF NOT EXISTS idx_quotes_ticker_date ON options_quotes(ticker, asof_date);
 CREATE INDEX IF NOT EXISTS idx_quotes_expiry ON options_quotes(expiry);
 
+CREATE TABLE IF NOT EXISTS underlying_prices (
+    asof_date  TEXT NOT NULL,
+    ticker     TEXT NOT NULL,
+    close      REAL NOT NULL,
+    PRIMARY KEY (asof_date, ticker)
+);
+
 CREATE TABLE IF NOT EXISTS ticker_groups (
     group_name     TEXT    PRIMARY KEY,
     target_ticker  TEXT    NOT NULL,
