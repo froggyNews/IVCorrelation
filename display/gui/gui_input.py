@@ -19,6 +19,11 @@ from data.db_utils import get_conn, ensure_initialized
 
 DEFAULT_MODEL = "svi"
 DEFAULT_ATM_BAND = 0.05
+DEFAULT_CI = 0.68
+DEFAULT_X_UNITS = "years"
+DEFAULT_WEIGHT_MODE = "iv_atm"
+DEFAULT_PILLARS = [7,30,60,90,180,365]
+DEFAULT_OVERLAY = False
 PLOT_TYPES = (
     "Smile (K/S vs IV)",
     "Term (ATM vs T)",
@@ -170,6 +175,7 @@ class InputPanel(ttk.Frame):
         self.btn_plot = ttk.Button(row3, text="Plot")
         self.btn_plot.grid(row=0, column=17, padx=8)
 
+
     # ---------- bindings ----------
     def bind_download(self, fn: Callable[[], None]):
         self.btn_download.configure(command=fn)
@@ -238,30 +244,20 @@ class InputPanel(ttk.Frame):
                 val /= 100.0
             return val
         except Exception:
-            return 0.68
+          return DEFAULT_CI
+
 
     def get_x_units(self) -> str:
-        return self.cmb_xunits.get()
+        return DEFAULT_X_UNITS
 
     def get_weight_mode(self) -> str:
-        return self.cmb_weight_mode.get()
+        return DEFAULT_WEIGHT_MODE
 
     def get_overlay(self) -> bool:
-        return bool(self.var_overlay.get())
+        return DEFAULT_OVERLAY
 
     def get_pillars(self) -> list[int]:
-        raw = (self.ent_pillars.get() or "").strip()
-        if not raw:
-            return [7,30,60,90,180,365]
-        vals = []
-        for tok in raw.split(","):
-            tok = tok.strip()
-            if tok:
-                try:
-                    vals.append(int(float(tok)))
-                except Exception:
-                    pass
-        return vals or [7,30,60,90,180,365]
+        return list(DEFAULT_PILLARS)
     
     # ---------- preset management ----------
     def _init_ticker_groups(self):

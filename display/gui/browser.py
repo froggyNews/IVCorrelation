@@ -21,8 +21,9 @@ from display.gui.gui_plot_manager import PlotManager
 class BrowserApp(tk.Tk):
     def __init__(self, *, overlay: bool = True, ci_percent: float = 68.0):
         super().__init__()
-        self.title("Vol Browser")
+        self.title("Implied Volatility Browser")
         self.geometry("1200x820")
+        self.minsize(800, 600)
 
         # Inputs
         self.inputs = InputPanel(self, overlay=overlay, ci_percent=ci_percent)
@@ -40,6 +41,9 @@ class BrowserApp(tk.Tk):
         self.plot_mgr = PlotManager()
         self.plot_mgr.attach_canvas(self.canvas)
 
+        # Status bar for user feedback
+        self.status = ttk.Label(self, text="Ready", anchor="w")
+        self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
         # Default target suggestion
         tickers = self._load_tickers()
@@ -64,15 +68,19 @@ class BrowserApp(tk.Tk):
         universe = [x for x in [target] + peers if x]
         if not universe:
             messagebox.showerror("No tickers", "Enter a target and/or peers first.")
+            self.status.config(text="No tickers specified")
             return
         max_exp = self.inputs.get_max_exp()
         r, q    = self.inputs.get_rates()
+        self.status.config(text="Downloading data...")
         try:
             inserted = ingest_and_process(universe, max_expiries=max_exp, r=r, q=q)
             messagebox.showinfo("Download complete", f"Ingested rows: {inserted}\nTickers: {', '.join(universe)}")
+            self.status.config(text=f"Downloaded data for {', '.join(universe)}")
             self._on_target_change()
         except Exception as e:
             messagebox.showerror("Download error", str(e))
+            self.status.config(text="Download failed")
 
     def _refresh_plot(self):
         settings = dict(
@@ -89,9 +97,11 @@ class BrowserApp(tk.Tk):
             pillars    = self.inputs.get_pillars(),
         )
         if not settings["target"] or not settings["asof"]:
+            self.status.config(text="Enter target and date to plot")
             return
         self.plot_mgr.plot(self.ax, settings)
         self.canvas.draw()
+        self.status.config(text="Plot updated")
 
     # ---------- helpers ----------
     def _load_tickers(self):
