@@ -9,7 +9,39 @@ import matplotlib.pyplot as plt
 
 from data.db_utils import get_conn
 
-DEFAULT_PILLARS_DAYS = [7, 30, 60, 90, 180, 365]
+DEFAULT_PILLARS_DAYS = [7, 14, 30]  # Realistic pillars for typical options data
+# Extended pillars for when longer-term data is available
+EXTENDED_PILLARS_DAYS = [7, 14, 30, 60, 90, 180, 365]
+
+
+def detect_available_pillars(
+    get_smile_slice,
+    tickers: Iterable[str],
+    asof: str,
+    candidate_pillars: Iterable[int] = EXTENDED_PILLARS_DAYS,
+    min_tickers_per_pillar: int = 2,
+    tol_days: float = 7.0,
+) -> List[int]:
+    """
+    Detect which pillars have sufficient data across the given tickers.
+    Returns pillars where at least min_tickers_per_pillar have data.
+    """
+    candidate_pillars = list(candidate_pillars)
+    pillar_coverage = {p: 0 for p in candidate_pillars}
+    
+    for ticker in tickers:
+        day_df = get_smile_slice(ticker, asof, T_target_years=None)
+        if day_df.empty:
+            continue
+            
+        for pillar in candidate_pillars:
+            atm_val = _atm_by_pillar_from_day_slice(day_df, pillar, tol_days=tol_days)
+            if atm_val is not None and np.isfinite(atm_val):
+                pillar_coverage[pillar] += 1
+    
+    # Return pillars with sufficient coverage
+    good_pillars = [p for p, count in pillar_coverage.items() if count >= min_tickers_per_pillar]
+    return sorted(good_pillars)
 
 def _atm_by_pillar_from_day_slice(day_df: pd.DataFrame, pillar_days: int,
                                   atm_band: float = 0.05, tol_days: float = 7.0) -> Optional[float]:
@@ -79,7 +111,8 @@ def build_atm_matrix(
         atm_valid = atm_valid.sub(atm_valid.mean(axis=1), axis=0)
 
     # Compute correlations across pillars (pairwise, min periods = min_pillars)
-    corr_df = atm_valid.transpose().corr(method=corr_method, min_periods=int(min_pillars))
+    # Use min_periods=1 for more lenient correlation calculation
+    corr_df = atm_valid.transpose().corr(method=corr_method, min_periods=max(1, int(min_pillars) - 1))
 
     # Reindex to original ticker universe (preserve shape)
     corr_df = corr_df.reindex(index=tickers, columns=tickers)

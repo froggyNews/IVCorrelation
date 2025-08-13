@@ -7,20 +7,19 @@ from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
     corr_weights_from_matrix,       # converts a column of the matrix to weights
 )
-from analysis.pca_builder import pca_weights, pca_weights_from_atm_matrix
+from analysis.beta_builder import pca_weights, pca_weights_from_atm_matrix
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
 
 # surfaces & synth
 from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
-# fallback only (used if no live corr matrix has been computed yet)
-from analysis.correlation_builder import peer_weights_from_correlations
+
 
 
 from analysis.analysis_pipeline import get_smile_slice, relative_value_atm_report_corrweighted
 from analysis.pillars import compute_atm_by_expiry
-from analysis.correlation_builder import peer_weights_from_correlations
+
 import matplotlib.pyplot as plt
 
 from analysis.pillars import atm_curve_for_ticker_on_date
@@ -233,23 +232,7 @@ class PlotManager:
             except Exception:
                 pass
 
-        # 2) Fallback: compute from correlation_builder with the UI's weight mode
-        w = peer_weights_from_correlations(
-            benchmark=target,
-            peers=peers,
-            mode=weight_mode,
-            pillar_days=pillars or [7, 30, 60, 90, 180, 365],
-            clip_negative=True,
-            power=1.0,
-        )
-        if w is None or w.empty:
-            # equal weights if we really have nothing
-            return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
-        w = w.dropna().astype(float)
-        w = w[w.index.isin(peers)]
-        if w.empty:
-            return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
-        return (w / w.sum()).astype(float)
+
 
 
     def _plot_smile(self, ax, df, target, asof, model, T_days, ci, overlay, peers, weight_mode):

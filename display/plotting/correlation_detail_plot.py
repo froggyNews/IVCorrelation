@@ -6,12 +6,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from analysis.pillars import build_atm_matrix, DEFAULT_PILLARS_DAYS
+from analysis.pillars import build_atm_matrix, DEFAULT_PILLARS_DAYS, detect_available_pillars
 # surface construction
 
 # optional: fallback weights from persisted correlations (if you keep that path)
 try:
-    from analysis.correlation_builder import peer_weights_from_correlations
+    from analysis.beta_builder import peer_weights_from_correlations
     _HAS_PERSISTED_WEIGHTS = True
 except Exception:
     _HAS_PERSISTED_WEIGHTS = False
@@ -59,12 +59,13 @@ def compute_and_plot_correlation(
     pillars_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
     atm_band: float = 0.05,
     tol_days: float = 7.0,
-    min_pillars: int = 3,
+    min_pillars: int = 2,  # Reduced from 3 to 2 for more lenient correlation
     corr_method: str = "pearson",    # or "spearman" | "kendall"
     demean_rows: bool = False,
     show_values: bool = True,
     clip_negative: bool = True,
     power: float = 1.0,
+    auto_detect_pillars: bool = True,  # New parameter
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.Series]]:
     """
     Build ATM-by-pillar matrix and correlation matrix; draw heatmap.
@@ -72,6 +73,23 @@ def compute_and_plot_correlation(
     Returns: (atm_df, corr_df, weights or None)
     """
     tickers = [t.upper() for t in tickers]
+    
+    # Auto-detect available pillars if requested
+    if auto_detect_pillars:
+        available_pillars = detect_available_pillars(
+            get_smile_slice=get_smile_slice,
+            tickers=tickers,
+            asof=asof,
+            candidate_pillars=pillars_days,
+            min_tickers_per_pillar=max(2, len(tickers) // 2),  # At least half the tickers
+            tol_days=tol_days,
+        )
+        if available_pillars:
+            pillars_days = available_pillars
+            print(f"📊 Auto-detected pillars with sufficient data: {pillars_days}")
+        else:
+            print(f"⚠️ No pillars found with sufficient data, using defaults: {list(pillars_days)}")
+    
     atm_df, corr_df = build_atm_matrix(
         get_smile_slice=get_smile_slice,
         tickers=tickers,
