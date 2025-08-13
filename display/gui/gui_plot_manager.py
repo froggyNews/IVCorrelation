@@ -7,6 +7,7 @@ from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
     corr_weights_from_matrix,       # converts a column of the matrix to weights
 )
+from analysis.pca_builder import pca_weights, pca_weights_from_atm_matrix
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
 
@@ -112,7 +113,7 @@ class PlotManager:
             weights = None
             synth_curve = None
             if overlay and peers:
-                weights = self._weights_from_ui_or_matrix(target, peers, weight_mode)
+                weights = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
                 synth_curve = self._corr_weighted_synth_atm_curve(
                     asof=asof, peers=peers, weights=weights, atm_band=ATM_BAND, t_tolerance_days=10.0
                 )
@@ -134,7 +135,7 @@ class PlotManager:
             df_all = get_smile_slice(target, asof, T_target_years=None)
             if df_all is None or df_all.empty:
                 ax.set_title("No data"); return
-            self._plot_term(ax, df_all, target, asof, x_units, overlay, peers, weight_mode)
+            self._plot_term(ax, df_all, target, asof, x_units, ci, overlay, peers, weight_mode)
             return
 
         # --- Corr Matrix: doesn't need df_all ---
@@ -168,10 +169,10 @@ class PlotManager:
 
         self._render_smile_at_index()
 
-    def _weights_from_ui_or_matrix(self, target: str, peers: list[str], fallback_mode: str) -> pd.Series:
+    def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None) -> pd.Series:
         """
-        Prefer weights implied by the *currently displayed* correlation matrix.
-        Fallback to correlation_builder (mode from UI) only if we don't have a live matrix.
+        Compute weights using the selected mode (including PCA).
+        Priority: PCA modes > cached correlation matrix > legacy correlation methods
         """
         import numpy as np
         import pandas as pd
@@ -179,10 +180,36 @@ class PlotManager:
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
 
+        # 0) PCA modes: compute directly and return
+        if isinstance(weight_mode, str) and weight_mode.startswith("pca"):
+            try:
+                # Use cached ATM matrix if available and from a correlation matrix plot
+                if (hasattr(self, 'last_atm_df') and 
+                    isinstance(self.last_atm_df, pd.DataFrame) and 
+                    not self.last_atm_df.empty and
+                    weight_mode.startswith("pca_atm")):
+                    w = pca_weights_from_atm_matrix(self.last_atm_df, target, peers, verbose=False)
+                else:
+                    # Fallback to computing fresh ATM matrix
+                    w = pca_weights(
+                        get_smile_slice=self.get_smile_slice,
+                        mode=weight_mode,
+                        target=target,
+                        peers=peers,
+                        asof=asof,
+                        pillars_days=pillars or [7,30,60,90,180,365],
+                        # you can pass tenors/mny_bins if you've customized them
+                        k=None, nonneg=True, standardize=True,
+                    )
+                if not w.empty and np.isfinite(w.to_numpy(float)).any():
+                    return (w / w.sum()).astype(float)
+            except Exception as e:
+                print(f"PCA weights failed: {e}")
+                pass  # fall through to corr/legacy
+
         # 1) Use cached Corr Matrix from the Corr Matrix plot
         if isinstance(self.last_corr_df, pd.DataFrame) and not self.last_corr_df.empty:
             try:
-                from display.plotting.correlation_detail_plot import corr_weights_from_matrix
                 w = corr_weights_from_matrix(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
                 if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
                     # Normalize and keep only peers that had a column in the matrix
@@ -194,12 +221,11 @@ class PlotManager:
                 pass
 
         # 2) Fallback: compute from correlation_builder with the UI's weight mode
-        from analysis.correlation_builder import peer_weights_from_correlations
         w = peer_weights_from_correlations(
             benchmark=target,
             peers=peers,
-            mode=fallback_mode,
-            pillar_days=[7, 30, 60, 90, 180, 365],
+            mode=weight_mode,
+            pillar_days=pillars or [7, 30, 60, 90, 180, 365],
             clip_negative=True,
             power=1.0,
         )
@@ -238,7 +264,7 @@ class PlotManager:
         # inside _plot_smile(...), replace the horizontal line section with:
         if overlay and peers:
             try:
-                w = self._weights_from_ui_or_matrix(target, peers, weight_mode)
+                w = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
 
                 # build target + peers surfaces, combine peers using matrix weights
                 tickers = list({target, *peers})
@@ -280,51 +306,59 @@ class PlotManager:
             return
 
         # weights from live corr matrix (preferred) or fallback
-        w = self._weights_from_ui_or_matrix(target, peers, weight_mode)
+        w = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
 
-        # build surfaces
+        # Temporary: synthetic surface plotting disabled due to missing helper functions
+        ax.text(0.5, 0.5, "Synthetic Surface plotting\ntemporarily disabled\n(missing helper functions)", 
+                ha="center", va="center", fontsize=10)
+        ax.set_title(f"Synthetic Surface - {target} vs peers")
+        return
 
-        from analysis.syntheticETFBuilder import combine_surfaces, build_surface_grids, DEFAULT_TENORS, DEFAULT_MNY_BINS
-        from display.plotting.correlation_detail_plot import _nearest_tenor_idx, _mny_from_index_labels, _cols_to_days
+        # TODO: Re-implement synthetic surface plotting when helper functions are available
+        """
+        try:
+            from analysis.syntheticETFBuilder import combine_surfaces, build_surface_grids, DEFAULT_TENORS, DEFAULT_MNY_BINS
+            tickers = list({target, *peers})
+            surfaces = build_surface_grids(tickers=tickers, tenors=DEFAULT_TENORS, mny_bins=DEFAULT_MNY_BINS, use_atm_only=False)
 
-        tickers = list({target, *peers})
-        surfaces = build_surface_grids(tickers=tickers, tenors=DEFAULT_TENORS, mny_bins=DEFAULT_MNY_BINS, use_atm_only=False)
+            if target not in surfaces or asof not in surfaces[target]:
+                ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center"); return
 
-        if target not in surfaces or asof not in surfaces[target]:
-            ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center"); return
+            peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
+            synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
+            if asof not in synth_by_date:
+                ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center"); return
 
-        peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
-        synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
-        if asof not in synth_by_date:
-            ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center"); return
+            tgt_grid = surfaces[target][asof]
+            syn_grid = synth_by_date[asof]
+            tgt_cols_days = _cols_to_days(tgt_grid.columns)
+            syn_cols_days = _cols_to_days(syn_grid.columns)
+            i_tgt = _nearest_tenor_idx(tgt_cols_days, T_days)
+            i_syn = _nearest_tenor_idx(syn_cols_days, T_days)
+            col_tgt = tgt_grid.columns[i_tgt]
+            col_syn = syn_grid.columns[i_syn]
 
-        tgt_grid = surfaces[target][asof]
-        syn_grid = synth_by_date[asof]
-        tgt_cols_days = _cols_to_days(tgt_grid.columns)
-        syn_cols_days = _cols_to_days(syn_grid.columns)
-        i_tgt = _nearest_tenor_idx(tgt_cols_days, T_days)
-        i_syn = _nearest_tenor_idx(syn_cols_days, T_days)
-        col_tgt = tgt_grid.columns[i_tgt]
-        col_syn = syn_grid.columns[i_syn]
+            x_mny = _mny_from_index_labels(tgt_grid.index)
+            y_tgt = tgt_grid[col_tgt].astype(float).to_numpy()
+            y_syn = syn_grid[col_syn].astype(float).to_numpy()
 
-        x_mny = _mny_from_index_labels(tgt_grid.index)
-        y_tgt = tgt_grid[col_tgt].astype(float).to_numpy()
-        y_syn = syn_grid[col_syn].astype(float).to_numpy()
+            # align on common moneyness buckets if necessary
+            if not tgt_grid.index.equals(syn_grid.index):
+                common = tgt_grid.index.intersection(syn_grid.index)
+                if len(common) >= 3:
+                    x_mny = _mny_from_index_labels(common)
+                    y_tgt = tgt_grid.loc[common, col_tgt].astype(float).to_numpy()
+                    y_syn = syn_grid.loc[common, col_syn].astype(float).to_numpy()
 
-        # align on common moneyness buckets if necessary
-        if not tgt_grid.index.equals(syn_grid.index):
-            common = tgt_grid.index.intersection(syn_grid.index)
-            if len(common) >= 3:
-                x_mny = _mny_from_index_labels(common)
-                y_tgt = tgt_grid.loc[common, col_tgt].astype(float).to_numpy()
-                y_syn = syn_grid.loc[common, col_syn].astype(float).to_numpy()
-
-        ax.plot(x_mny, y_tgt, "-", linewidth=1.8, label=f"{target} smile @ ~{int(T_days)}d")
-        ax.plot(x_mny, y_syn, "--", linewidth=1.8, label="Synthetic (corr-matrix)")
-        ax.set_xlabel("Moneyness (K/S)")
-        ax.set_ylabel("Implied Vol")
-        ax.set_title(f"Synthetic Construction vs {target} | asof={asof} | ~{int(T_days)}d")
-        ax.legend(loc="best", fontsize=9)
+            ax.plot(x_mny, y_tgt, "-", linewidth=1.8, label=f"{target} smile @ ~{int(T_days)}d")
+            ax.plot(x_mny, y_syn, "--", linewidth=1.8, label="Synthetic (corr-matrix)")
+            ax.set_xlabel("Moneyness (K/S)")
+            ax.set_ylabel("Implied Vol")
+            ax.set_title(f"Synthetic Construction vs {target} | asof={asof} | ~{int(T_days)}d")
+            ax.legend(loc="best", fontsize=9)
+        except Exception:
+            ax.text(0.5, 0.5, "Synthetic surface plotting failed", ha="center", va="center")
+        """
 
     def _render_smile_at_index(self):
         if not self._smile_ctx: 
@@ -376,7 +410,7 @@ class PlotManager:
         if self.canvas is not None:
             self.canvas.draw_idle()
 
-    def _plot_term(self, ax, df, target, asof, x_units, overlay, peers, weight_mode):
+    def _plot_term(self, ax, df, target, asof, x_units, ci, overlay, peers, weight_mode):
         """
         Plot target ATM term structure; optionally overlay corr-matrix synthetic ATM curve
         built from peers on the SAME date (using cached matrix weights when available).
@@ -385,13 +419,15 @@ class PlotManager:
         from analysis.pillars import compute_atm_by_expiry
         from display.plotting.term_plot import plot_atm_term_structure
 
-        atm_target = compute_atm_by_expiry(df, method="fit", model="auto", vega_weighted=True)
-        plot_atm_term_structure(ax, atm_target, x_units=x_units, connect=True, smooth=True)
+        atm_target = compute_atm_by_expiry(df, method="fit", model="auto", vega_weighted=True, 
+                                          n_boot=50, ci_level=ci)  # Enable bootstrap CI (fewer boots for speed)
+        plot_atm_term_structure(ax, atm_target, x_units=x_units, connect=True, smooth=True, 
+                               show_ci=True, ci_level=ci, generate_ci=True)
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_target)})"
 
         if overlay and peers:
             try:
-                w = self._weights_from_ui_or_matrix(target, peers, weight_mode)
+                w = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
                 synth_curve = self._corr_weighted_synth_atm_curve(
                     asof=asof, peers=peers, weights=w, atm_band=ATM_BAND, t_tolerance_days=10.0
                 )
@@ -404,6 +440,25 @@ class PlotManager:
                     ax.plot(x[order], y[order], linestyle="--", linewidth=1.6, alpha=0.9,
                             label="Synthetic ATM (corr-matrix)")
                     ax.scatter(x, y, s=18, alpha=0.8)
+                    
+                    # Add confidence bands for synthetic curve if enough points
+                    if len(x) >= 3:
+                        try:
+                            from display.plotting.term_plot import generate_term_structure_confidence_bands
+                            T_orig = synth_curve["T"].to_numpy(float)  # Keep in years for CI calculation
+                            T_grid, ci_lo, ci_hi = generate_term_structure_confidence_bands(
+                                T=T_orig, atm_vol=y, level=ci, n_boot=50  # Fewer bootstrap for synthetic
+                            )
+                            if len(T_grid) > 0:
+                                if x_units == "days":
+                                    T_grid_plot = T_grid * 365.25
+                                else:
+                                    T_grid_plot = T_grid
+                                ax.fill_between(T_grid_plot, ci_lo, ci_hi, alpha=0.1, 
+                                               color='orange', label=f"Synthetic CI ({ci:.0%})")
+                        except Exception:
+                            pass  # CI generation failed, continue without
+                    
                     ax.legend(loc="best", fontsize=8)
             except Exception:
                 pass
@@ -452,8 +507,9 @@ class PlotManager:
                 show_values=True,
             )
 
-        # cache for other plots
+        # cache for other plots (including PCA)
         self.last_corr_df = corr_df
+        self.last_atm_df = atm_df  # Cache ATM matrix for PCA
         self.last_corr_meta = {
             "asof": asof,
             "tickers": list(tickers),
@@ -479,7 +535,13 @@ class PlotManager:
 
         curves = {}
         for p in peers:
-            c = atm_curve_for_ticker_on_date(self.get_smile_slice, p, asof, atm_band=atm_band)
+            c = atm_curve_for_ticker_on_date(
+                self.get_smile_slice, p, asof, 
+                atm_band=atm_band,
+                method="median",        # <<--- IMPORTANT: fast & robust
+                model="auto",
+                vega_weighted=False
+            )
             if not c.empty:
                 curves[p] = c
         if not curves:

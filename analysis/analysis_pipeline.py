@@ -93,10 +93,42 @@ def get_surface_grids_cached(
 def build_surfaces(
     tickers: Iterable[str] | None = None,
     cfg: PipelineConfig = PipelineConfig(),
+    most_recent_only: bool = False,
 ) -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
-    """Return dict[ticker][date] -> IV grid DataFrame."""
+    """
+    Return dict[ticker][date] -> IV grid DataFrame.
+    
+    Parameters:
+    -----------
+    tickers : Iterable[str] | None
+        List of tickers to build surfaces for
+    cfg : PipelineConfig
+        Configuration for surface building
+    most_recent_only : bool
+        If True, only return surfaces for the most recent date
+    """
     key = ",".join(sorted(tickers)) if tickers else ""
-    return get_surface_grids_cached(cfg, key)
+    all_surfaces = get_surface_grids_cached(cfg, key)
+    
+    if most_recent_only and all_surfaces:
+        # Find the most recent date across all tickers
+        most_recent = get_most_recent_date_global()
+        if most_recent:
+            most_recent_ts = pd.to_datetime(most_recent)
+            filtered_surfaces = {}
+            for ticker, date_dict in all_surfaces.items():
+                if most_recent_ts in date_dict:
+                    filtered_surfaces[ticker] = {most_recent_ts: date_dict[most_recent_ts]}
+                else:
+                    # If the most recent global date isn't available for this ticker,
+                    # use the most recent date available for this specific ticker
+                    ticker_dates = sorted(date_dict.keys())
+                    if ticker_dates:
+                        latest_ticker_date = ticker_dates[-1]
+                        filtered_surfaces[ticker] = {latest_ticker_date: date_dict[latest_ticker_date]}
+            return filtered_surfaces
+    
+    return all_surfaces
 
 
 def list_surface_dates(
@@ -127,9 +159,10 @@ def surface_to_frame_for_date(
 def build_synthetic_surface(
     weights: Mapping[str, float],
     cfg: PipelineConfig = PipelineConfig(),
+    most_recent_only: bool = True,  # Default to True for performance
 ) -> Dict[pd.Timestamp, pd.DataFrame]:
     """Create a synthetic ETF surface from ticker grids + weights."""
-    surfaces = build_surfaces(tickers=list(weights.keys()), cfg=cfg)
+    surfaces = build_surfaces(tickers=list(weights.keys()), cfg=cfg, most_recent_only=most_recent_only)
     return combine_surfaces(surfaces, weights)
 
 
@@ -291,9 +324,24 @@ def available_tickers() -> List[str]:
     return tickers
 
 
-def available_dates(ticker: Optional[str] = None) -> List[str]:
-    """Unique asof_date strings (optionally filtered by ticker)."""
+def available_dates(ticker: Optional[str] = None, most_recent_only: bool = False) -> List[str]:
+    """
+    Get available asof_date strings.
+    
+    Parameters:
+    -----------
+    ticker : Optional[str]
+        Filter by specific ticker
+    most_recent_only : bool
+        If True, return only the most recent date
+    """
     conn = get_conn()
+    
+    if most_recent_only:
+        from data.db_utils import get_most_recent_date
+        recent = get_most_recent_date(conn, ticker)
+        return [recent] if recent else []
+    
     base = "SELECT DISTINCT asof_date FROM options_quotes"
     if ticker:
         df = pd.read_sql_query(f"{base} WHERE ticker = ? ORDER BY 1", conn, params=[ticker])
@@ -302,22 +350,38 @@ def available_dates(ticker: Optional[str] = None) -> List[str]:
     return df["asof_date"].tolist()
 
 
+def get_most_recent_date_global() -> Optional[str]:
+    """Get the most recent date across all tickers."""
+    conn = get_conn()
+    from data.db_utils import get_most_recent_date
+    return get_most_recent_date(conn)
+
+
 # =========================
 # Smile helpers (GUI plotting)
 # =========================
 def get_smile_slice(
     ticker: str,
-    asof_date: str,
+    asof_date: Optional[str] = None,
     T_target_years: float | None = None,
     call_put: Optional[str] = None,  # 'C' or 'P' or None for both
     nearest_by: str = "T",           # 'T' or 'moneyness'
 ) -> pd.DataFrame:
     """
     Return a slice of quotes for plotting a smile (one date, one ticker).
+    If asof_date is None, uses the most recent date for the ticker.
     If T_target_years is given, returns the nearest expiry; otherwise returns all expiries that day.
     Optionally filter by call_put ('C'/'P').
     """
     conn = get_conn()
+    
+    # Use most recent date if not specified
+    if asof_date is None:
+        from data.db_utils import get_most_recent_date
+        asof_date = get_most_recent_date(conn, ticker)
+        if asof_date is None:
+            return pd.DataFrame()  # No data available
+    
     q = """
         SELECT asof_date, ticker, expiry, call_put, strike AS K, spot AS S, ttm_years AS T,
                moneyness, iv AS sigma, delta, is_atm
@@ -347,13 +411,14 @@ def get_smile_slice(
 
 def fit_smile_for(
     ticker: str,
-    asof_date: str,
+    asof_date: Optional[str] = None,
     model: str = "svi",             # "svi" or "sabr"
     min_quotes_per_expiry: int = 3, # skip super sparse expiries
     beta: float = 0.5,              # SABR beta (fixed)
 ) -> VolModel:
     """
     Fit a volatility smile model (SVI or SABR) for one day/ticker using all expiries available that day.
+    If asof_date is None, uses the most recent date for the ticker.
 
     Returns a VolModel you can query/plot from the GUI:
       vm.available_expiries() -> list of T (years)
@@ -362,11 +427,19 @@ def fit_smile_for(
       vm.plot(T)              -> quick plot (if matplotlib installed)
 
     Notes:
-      - Uses median spot across that day’s quotes for S.
+      - Uses median spot across that day's quotes for S.
       - Filters out expiries with fewer than `min_quotes_per_expiry` quotes.
     """
     import pandas as pd
     conn = get_conn()
+    
+    # Use most recent date if not specified
+    if asof_date is None:
+        from data.db_utils import get_most_recent_date
+        asof_date = get_most_recent_date(conn, ticker)
+        if asof_date is None:
+            return VolModel(model=model)  # empty model
+    
     q = """
         SELECT spot AS S, strike AS K, ttm_years AS T, iv AS sigma
         FROM options_quotes
@@ -401,14 +474,15 @@ def fit_smile_for(
 
 def sample_smile_curve(
     ticker: str,
-    asof_date: str,
-    T_target_years: float,
+    asof_date: Optional[str] = None,
+    T_target_years: float = 30/365.25,  # Default to ~30 days
     model: str = "svi",
     moneyness_grid: tuple[float, float, int] = (0.6, 1.4, 81),  # (lo, hi, n)
     beta: float = 0.5,
 ) -> pd.DataFrame:
     """
     Convenience: fit a smile then return a tidy curve at the nearest expiry to T_target_years.
+    If asof_date is None, uses the most recent date for the ticker.
 
     Returns DataFrame with columns:
       ['asof_date','ticker','model','T_used','moneyness','K','IV']
@@ -416,6 +490,13 @@ def sample_smile_curve(
     import numpy as np
     import pandas as pd
 
+    # Store the actual date used (in case it was auto-determined)
+    actual_date = asof_date
+    if actual_date is None:
+        conn = get_conn()
+        from data.db_utils import get_most_recent_date
+        actual_date = get_most_recent_date(conn, ticker)
+    
     vm = fit_smile_for(ticker, asof_date, model=model, beta=beta)
     if not vm.available_expiries() or vm.S is None:
         return pd.DataFrame(columns=["asof_date","ticker","model","T_used","moneyness","K","IV"])
@@ -431,7 +512,7 @@ def sample_smile_curve(
     iv = vm.smile(K_grid, T_used)
 
     out = pd.DataFrame({
-        "asof_date": asof_date,
+        "asof_date": actual_date,
         "ticker": ticker,
         "model": model.upper(),
         "T_used": T_used,

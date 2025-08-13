@@ -140,9 +140,13 @@ class InputPanel(ttk.Frame):
         row3 = ttk.Frame(self); row3.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
 
         ttk.Label(row3, text="Weight mode").grid(row=0, column=12, sticky="w")
-        self.cmb_mode = ttk.Combobox(row2, values=["iv_atm", "ul", "surface"], width=10, state="readonly")
-        self.cmb_mode.set("iv_atm")
-        self.cmb_mode.grid(row=0, column=13, padx=6)
+        self.cmb_weight_mode = ttk.Combobox(row3, values=[
+            "iv_atm", "ul", "surface",
+            "pca_atm_market", "pca_atm_regress", 
+            "pca_surface_market", "pca_surface_regress"
+        ], width=18, state="readonly")
+        self.cmb_weight_mode.set("iv_atm")
+        self.cmb_weight_mode.grid(row=0, column=13, padx=6)
 
         ttk.Label(row3, text="Pillars (days)").grid(row=0, column=14, sticky="w")
         self.ent_pillars = ttk.Entry(row2, width=18)
@@ -226,7 +230,7 @@ class InputPanel(ttk.Frame):
         return self.cmb_xunits.get()
 
     def get_weight_mode(self) -> str:
-        return self.cmb_mode.get()
+        return self.cmb_weight_mode.get()
 
     def get_overlay(self) -> bool:
         return bool(self.var_overlay.get())
