@@ -39,7 +39,6 @@ from .syntheticETFBuilder import (
 
 from .beta_builder import (
     pca_weights,
-    ul_betas,
     iv_atm_betas,
     surface_betas,
     peer_weights_from_correlations,
@@ -189,7 +188,14 @@ def compute_peer_weights(
     tenor_days: Iterable[int] = DEFAULT_TENORS,
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
 ) -> pd.Series:
-    """Compute peer weights via correlation or PCA metrics vs a target."""
+    """Compute peer weights via correlation or PCA metrics vs a target.
+
+    Parameters
+    ----------
+    weight_mode : str
+        ``"iv_atm"`` (default), ``"surface"``, ``"ul"``/``"underlying```, or
+        PCA variants such as ``"pca_atm_market"``.
+    """
     target = target.upper()
     peers = [p.upper() for p in peers]
     mode = (weight_mode or "iv_atm").lower()

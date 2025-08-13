@@ -1,7 +1,6 @@
 # analysis/beta_builder.py
 from __future__ import annotations
 from typing import Iterable, Optional, Tuple, Dict, List, Union
-import math
 import numpy as np
 import pandas as pd
 import os
@@ -242,28 +241,54 @@ def pca_weights(
 
     raise ValueError(f"unknown mode: {mode}")
 
+"""Utilities for building simple correlation/beta metrics."""
+
 # =========================
-# Simple beta builders (UL, IV‑ATM, surface)
+# Simple correlation builder for underlying prices
 # =========================
-def _spot_log_returns(conn_fn) -> pd.DataFrame:
+
+def _underlying_log_returns(conn_fn) -> pd.DataFrame:
+    """Return wide DataFrame of log returns for underlyings from DB.
+
+    Tries to load from an ``underlying_prices`` table. If missing or empty,
+    falls back to using spot prices from ``options_quotes``. Prices are
+    converted to daily log returns.
+    """
     conn = conn_fn()
-    df = pd.read_sql_query("SELECT asof_date, ticker, spot FROM options_quotes", conn)
+    df = pd.DataFrame()
+    try:
+        df = pd.read_sql_query(
+            "SELECT asof_date, ticker, close FROM underlying_prices", conn
+        )
+    except Exception:
+        df = pd.DataFrame()
+
+    if df.empty:
+        df = pd.read_sql_query(
+            "SELECT asof_date, ticker, spot AS close FROM options_quotes", conn
+        )
     if df.empty:
         return df
-    px = df.groupby(["asof_date", "ticker"])["spot"].median().unstack("ticker").sort_index()
-    ret = (px / px.shift(1)).applymap(lambda x: math.log(x) if pd.notna(x) and x > 0 else np.nan)
+
+    px = (
+        df.groupby(["asof_date", "ticker"])["close"]
+        .median()
+        .unstack("ticker")
+        .sort_index()
+    )
+    ret = np.log(px / px.shift(1))
     return ret
 
-def ul_betas(benchmark: str, conn_fn) -> pd.Series:
-    ret = _spot_log_returns(conn_fn)
+
+def ul_correlations(benchmark: str, conn_fn) -> pd.Series:
+    """Correlation of peer underlying returns vs benchmark returns."""
+    ret = _underlying_log_returns(conn_fn)
     if ret is None or ret.empty or benchmark not in ret.columns:
         return pd.Series(dtype=float)
-    betas = {}
-    for t in ret.columns:
-        if t == benchmark:
-            continue
-        betas[t] = _beta(ret.rename(columns={t: "x", benchmark: "b"}), "x", "b")
-    return pd.Series(betas, name="ul_beta")
+    corr = ret.corr().get(benchmark)
+    if corr is None:
+        return pd.Series(dtype=float)
+    return corr.drop(index=[benchmark]).rename("ul_corr")
 
 def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS) -> Dict[int, pd.Series]:
     atm = load_atm()
@@ -332,10 +357,10 @@ def build_vol_betas(
 ):
     """Dispatch to the appropriate beta calculator based on ``mode``."""
     mode = (mode or "").lower()
-    if mode == "ul":
+    if mode in ("ul", "underlying"):
         from data.db_utils import get_conn
 
-        return ul_betas(benchmark, get_conn)
+        return ul_correlations(benchmark, get_conn)
     if mode == "iv_atm":
         return iv_atm_betas(benchmark, pillar_days=pillar_days or DEFAULT_PILLARS_DAYS)
     if mode == "surface":
@@ -361,6 +386,14 @@ def peer_weights_from_correlations(
     peers_list = [p.upper() for p in peers] if peers else []
     if not peers_list:
         return pd.Series(dtype=float)
+
+    if mode.lower() in ("ul", "underlying"):
+        try:
+            from data.underlying_prices import update_underlying_prices
+
+            update_underlying_prices([benchmark] + peers_list)
+        except Exception:
+            pass
 
     res = build_vol_betas(
         mode=mode,
