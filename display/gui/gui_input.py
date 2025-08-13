@@ -12,10 +12,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data.ticker_groups import (
-    save_ticker_group, load_ticker_group, list_ticker_groups, 
+    save_ticker_group, load_ticker_group, list_ticker_groups,
     delete_ticker_group, create_default_groups
 )
 from data.db_utils import get_conn, ensure_initialized
+from data.rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 
 DEFAULT_MODEL = "svi"
 DEFAULT_ATM_BAND = 0.05
@@ -102,13 +103,14 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row1, text="r").grid(row=0, column=6, sticky="w")
         self.ent_r = ttk.Entry(row1, width=6)
-        self.ent_r.insert(0, "0.0")
         self.ent_r.grid(row=0, column=7, padx=(4,10))
 
         ttk.Label(row1, text="q").grid(row=0, column=8, sticky="w")
         self.ent_q = ttk.Entry(row1, width=6)
-        self.ent_q.insert(0, "0.0")
         self.ent_q.grid(row=0, column=9, padx=(4,10))
+
+        # Populate with standard rates
+        self.set_rates(STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD)
 
         self.btn_download = ttk.Button(row1, text="Download / Ingest")
         self.btn_download.grid(row=0, column=10, padx=8)
@@ -194,6 +196,26 @@ class InputPanel(ttk.Frame):
         if dates:
             self.cmb_date.current(len(dates) - 1)
 
+    def set_rates(self, r: float = STANDARD_RISK_FREE_RATE, q: float = STANDARD_DIVIDEND_YIELD) -> None:
+        """Set the risk-free and dividend rates displayed in the UI."""
+        self.ent_r.delete(0, tk.END)
+        self.ent_r.insert(0, f"{r:.4f}")
+        self.ent_q.delete(0, tk.END)
+        self.ent_q.insert(0, f"{q:.4f}")
+
+    def _parse_rate(self, text: str, default: float) -> float:
+        """Parse user-entered rate; accepts percents or decimals."""
+        try:
+            txt = text.strip().replace('%', '')
+            if not txt:
+                return default
+            val = float(txt)
+            if val > 1:
+                val /= 100.0
+            return val
+        except Exception:
+            return default
+
     # ---------- getters ----------
     def get_target(self) -> str:
         return (self.ent_target.get() or "").strip().upper()
@@ -211,14 +233,8 @@ class InputPanel(ttk.Frame):
             return 6
 
     def get_rates(self) -> tuple[float, float]:
-        try:
-            r = float(self.ent_r.get())
-        except Exception:
-            r = 0.0
-        try:
-            q = float(self.ent_q.get())
-        except Exception:
-            q = 0.0
+        r = self._parse_rate(self.ent_r.get(), STANDARD_RISK_FREE_RATE)
+        q = self._parse_rate(self.ent_q.get(), STANDARD_DIVIDEND_YIELD)
         return r, q
 
     def get_plot_type(self) -> str:
