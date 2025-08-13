@@ -184,7 +184,7 @@ def pca_weights_from_atm_matrix(
 
 def pca_weights(
     get_smile_slice,
-    mode: str,               # 'pca_atm_market' | 'pca_atm_regress' | 'pca_surface_market' | 'pca_surface_regress'
+    mode: str,
     target: str,
     peers: List[str],
     asof: str,
@@ -193,6 +193,22 @@ def pca_weights(
     mny_bins: Iterable[Tuple[float, float]] | None = None,
     k: Optional[int] = None,
 ) -> pd.Series:
+    """Return PCA-based peer weights.
+
+    Modes
+    -----
+    pca_atm_market
+        First principal component on ATM IV pillars across peers.
+    pca_atm_regress
+        PCA-based regression to match the target's ATM vector.
+    pca_surface_market
+        First principal component on full surface grids across peers.
+    pca_surface_regress
+        PCA-based regression to match the target's surface grid.
+
+    All modes return non-negative weights normalised to sum to one.
+    """
+
     peers = [p.upper() for p in peers]
     target = (target or "").upper()
 
@@ -205,20 +221,23 @@ def pca_weights(
             raise RuntimeError("target missing in ATM matrix")
         y = _impute_col_median(atm_df.loc[[target]].to_numpy(float)).ravel()
         Xp = atm_df.loc[peers].to_numpy(float)
+        if Xp.shape[0] == 0:
+            return pd.Series(dtype=float)
         w = pca_regress_weights(Xp, y, k=k, nonneg=True)
         return pd.Series(w / w.sum(), index=peers, dtype=float)
 
     if mode.startswith("pca_surface"):
         grids, X, _ = surface_feature_matrix([target] + peers, asof, tenors=tenors, mny_bins=mny_bins)
-        # reorder rows to [target, peers...] present in X already
-        labels_present = [target] + [p for p in peers if p in grids]
-        idxs = list(range(len(labels_present)))  # already in order constructed
-        X = X[idxs, :]
+        labels = list(grids.keys())
+        if not labels or labels[0] != target:
+            raise RuntimeError("target missing in surface grid")
+        if len(labels) < 2:
+            return pd.Series(dtype=float)
         if "market" in mode:
             w = pca_market_weights(X[1:, :])
         else:
             w = pca_regress_weights(X[1:, :], X[0, :], k=k, nonneg=True)
-        return pd.Series(w / w.sum(), index=labels_present[1:], dtype=float)
+        return pd.Series(w / w.sum(), index=labels[1:], dtype=float)
 
     raise ValueError(f"unknown mode: {mode}")
 
