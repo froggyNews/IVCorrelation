@@ -317,26 +317,22 @@ class PlotManager:
         # weights from live corr matrix (preferred) or fallback
         w = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
 
-        # Temporary: synthetic surface plotting disabled due to missing helper functions
-        ax.text(0.5, 0.5, "Synthetic Surface plotting\ntemporarily disabled\n(missing helper functions)", 
-                ha="center", va="center", fontsize=10)
-        ax.set_title(f"Synthetic Surface - {target} vs peers")
-        return
-
-        # TODO: Re-implement synthetic surface plotting when helper functions are available
-        """
         try:
-            from analysis.syntheticETFBuilder import combine_surfaces, build_surface_grids, DEFAULT_TENORS, DEFAULT_MNY_BINS
+            # Build target and peer surfaces, then combine peers using correlation weights
             tickers = list({target, *peers})
-            surfaces = build_surface_grids(tickers=tickers, tenors=DEFAULT_TENORS, mny_bins=DEFAULT_MNY_BINS, use_atm_only=False)
+            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False)
 
             if target not in surfaces or asof not in surfaces[target]:
-                ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center"); return
+                ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center")
+                ax.set_title(f"Synthetic Surface - {target} vs peers")
+                return
 
             peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
             synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
             if asof not in synth_by_date:
-                ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center"); return
+                ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center")
+                ax.set_title(f"Synthetic Surface - {target} vs peers")
+                return
 
             tgt_grid = surfaces[target][asof]
             syn_grid = synth_by_date[asof]
@@ -367,7 +363,7 @@ class PlotManager:
             ax.legend(loc="best", fontsize=9)
         except Exception:
             ax.text(0.5, 0.5, "Synthetic surface plotting failed", ha="center", va="center")
-        """
+            ax.set_title(f"Synthetic Surface - {target} vs peers")
 
     def _render_smile_at_index(self):
         if not self._smile_ctx:
