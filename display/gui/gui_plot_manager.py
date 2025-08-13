@@ -66,7 +66,7 @@ class PlotManager:
         self.canvas = None
         self._cid_click = None
         self._current_plot_type = None
-        self._smile_ctx = None   # dict storing chain + current index + overlay bits
+        self._smile_ctx = None   # dict storing precomputed arrays + current index + overlay bits
 
     def attach_canvas(self, canvas):
         self.canvas = canvas
@@ -103,7 +103,13 @@ class PlotManager:
             if chain_df is None or chain_df.empty:
                 ax.set_title("No data"); return
 
-            Ts = np.sort(np.unique(pd.to_numeric(chain_df["T"], errors="coerce").dropna().to_numpy(float)))
+            # precompute arrays for fast slicing
+            T_arr = pd.to_numeric(chain_df["T"], errors="coerce").to_numpy(float)
+            K_arr = pd.to_numeric(chain_df["K"], errors="coerce").to_numpy(float)
+            sigma_arr = pd.to_numeric(chain_df["sigma"], errors="coerce").to_numpy(float)
+            S_arr = pd.to_numeric(chain_df["S"], errors="coerce").to_numpy(float)
+
+            Ts = np.sort(np.unique(T_arr[np.isfinite(T_arr)]))
             if Ts.size == 0:
                 ax.set_title("No expiries"); return
             target_T = float(T_days) / 365.25
@@ -112,14 +118,21 @@ class PlotManager:
             weights = None
             synth_curve = None
             if overlay and peers:
-                weights = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
+                weights = self._weights_from_ui_or_matrix(
+                    target, peers, weight_mode, asof=asof,
+                    pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
+                )
                 synth_curve = self._corr_weighted_synth_atm_curve(
-                    asof=asof, peers=peers, weights=weights, atm_band=ATM_BAND, t_tolerance_days=10.0
+                    asof=asof, peers=peers, weights=weights,
+                    atm_band=ATM_BAND, t_tolerance_days=10.0,
                 )
 
             self._smile_ctx = {
                 "ax": ax,
-                "chain_df": chain_df,
+                "T_arr": T_arr,
+                "K_arr": K_arr,
+                "sigma_arr": sigma_arr,
+                "S_arr": S_arr,
                 "Ts": Ts,
                 "idx": idx0,
                 "settings": settings,
@@ -304,26 +317,22 @@ class PlotManager:
         # weights from live corr matrix (preferred) or fallback
         w = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
 
-        # Temporary: synthetic surface plotting disabled due to missing helper functions
-        ax.text(0.5, 0.5, "Synthetic Surface plotting\ntemporarily disabled\n(missing helper functions)", 
-                ha="center", va="center", fontsize=10)
-        ax.set_title(f"Synthetic Surface - {target} vs peers")
-        return
-
-        # TODO: Re-implement synthetic surface plotting when helper functions are available
-        """
         try:
-            from analysis.syntheticETFBuilder import combine_surfaces, build_surface_grids, DEFAULT_TENORS, DEFAULT_MNY_BINS
+            # Build target and peer surfaces, then combine peers using correlation weights
             tickers = list({target, *peers})
-            surfaces = build_surface_grids(tickers=tickers, tenors=DEFAULT_TENORS, mny_bins=DEFAULT_MNY_BINS, use_atm_only=False)
+            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False)
 
             if target not in surfaces or asof not in surfaces[target]:
-                ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center"); return
+                ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center")
+                ax.set_title(f"Synthetic Surface - {target} vs peers")
+                return
 
             peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
             synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
             if asof not in synth_by_date:
-                ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center"); return
+                ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center")
+                ax.set_title(f"Synthetic Surface - {target} vs peers")
+                return
 
             tgt_grid = surfaces[target][asof]
             syn_grid = synth_by_date[asof]
@@ -354,15 +363,18 @@ class PlotManager:
             ax.legend(loc="best", fontsize=9)
         except Exception:
             ax.text(0.5, 0.5, "Synthetic surface plotting failed", ha="center", va="center")
-        """
+            ax.set_title(f"Synthetic Surface - {target} vs peers")
 
     def _render_smile_at_index(self):
-        if not self._smile_ctx: 
+        if not self._smile_ctx:
             return
         ax = self._smile_ctx["ax"]
-        chain_df = self._smile_ctx["chain_df"]
+        T_arr = self._smile_ctx["T_arr"]
+        K_arr = self._smile_ctx["K_arr"]
+        sigma_arr = self._smile_ctx["sigma_arr"]
+        S_arr = self._smile_ctx["S_arr"]
         Ts = self._smile_ctx["Ts"]
-        i = int(np.clip(self._smile_ctx["idx"], 0, len(Ts)-1))
+        i = int(np.clip(self._smile_ctx["idx"], 0, len(Ts) - 1))
         self._smile_ctx["idx"] = i  # keep in range
 
         settings = self._smile_ctx["settings"]
@@ -371,19 +383,23 @@ class PlotManager:
 
         T_sel = float(Ts[i])
         # pick nearest slice to T_sel
-        g = chain_df.copy()
-        j = int(np.nanargmin(np.abs(g["T"].to_numpy(float) - T_sel)))
-        T0 = float(g["T"].iloc[j])
-        slice_df = g[np.isclose(g["T"].to_numpy(float), T0)].copy()
-        if slice_df.empty:
-            # fallback: take a small window around nearest
+        j = int(np.nanargmin(np.abs(T_arr - T_sel)))
+        T0 = float(T_arr[j])
+        mask = np.isclose(T_arr, T0)
+        if not np.any(mask):
             tol = 1e-6
-            slice_df = g[(g["T"] >= T0 - tol) & (g["T"] <= T0 + tol)].copy()
+            mask = (T_arr >= T0 - tol) & (T_arr <= T0 + tol)
+        if not np.any(mask):
+            ax.clear()
+            ax.set_title("No data")
+            if self.canvas is not None:
+                self.canvas.draw_idle()
+            return
 
         ax.clear()
-        S = float(slice_df["S"].median())
-        K = slice_df["K"].to_numpy(float)
-        IV = slice_df["sigma"].to_numpy(float)
+        S = float(np.nanmedian(S_arr[mask]))
+        K = K_arr[mask]
+        IV = sigma_arr[mask]
 
         info = fit_and_plot_smile(
             ax, S=S, K=K, T=T0, iv=IV,
@@ -506,6 +522,9 @@ class PlotManager:
                 show_values=True,
                 target=target,       # ok if ignored by the 2-return version
                 peers=peers,
+                auto_detect_pillars=True,  # Use ETF builder style pillar detection
+                min_tickers_per_pillar=3,  # ETF builder style: need 3+ tickers per pillar
+                min_pillars_per_ticker=2,  # ETF builder style: need 2+ pillars per ticker
             )
         except TypeError:
             # older 2-return version
@@ -521,6 +540,9 @@ class PlotManager:
                 corr_method=corr_method,
                 demean_rows=demean_rows,
                 show_values=True,
+                auto_detect_pillars=True,  # Use ETF builder style pillar detection
+                min_tickers_per_pillar=3,  # ETF builder style: need 3+ tickers per pillar
+                min_pillars_per_ticker=2,  # ETF builder style: need 2+ pillars per ticker
             )
 
         # cache for other plots (including PCA)
