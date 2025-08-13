@@ -5,8 +5,14 @@ from typing import Iterable
 from .db_utils import get_conn, ensure_initialized, insert_quotes
 from .data_downloader import download_raw_option_data
 from .data_pipeline import enrich_quotes
+from .rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 
-def save_for_tickers(tickers: Iterable[str], max_expiries: int = 8, r: float = 0.0, q: float = 0.0) -> int:
+def save_for_tickers(
+    tickers: Iterable[str],
+    max_expiries: int = 8,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+) -> int:
     conn = get_conn()
     ensure_initialized(conn)
     total = 0
@@ -24,5 +30,5 @@ def save_for_tickers(tickers: Iterable[str], max_expiries: int = 8, r: float = 0
     return total
 
 if __name__ == "__main__":
-    inserted = save_for_tickers(["SPY", "QQQ"], max_expiries=6, r=0.00, q=0.00)
+    inserted = save_for_tickers(["SPY", "QQQ"], max_expiries=6)
     print(f"Total inserted: {inserted}")

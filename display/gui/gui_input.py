@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data.ticker_groups import (
-    save_ticker_group, load_ticker_group, list_ticker_groups, 
+    save_ticker_group, load_ticker_group, list_ticker_groups,
     delete_ticker_group, create_default_groups
 )
 from data.interest_rates import (
@@ -21,6 +21,7 @@ from data.interest_rates import (
     get_interest_rate_names, create_default_interest_rates
 )
 from data.db_utils import get_conn, ensure_initialized
+from data.rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 
 DEFAULT_MODEL = "svi"
 DEFAULT_ATM_BAND = 0.05
@@ -212,6 +213,26 @@ class InputPanel(ttk.Frame):
         self.cmb_date["values"] = dates or []
         if dates:
             self.cmb_date.current(len(dates) - 1)
+
+    def set_rates(self, r: float = STANDARD_RISK_FREE_RATE, q: float = STANDARD_DIVIDEND_YIELD) -> None:
+        """Set the risk-free and dividend rates displayed in the UI."""
+        self.ent_r.delete(0, tk.END)
+        self.ent_r.insert(0, f"{r:.4f}")
+        self.ent_q.delete(0, tk.END)
+        self.ent_q.insert(0, f"{q:.4f}")
+
+    def _parse_rate(self, text: str, default: float) -> float:
+        """Parse user-entered rate; accepts percents or decimals."""
+        try:
+            txt = text.strip().replace('%', '')
+            if not txt:
+                return default
+            val = float(txt)
+            if val > 1:
+                val /= 100.0
+            return val
+        except Exception:
+            return default
 
     # ---------- getters ----------
     def get_target(self) -> str:

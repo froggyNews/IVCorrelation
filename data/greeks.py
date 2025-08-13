@@ -10,6 +10,8 @@ from __future__ import annotations
 import math
 from typing import Literal, Dict, Any
 
+from .rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
+
 OptionCP = Literal["C", "P"]
 
 # ----------------------
@@ -35,7 +37,14 @@ def _safe_positive(x: float, eps: float = 1e-12) -> float:
     return x if x > eps else eps
 
 
-def bs_d1_d2(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: float = 0.0) -> tuple[float, float]:
+def bs_d1_d2(
+    S: float,
+    K: float,
+    T: float,
+    sigma: float,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+) -> tuple[float, float]:
     """Compute Black–Scholes d1 and d2 with safety for tiny values."""
     S = _safe_positive(S)
     K = _safe_positive(K)
@@ -53,7 +62,15 @@ def bs_d1_d2(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: floa
 # Prices
 # ----------------------
 
-def bs_price(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: float = 0.0, cp: OptionCP = "C") -> float:
+def bs_price(
+    S: float,
+    K: float,
+    T: float,
+    sigma: float,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+    cp: OptionCP = "C",
+) -> float:
     """Black–Scholes price for call/put with continuous rates r and dividend yield q."""
     d1, d2 = bs_d1_d2(S, K, T, sigma, r, q)
     df_r = math.exp(-r * T)
@@ -69,26 +86,56 @@ def bs_price(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: floa
 # Greeks (spot-based, not forward)
 # ----------------------
 
-def bs_delta(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: float = 0.0, cp: OptionCP = "C") -> float:
+def bs_delta(
+    S: float,
+    K: float,
+    T: float,
+    sigma: float,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+    cp: OptionCP = "C",
+) -> float:
     d1, _ = bs_d1_d2(S, K, T, sigma, r, q)
     df_q = math.exp(-q * T)
     return df_q * norm_cdf(d1) if cp == "C" else df_q * (norm_cdf(d1) - 1.0)
 
 
-def bs_gamma(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: float = 0.0) -> float:
+def bs_gamma(
+    S: float,
+    K: float,
+    T: float,
+    sigma: float,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+) -> float:
     d1, _ = bs_d1_d2(S, K, T, sigma, r, q)
     df_q = math.exp(-q * T)
     return df_q * norm_pdf(d1) / (_safe_positive(S) * _safe_positive(sigma) * math.sqrt(_safe_positive(T)))
 
 
-def bs_vega(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: float = 0.0) -> float:
+def bs_vega(
+    S: float,
+    K: float,
+    T: float,
+    sigma: float,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+) -> float:
     d1, _ = bs_d1_d2(S, K, T, sigma, r, q)
     df_q = math.exp(-q * T)
     # Vega per 1 vol unit (not %). Multiply by 0.01 if you want per vol point (1%)
     return df_q * _safe_positive(S) * norm_pdf(d1) * math.sqrt(_safe_positive(T))
 
 
-def bs_theta(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: float = 0.0, cp: OptionCP = "C") -> float:
+def bs_theta(
+    S: float,
+    K: float,
+    T: float,
+    sigma: float,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+    cp: OptionCP = "C",
+) -> float:
     d1, d2 = bs_d1_d2(S, K, T, sigma, r, q)
     df_r = math.exp(-r * T)
     df_q = math.exp(-q * T)
@@ -99,7 +146,15 @@ def bs_theta(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: floa
         return term1 + r * K * df_r * norm_cdf(-d2) - q * S * df_q * norm_cdf(-d1)
 
 
-def bs_rho(S: float, K: float, T: float, sigma: float, r: float = 0.0, q: float = 0.0, cp: OptionCP = "C") -> float:
+def bs_rho(
+    S: float,
+    K: float,
+    T: float,
+    sigma: float,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+    cp: OptionCP = "C",
+) -> float:
     _, d2 = bs_d1_d2(S, K, T, sigma, r, q)
     df_r = math.exp(-r * T)
     if cp == "C":
@@ -117,8 +172,8 @@ def compute_all_greeks(
     K: float,
     T: float,
     sigma: float,
-    r: float = 0.0,
-    q: float = 0.0,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
     cp: OptionCP = "C",
 ) -> Dict[str, float]:
     """Return price and Greeks in a dict for easy assignment/DB insert."""
@@ -157,7 +212,11 @@ def compute_all_greeks(
 # Vectorized helper for pandas DataFrames
 # ----------------------
 
-def compute_all_greeks_df(df, r: float = 0.0, q: float = 0.0):
+def compute_all_greeks_df(
+    df,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+):
     """Given a DataFrame with columns S, K, T, sigma, call_put -> add price & Greeks.
     Modifies a copy and returns it (does not mutate in-place).
     """
