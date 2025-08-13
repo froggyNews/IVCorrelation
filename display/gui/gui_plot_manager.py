@@ -148,6 +148,19 @@ class PlotManager:
             self._plot_synth_surface(ax, target, peers, asof, T_days, weight_mode)
             return
 
+        # --- ETF Weights only ---
+        elif plot_type.startswith("ETF Weights"):
+            if not peers:
+                ax.text(0.5, 0.5, "No peers", ha="center", va="center")
+                return
+            weights = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=pillars)
+            if weights is None or weights.empty:
+                ax.text(0.5, 0.5, "No weights", ha="center", va="center")
+                return
+            from display.plotting.weights_plot import plot_weights
+            plot_weights(ax, weights)
+            return
+
         else:
             ax.text(0.5, 0.5, f"Unknown plot: {plot_type}", ha="center", va="center")
 
