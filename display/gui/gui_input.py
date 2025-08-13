@@ -34,9 +34,18 @@ class InputPanel(ttk.Frame):
       - read current settings via getters
       - set date list via set_dates(...)
       - bind target-entry changes and button clicks
+
+    Parameters
+    ----------
+    master : tk.Widget
+        Parent widget.
+    overlay : bool, optional
+        Initial state for the synthetic overlay checkbox.
+    ci_percent : float, optional
+        Confidence interval expressed in percentage (e.g. 68 for 68%).
     """
 
-    def __init__(self, master):
+    def __init__(self, master, *, overlay: bool = True, ci_percent: float = 68.0):
         super().__init__(master)
         self.pack(side=tk.TOP, fill=tk.X, padx=8, pady=6)
         
@@ -123,9 +132,9 @@ class InputPanel(ttk.Frame):
         self.ent_days.insert(0, "30")
         self.ent_days.grid(row=0, column=7, padx=6)
 
-        ttk.Label(row2, text="CI").grid(row=0, column=8, sticky="w")
+        ttk.Label(row2, text="CI (%)").grid(row=0, column=8, sticky="w")
         self.ent_ci = ttk.Entry(row2, width=6)
-        self.ent_ci.insert(0, "0.68")
+        self.ent_ci.insert(0, f"{ci_percent:.0f}")
         self.ent_ci.grid(row=0, column=9, padx=6)
 
         ttk.Label(row2, text="X units").grid(row=0, column=10, sticky="w")
@@ -154,7 +163,7 @@ class InputPanel(ttk.Frame):
         self.ent_pillars.insert(0, "7,30,60,90,180,365")
         self.ent_pillars.grid(row=0, column=15, padx=6)
 
-        self.var_overlay = tk.BooleanVar(value=True)
+        self.var_overlay = tk.BooleanVar(value=bool(overlay))
         self.chk_overlay = ttk.Checkbutton(row3, text="Overlay synthetic", variable=self.var_overlay)
         self.chk_overlay.grid(row=0, column=16, padx=8, sticky="w")
 
@@ -222,8 +231,12 @@ class InputPanel(ttk.Frame):
             return 30.0
 
     def get_ci(self) -> float:
+        """Return CI level as decimal; accepts percentage inputs."""
         try:
-            return float(self.ent_ci.get())
+            val = float(self.ent_ci.get())
+            if val > 1:
+                val /= 100.0
+            return val
         except Exception:
             return 0.68
 
