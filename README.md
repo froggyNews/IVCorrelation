@@ -59,9 +59,10 @@ from analysis.analysis_pipeline import *
 tickers = ["SPY", "QQQ", "AAPL", "MSFT"]
 ingest_and_process(tickers, max_expiries=6)
 
-# Build correlation-weighted synthetic ETF
-weights = {"AAPL": 0.3, "MSFT": 0.3, "GOOGL": 0.4}
-synthetic_surface = build_synthetic_surface(weights)
+# Build synthetic ETF surface with automatic correlation/PCA weights
+target = "SPY"
+peers = ["AAPL", "MSFT", "GOOGL"]
+synthetic_surface, weights = build_synthetic_surface_corrweighted(target, peers)
 
 # Compute volatility betas
 betas = compute_betas("iv_atm", benchmark="SPY")
@@ -127,10 +128,10 @@ SQLite-based storage with tables for:
 
 ### Synthetic ETF Construction
 ```python
-# Build synthetic surface from correlation weights
+# Build synthetic surface from correlation/PCA-derived weights
 target = "SPY"
 peers = ["AAPL", "MSFT", "GOOGL", "AMZN"]
-synthetic = build_synthetic_surface_corrweighted(target, peers)
+synthetic, weights = build_synthetic_surface_corrweighted(target, peers)
 ```
 
 ## 🎨 GUI Features
