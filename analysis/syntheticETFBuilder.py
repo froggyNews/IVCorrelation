@@ -49,8 +49,11 @@ def build_surface_grids(
     df = df.dropna(subset=["iv", "ttm_years", "moneyness"]).copy()
     df["ttm_days"] = df["ttm_years"] * 365.25
 
-    # Bin to nearest tenor
-    df["tenor_bin"] = df["ttm_days"].apply(lambda d: _nearest_tenor(d, tenors))
+    # Bin to nearest tenor (vectorized)
+    tenor_arr = np.asarray(list(tenors), dtype=float)
+    ttm_vals = df["ttm_days"].to_numpy(dtype=float)
+    idx = np.abs(ttm_vals[:, None] - tenor_arr).argmin(axis=1)
+    df["tenor_bin"] = tenor_arr[idx].astype(int)
 
     # Bin moneyness
     labels, edges = _mny_labels(mny_bins)

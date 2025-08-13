@@ -506,6 +506,9 @@ class PlotManager:
                 show_values=True,
                 target=target,       # ok if ignored by the 2-return version
                 peers=peers,
+                auto_detect_pillars=True,  # Use ETF builder style pillar detection
+                min_tickers_per_pillar=3,  # ETF builder style: need 3+ tickers per pillar
+                min_pillars_per_ticker=2,  # ETF builder style: need 2+ pillars per ticker
             )
         except TypeError:
             # older 2-return version
@@ -521,6 +524,9 @@ class PlotManager:
                 corr_method=corr_method,
                 demean_rows=demean_rows,
                 show_values=True,
+                auto_detect_pillars=True,  # Use ETF builder style pillar detection
+                min_tickers_per_pillar=3,  # ETF builder style: need 3+ tickers per pillar
+                min_pillars_per_ticker=2,  # ETF builder style: need 2+ pillars per ticker
             )
 
         # cache for other plots (including PCA)
