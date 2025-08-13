@@ -419,10 +419,27 @@ class PlotManager:
         from analysis.pillars import compute_atm_by_expiry
         from display.plotting.term_plot import plot_atm_term_structure
 
-        atm_target = compute_atm_by_expiry(df, method="fit", model="auto", vega_weighted=True, 
-                                          n_boot=50, ci_level=ci)  # Enable bootstrap CI (fewer boots for speed)
-        plot_atm_term_structure(ax, atm_target, x_units=x_units, connect=True, smooth=True, 
-                               show_ci=True, ci_level=ci, generate_ci=True)
+        # Bootstrap confidence intervals are expensive and block the GUI when
+        # executed on the main thread.  Disable bootstrapping for interactive
+        # plots so the term‑structure view remains responsive.
+        atm_target = compute_atm_by_expiry(
+            df,
+            method="fit",
+            model="auto",
+            vega_weighted=True,
+            n_boot=0,
+            ci_level=ci,
+        )
+        plot_atm_term_structure(
+            ax,
+            atm_target,
+            x_units=x_units,
+            connect=True,
+            smooth=True,
+            show_ci=True,
+            ci_level=ci,
+            generate_ci=False,  # no auto-bootstrap
+        )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_target)})"
 
         if overlay and peers:
@@ -447,7 +464,10 @@ class PlotManager:
                             from display.plotting.term_plot import generate_term_structure_confidence_bands
                             T_orig = synth_curve["T"].to_numpy(float)  # Keep in years for CI calculation
                             T_grid, ci_lo, ci_hi = generate_term_structure_confidence_bands(
-                                T=T_orig, atm_vol=y, level=ci, n_boot=50  # Fewer bootstrap for synthetic
+                                T=T_orig,
+                                atm_vol=y,
+                                level=ci,
+                                n_boot=0,  # disable bootstrap to avoid UI stall
                             )
                             if len(T_grid) > 0:
                                 if x_units == "days":
