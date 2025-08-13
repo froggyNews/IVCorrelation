@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS ticker_groups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ticker_groups_target ON ticker_groups(target_ticker);
+
+CREATE TABLE IF NOT EXISTS interest_rates (
+    rate_id        TEXT    PRIMARY KEY,
+    rate_value     REAL    NOT NULL,
+    description    TEXT,
+    is_default     INTEGER DEFAULT 0,
+    created_at     TEXT    NOT NULL,
+    updated_at     TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_interest_rates_default ON interest_rates(is_default);
 """
 
 MIGRATIONS = [

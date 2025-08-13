@@ -69,7 +69,11 @@ def compute_and_plot_correlation(
     show_values: bool = True,
     clip_negative: bool = True,
     power: float = 1.0,
-    auto_detect_pillars: bool = True,
+
+    auto_detect_pillars: bool = True,  # New parameter
+    min_tickers_per_pillar: int = 3,   # ETF builder style: need at least 3 tickers per pillar
+    min_pillars_per_ticker: int = 2,   # ETF builder style: need at least 2 pillars per ticker
+
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.Series]]:
     """
     Build ATM-by-pillar matrix and correlation matrix; draw heatmap.
@@ -87,6 +91,7 @@ def compute_and_plot_correlation(
     cached_pillars = _PILLAR_DETECTION_CACHE.get(key)
 
     if auto_detect_pillars:
+
         if cached_pillars is not None:
             if cached_pillars:
                 pillars_days = cached_pillars
@@ -120,11 +125,8 @@ def compute_and_plot_correlation(
             print(
                 f"⚡ Auto-detection skipped; using cached pillars: {pillars_days}"
             )
-        else:
-            print(
-                f"⚡ Auto-detection skipped; using preset pillars: {list(pillars_days)}"
-            )
-    
+
+
     atm_df, corr_df = build_atm_matrix(
         get_smile_slice=get_smile_slice,
         tickers=tickers,
@@ -136,6 +138,39 @@ def compute_and_plot_correlation(
         corr_method=corr_method,
         demean_rows=demean_rows,
     )
+    
+    # Apply ETF builder style filtering for better data quality
+    if not atm_df.empty:
+        # Filter columns (pillars) that have insufficient ticker coverage
+        col_coverage = atm_df.count(axis=0)
+        good_pillars = col_coverage[col_coverage >= min_tickers_per_pillar].index
+        if len(good_pillars) >= 2:  # Need at least 2 pillars for correlation
+            atm_df = atm_df[good_pillars]
+            print(f"📊 Filtered to {len(good_pillars)} pillars with ≥{min_tickers_per_pillar} tickers each")
+        
+        # Filter rows (tickers) that have insufficient pillar coverage
+        row_coverage = atm_df.count(axis=1)
+        good_tickers = row_coverage[row_coverage >= min_pillars_per_ticker].index
+        if len(good_tickers) >= 2:  # Need at least 2 tickers for correlation
+            atm_df = atm_df.loc[good_tickers]
+            print(f"📊 Filtered to {len(good_tickers)} tickers with ≥{min_pillars_per_ticker} pillars each")
+        
+        # Rebuild correlation matrix with filtered data
+        if not atm_df.empty and atm_df.shape[0] >= 2 and atm_df.shape[1] >= 2:
+            # Use ETF builder style correlation with ridge regularization
+            atm_clean = atm_df.dropna()
+            if not atm_clean.empty and atm_clean.shape[0] >= 2 and atm_clean.shape[1] >= 2:
+                # Standardize and add ridge like ETF builder
+                atm_std = (atm_clean - atm_clean.mean(axis=1).values.reshape(-1, 1)) / (atm_clean.std(axis=1).values.reshape(-1, 1) + 1e-8)
+                corr_matrix = (atm_std @ atm_std.T) / max(atm_std.shape[1] - 1, 1)
+                # Add ridge regularization for stability (ETF builder style)
+                ridge = 1e-6
+                corr_matrix = corr_matrix + ridge * np.eye(corr_matrix.shape[0])
+                corr_df = pd.DataFrame(corr_matrix, index=atm_clean.index, columns=atm_clean.index)
+            else:
+                corr_df = pd.DataFrame(index=atm_df.index, columns=atm_df.index, dtype=float)
+        else:
+            corr_df = pd.DataFrame(index=atm_df.index, columns=atm_df.index, dtype=float)
 
     weights = None
     if target and peers:
@@ -165,14 +200,28 @@ def plot_correlation_details(
 
     data = corr_df.to_numpy(dtype=float)
     finite_count = np.sum(np.isfinite(data))
+    total_elements = data.size
+    
     if finite_count == 0:
         ax.text(0.5, 0.5, "No valid correlations\n(insufficient overlapping data)",
                 ha="center", va="center", fontsize=12)
         return
-    if finite_count < data.size * 0.5:
-        ax.text(0.5, 0.9, f"Warning: Limited data\n({finite_count}/{data.size} finite)",
+    
+    # ETF builder style data quality assessment
+    data_quality = finite_count / total_elements if total_elements > 0 else 0
+    
+    if data_quality < 0.3:
+        ax.text(0.5, 0.9, f"⚠️ Poor data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
+                ha="center", va="top", fontsize=10, color="red",
+                transform=ax.transAxes, bbox=dict(boxstyle="round", facecolor="lightcoral", alpha=0.3))
+    elif data_quality < 0.7:
+        ax.text(0.5, 0.9, f"⚠️ Limited data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
                 ha="center", va="top", fontsize=10, color="orange",
                 transform=ax.transAxes, bbox=dict(boxstyle="round", facecolor="yellow", alpha=0.3))
+    else:
+        ax.text(0.5, 0.9, f"✅ Good data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
+                ha="center", va="top", fontsize=10, color="green",
+                transform=ax.transAxes, bbox=dict(boxstyle="round", facecolor="lightgreen", alpha=0.3))
 
     im = ax.imshow(data, vmin=-1.0, vmax=1.0, cmap="coolwarm", interpolation="nearest")
     if not hasattr(ax, "_colorbar_added"):
