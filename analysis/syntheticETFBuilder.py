@@ -36,15 +36,37 @@ def build_surface_grids(
     If tickers is None, use all tickers in DB. If use_atm_only=True, only keep rows with is_atm=1.
     """
     conn = get_conn()
-    q = "SELECT asof_date, ticker, ttm_years, moneyness, iv, is_atm FROM options_quotes"
-    df = pd.read_sql_query(q, conn)
+
+    # Ensure helpful indexes exist for common query filters
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_options_quotes_ticker ON options_quotes(ticker)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_options_quotes_asof_date ON options_quotes(asof_date)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_options_quotes_is_atm ON options_quotes(is_atm)"
+    )
+    conn.commit()
+
+    cols = "asof_date, ticker, ttm_years, moneyness, iv, is_atm"
+    q = f"SELECT {cols} FROM options_quotes"
+    params: list = []
+    clauses = []
+    tickers_list = list(tickers) if tickers else []
+    if tickers_list:
+        placeholders = ",".join(["?"] * len(tickers_list))
+        clauses.append(f"ticker IN ({placeholders})")
+        params.extend(tickers_list)
+    if use_atm_only:
+        clauses.append("is_atm = ?")
+        params.append(1)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
+
+    df = pd.read_sql_query(q, conn, params=params)
     if df.empty:
         return {}
-
-    if tickers is not None:
-        df = df[df["ticker"].isin(list(tickers))]
-    if use_atm_only:
-        df = df[df["is_atm"] == 1]
 
     df = df.dropna(subset=["iv", "ttm_years", "moneyness"]).copy()
     df["ttm_days"] = df["ttm_years"] * 365.25
