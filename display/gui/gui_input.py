@@ -151,16 +151,15 @@ class InputPanel(ttk.Frame):
         self.chk_overlay = ttk.Checkbutton(row2, variable=self.var_overlay, onvalue=True, offvalue=False)
         self.chk_overlay.grid(row=0, column=7, padx=6)
 
-        ttk.Label(row2, text="Target T (days)").grid(row=0, column=6, sticky="w")
+        ttk.Label(row2, text="Target T (days)").grid(row=0, column=8, sticky="w")
         self.ent_days = ttk.Entry(row2, width=6)
         self.ent_days.insert(0, "30")
-        self.ent_days.grid(row=0, column=7, padx=6)
-        self.var_overlay = tk.BooleanVar(value=True)
+        self.ent_days.grid(row=0, column=9, padx=6)
 
-        ttk.Label(row2, text="CI (%)").grid(row=0, column=8, sticky="w")
+        ttk.Label(row2, text="CI (%)").grid(row=0, column=10, sticky="w")
         self.ent_ci = ttk.Entry(row2, width=6)
         self.ent_ci.insert(0, f"{ci_percent:.0f}")
-        self.ent_ci.grid(row=0, column=9, padx=6)
+        self.ent_ci.grid(row=0, column=11, padx=6)
 
         ttk.Label(row2, text="X units").grid(row=0, column=10, sticky="w")
         self.cmb_xunits = ttk.Combobox(row2, values=["years", "days"], width=8, state="readonly")
@@ -174,26 +173,26 @@ class InputPanel(ttk.Frame):
         
         row3 = ttk.Frame(self); row3.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
 
-        ttk.Label(row3, text="Weight mode").grid(row=0, column=12, sticky="w")
+        ttk.Label(row3, text="Weight mode").grid(row=0, column=2, sticky="w")
         self.cmb_weight_mode = ttk.Combobox(row3, values=[
             "iv_atm", "ul", "surface",
             "pca_atm_market", "pca_atm_regress", 
             "pca_surface_market", "pca_surface_regress"
         ], width=18, state="readonly")
         self.cmb_weight_mode.set("iv_atm")
-        self.cmb_weight_mode.grid(row=0, column=13, padx=6)
+        self.cmb_weight_mode.grid(row=0, column=3, padx=6)
 
-        ttk.Label(row3, text="Pillars (days)").grid(row=0, column=14, sticky="w")
-        self.ent_pillars = ttk.Entry(row2, width=18)
+        ttk.Label(row3, text="Pillars (days)").grid(row=0, column=0, sticky="w")
+        self.ent_pillars = ttk.Entry(row3, width=18)
         self.ent_pillars.insert(0, "7,30,60,90,180,365")
-        self.ent_pillars.grid(row=0, column=15, padx=6)
+        self.ent_pillars.grid(row=0, column=1, padx=6)
 
         self.var_overlay = tk.BooleanVar(value=bool(overlay))
         self.chk_overlay = ttk.Checkbutton(row3, text="Overlay synthetic", variable=self.var_overlay)
-        self.chk_overlay.grid(row=0, column=16, padx=8, sticky="w")
+        self.chk_overlay.grid(row=0, column=4, padx=8, sticky="w")
 
         self.btn_plot = ttk.Button(row3, text="Plot")
-        self.btn_plot.grid(row=0, column=17, padx=8)
+        self.btn_plot.grid(row=0, column=5, padx=8)
 
 
     # ---------- bindings ----------
@@ -253,6 +252,25 @@ class InputPanel(ttk.Frame):
         except Exception:
             return 6
 
+    def get_interest_rate(self) -> float:
+        """Get the current interest rate value from the persistent system."""
+        try:
+            rate_str = self.ent_r.get().strip()
+            if not rate_str:
+                return get_default_interest_rate()
+            
+            rate_value = float(rate_str)
+            
+            # Convert to decimal if percentage (values > 1 are assumed to be percentages)
+            if rate_value > 1:
+                rate_value = rate_value / 100.0
+            
+            return rate_value
+            
+        except ValueError:
+            # Return default if parsing fails
+            return get_default_interest_rate()
+
     def get_rates(self) -> tuple[float, float]:
         """Get interest rate and dividend yield. Uses persistent interest rate system."""
         r = self.get_interest_rate()  # Use our new persistent interest rate method
@@ -289,19 +307,19 @@ class InputPanel(ttk.Frame):
 
 
     def get_x_units(self) -> str:
-        return DEFAULT_X_UNITS
+        return self.cmb_xunits.get() or DEFAULT_X_UNITS
 
     def get_weight_mode(self) -> str:
-        return DEFAULT_WEIGHT_MODE
-
-    def get_overlay(self) -> bool:
-        return DEFAULT_OVERLAY
+        return self.cmb_weight_mode.get() or DEFAULT_WEIGHT_MODE
 
     def get_pillars(self) -> list[int]:
-        return list(DEFAULT_PILLARS)
-    
-    def get_overlay(self) -> bool:
-        return bool(self.var_overlay.get())
+        try:
+            txt = self.ent_pillars.get().strip()
+            if not txt:
+                return list(DEFAULT_PILLARS)
+            return [int(p.strip()) for p in txt.split(",") if p.strip().isdigit()]
+        except Exception:
+            return list(DEFAULT_PILLARS)
     
     # ---------- preset management ----------
     def _init_ticker_groups(self):
