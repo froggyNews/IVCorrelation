@@ -19,6 +19,11 @@ from data.db_utils import get_conn, ensure_initialized
 
 DEFAULT_MODEL = "svi"
 DEFAULT_ATM_BAND = 0.05
+DEFAULT_CI = 0.68
+DEFAULT_X_UNITS = "years"
+DEFAULT_WEIGHT_MODE = "iv_atm"
+DEFAULT_PILLARS = [7,30,60,90,180,365]
+DEFAULT_OVERLAY = False
 PLOT_TYPES = (
     "Smile (K/S vs IV)",
     "Term (ATM vs T)",
@@ -123,43 +128,8 @@ class InputPanel(ttk.Frame):
         self.ent_days.insert(0, "30")
         self.ent_days.grid(row=0, column=7, padx=6)
 
-        ttk.Label(row2, text="CI").grid(row=0, column=8, sticky="w")
-        self.ent_ci = ttk.Entry(row2, width=6)
-        self.ent_ci.insert(0, "0.68")
-        self.ent_ci.grid(row=0, column=9, padx=6)
-
-        ttk.Label(row2, text="X units").grid(row=0, column=10, sticky="w")
-        self.cmb_xunits = ttk.Combobox(row2, values=["years", "days"], width=8, state="readonly")
-        self.cmb_xunits.set("years")
-        self.cmb_xunits.grid(row=0, column=11, padx=6)
-
-        ttk.Label(row2, text="Mode").grid(row=0, column=12, sticky="w")
-        self.cmb_mode = ttk.Combobox(row2, values=["atm", "term", "surface"], width=10, state="readonly")
-        self.cmb_mode.set("atm")
-        self.cmb_mode.grid(row=0, column=13, padx=6)
-        
-        row3 = ttk.Frame(self); row3.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
-
-        ttk.Label(row3, text="Weight mode").grid(row=0, column=12, sticky="w")
-        self.cmb_weight_mode = ttk.Combobox(row3, values=[
-            "iv_atm", "ul", "surface",
-            "pca_atm_market", "pca_atm_regress", 
-            "pca_surface_market", "pca_surface_regress"
-        ], width=18, state="readonly")
-        self.cmb_weight_mode.set("iv_atm")
-        self.cmb_weight_mode.grid(row=0, column=13, padx=6)
-
-        ttk.Label(row3, text="Pillars (days)").grid(row=0, column=14, sticky="w")
-        self.ent_pillars = ttk.Entry(row2, width=18)
-        self.ent_pillars.insert(0, "7,30,60,90,180,365")
-        self.ent_pillars.grid(row=0, column=15, padx=6)
-
-        self.var_overlay = tk.BooleanVar(value=True)
-        self.chk_overlay = ttk.Checkbutton(row3, text="Overlay synthetic", variable=self.var_overlay)
-        self.chk_overlay.grid(row=0, column=16, padx=8, sticky="w")
-
-        self.btn_plot = ttk.Button(row3, text="Plot")
-        self.btn_plot.grid(row=0, column=17, padx=8)
+        self.btn_plot = ttk.Button(row2, text="Plot")
+        self.btn_plot.grid(row=0, column=8, padx=8)
 
     # ---------- bindings ----------
     def bind_download(self, fn: Callable[[], None]):
@@ -222,33 +192,19 @@ class InputPanel(ttk.Frame):
             return 30.0
 
     def get_ci(self) -> float:
-        try:
-            return float(self.ent_ci.get())
-        except Exception:
-            return 0.68
+        return DEFAULT_CI
 
     def get_x_units(self) -> str:
-        return self.cmb_xunits.get()
+        return DEFAULT_X_UNITS
 
     def get_weight_mode(self) -> str:
-        return self.cmb_weight_mode.get()
+        return DEFAULT_WEIGHT_MODE
 
     def get_overlay(self) -> bool:
-        return bool(self.var_overlay.get())
+        return DEFAULT_OVERLAY
 
     def get_pillars(self) -> list[int]:
-        raw = (self.ent_pillars.get() or "").strip()
-        if not raw:
-            return [7,30,60,90,180,365]
-        vals = []
-        for tok in raw.split(","):
-            tok = tok.strip()
-            if tok:
-                try:
-                    vals.append(int(float(tok)))
-                except Exception:
-                    pass
-        return vals or [7,30,60,90,180,365]
+        return list(DEFAULT_PILLARS)
     
     # ---------- preset management ----------
     def _init_ticker_groups(self):
