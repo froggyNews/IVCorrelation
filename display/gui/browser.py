@@ -32,6 +32,13 @@ class BrowserApp(tk.Tk):
         self.inputs.bind_plot(self._refresh_plot)
         self.inputs.bind_target_change(self._on_target_change)
 
+        # Expiry navigation
+        nav = ttk.Frame(self); nav.pack(side=tk.TOP, fill=tk.X, pady=(0,4))
+        self.btn_prev = ttk.Button(nav, text="Prev Expiry", command=self._prev_expiry)
+        self.btn_prev.pack(side=tk.LEFT, padx=4)
+        self.btn_next = ttk.Button(nav, text="Next Expiry", command=self._next_expiry)
+        self.btn_next.pack(side=tk.LEFT, padx=4)
+
         # Canvas
         self.fig = plt.Figure(figsize=(11.2, 6.6))
         self.ax = self.fig.add_subplot(1,1,1)
@@ -51,6 +58,8 @@ class BrowserApp(tk.Tk):
         if tickers and not self.inputs.get_target():
             self.inputs.ent_target.insert(0, tickers[0])
             self._on_target_change()
+
+        self._update_nav_buttons()
 
     # ---------- events ----------
     def _on_target_change(self, *_):
@@ -107,14 +116,31 @@ class BrowserApp(tk.Tk):
             try:
                 self.plot_mgr.plot(self.ax, settings)
                 self.canvas.draw()
+                self.after(0, self._update_nav_buttons)
                 self.after(0, lambda: self.status.config(text="Plot updated"))
             except Exception as e:
-                self.after(0, lambda: (messagebox.showerror("Plot error", str(e)),
-                                       self.status.config(text="Plot failed")))
+                def handle_err():
+                    messagebox.showerror("Plot error", str(e))
+                    self.status.config(text="Plot failed")
+                    self._update_nav_buttons()
+                self.after(0, handle_err)
 
         threading.Thread(target=worker, daemon=True).start()
 
     # ---------- helpers ----------
+    def _prev_expiry(self):
+        self.plot_mgr.prev_expiry()
+        self.canvas.draw()
+
+    def _next_expiry(self):
+        self.plot_mgr.next_expiry()
+        self.canvas.draw()
+
+    def _update_nav_buttons(self):
+        state = tk.NORMAL if self.plot_mgr.is_smile_active() else tk.DISABLED
+        self.btn_prev.config(state=state)
+        self.btn_next.config(state=state)
+
     def _load_tickers(self):
         try:
             return available_tickers()
