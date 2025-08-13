@@ -20,10 +20,6 @@ from typing import Dict, Iterable, Optional, Tuple, List, Mapping, Union
 import json
 import os
 
-import sys
-from pathlib import Path
-import sqlite3
-
 
 import numpy as np
 import pandas as pd
@@ -40,30 +36,18 @@ from .syntheticETFBuilder import (
     combine_surfaces,
     build_synthetic_iv as build_synthetic_iv_pillars,
 )
-from .beta_builder import pca_weights, ul_betas, iv_atm_betas, surface_betas
+
+from .beta_builder import (
+    pca_weights,
+    ul_betas,
+    iv_atm_betas,
+    surface_betas,
+    peer_weights_from_correlations,
+    build_vol_betas,
+    save_correlations,
+)
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 
-# Module-level read-only connection cache for lightweight queries
-_RO_CONN: Optional[sqlite3.Connection] = None
-
-
-def _get_ro_conn() -> sqlite3.Connection:
-    """Return a cached sqlite3 connection for read-only queries."""
-    global _RO_CONN
-    if _RO_CONN is None:
-        _RO_CONN = get_conn()
-    return _RO_CONN
-
-# Module-level read-only connection cache for lightweight queries
-_RO_CONN: Optional[sqlite3.Connection] = None
-
-
-def _get_ro_conn() -> sqlite3.Connection:
-    """Return a cached sqlite3 connection for read-only queries."""
-    global _RO_CONN
-    if _RO_CONN is None:
-        _RO_CONN = get_conn()
-    return _RO_CONN
 
 # =========================
 # Config (GUI friendly)

@@ -4,6 +4,7 @@ from typing import Iterable, Optional, Tuple, Dict, List, Union
 import math
 import numpy as np
 import pandas as pd
+import os
 
 # Reuse your existing, tested builders
 from analysis.pillars import build_atm_matrix, load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS  # :contentReference[oaicite:2]{index=2}
@@ -316,3 +317,94 @@ def surface_betas(benchmark: str,
             continue
         betas[t] = _beta(wide.rename(columns={t: "x", benchmark: "b"}), "x", "b")
     return pd.Series(betas, name="iv_surface_beta")
+
+
+# =========================
+# Convenience wrappers for pipeline
+# =========================
+
+def build_vol_betas(
+    mode: str,
+    benchmark: str,
+    pillar_days: Iterable[int] | None = None,
+    tenor_days: Iterable[int] | None = None,
+    mny_bins: Iterable[Tuple[float, float]] | None = None,
+):
+    """Dispatch to the appropriate beta calculator based on ``mode``."""
+    mode = (mode or "").lower()
+    if mode == "ul":
+        from data.db_utils import get_conn
+
+        return ul_betas(benchmark, get_conn)
+    if mode == "iv_atm":
+        return iv_atm_betas(benchmark, pillar_days=pillar_days or DEFAULT_PILLARS_DAYS)
+    if mode == "surface":
+        return surface_betas(
+            benchmark,
+            tenors=tenor_days or (7, 30, 60, 90, 180, 365),
+            mny_bins=mny_bins or ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+        )
+    raise ValueError(f"unknown beta mode: {mode}")
+
+
+def peer_weights_from_correlations(
+    benchmark: str,
+    peers: Iterable[str] | None = None,
+    mode: str = "iv_atm",
+    pillar_days: Iterable[int] | None = None,
+    tenor_days: Iterable[int] | None = None,
+    mny_bins: Iterable[Tuple[float, float]] | None = None,
+    clip_negative: bool = True,
+    power: float = 1.0,
+) -> pd.Series:
+    """Convert correlation/beta metrics into normalized peer weights."""
+    peers_list = [p.upper() for p in peers] if peers else []
+    if not peers_list:
+        return pd.Series(dtype=float)
+
+    res = build_vol_betas(
+        mode=mode,
+        benchmark=benchmark,
+        pillar_days=pillar_days,
+        tenor_days=tenor_days,
+        mny_bins=mny_bins,
+    )
+
+    if isinstance(res, dict):
+        ser = pd.concat(res).groupby(level=1).mean()
+    else:
+        ser = res
+
+    ser = ser.reindex(peers_list).dropna()
+    if clip_negative:
+        ser = ser.clip(lower=0.0)
+    if power is not None and float(power) != 1.0:
+        ser = ser.pow(float(power))
+
+    total = float(ser.sum())
+    if not np.isfinite(total) or total <= 0:
+        return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+    return (ser / total).reindex(peers_list).fillna(0.0)
+
+
+def save_correlations(
+    mode: str,
+    benchmark: str,
+    base_path: str = "data",
+    **kwargs,
+) -> list[str]:
+    """Persist beta/correlation metrics to CSV files."""
+    res = build_vol_betas(mode=mode, benchmark=benchmark, **kwargs)
+    os.makedirs(base_path, exist_ok=True)
+    paths: list[str] = []
+
+    if isinstance(res, dict):
+        for pillar, ser in res.items():
+            p = os.path.join(base_path, f"betas_{mode}_{int(pillar)}d_vs_{benchmark}.csv")
+            ser.sort_index().to_csv(p, header=True)
+            paths.append(p)
+    else:
+        p = os.path.join(base_path, f"betas_{mode}_vs_{benchmark}.csv")
+        res.sort_index().to_csv(p, header=True)
+        paths.append(p)
+    return paths
