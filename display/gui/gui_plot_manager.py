@@ -178,21 +178,15 @@ class PlotManager:
 
     # ---- implementations ----
     def _on_click(self, event):
-        if self._current_plot_type is None or not self._current_plot_type.startswith("Smile"):
-            return
-        if self._smile_ctx is None or event.inaxes is None:
+        if not self.is_smile_active() or event.inaxes is None:
             return
         if event.inaxes is not self._smile_ctx["ax"]:
             return
 
-        if event.button == 1:   # left click -> next expiry
-            self._smile_ctx["idx"] = min(self._smile_ctx["idx"] + 1, len(self._smile_ctx["Ts"]) - 1)
-        elif event.button in (3, 2):  # right/middle -> previous expiry
-            self._smile_ctx["idx"] = max(self._smile_ctx["idx"] - 1, 0)
-        else:
-            return
-
-        self._render_smile_at_index()
+        if event.button == 1:
+            self.next_expiry()
+        elif event.button in (3, 2):
+            self.prev_expiry()
 
     def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None) -> pd.Series:
         """
@@ -417,10 +411,33 @@ class PlotManager:
             ax.legend(loc="best", fontsize=8)
 
         days = int(round(T0 * 365.25))
-        ax.set_title(f"{target}  {asof}  T≈{T0:.3f}y (~{days}d)  RMSE={info['rmse']:.4f}\n"
-                    f"(Click: L=next expiry, R=prev)")
+        ax.set_title(
+            f"{target}  {asof}  T≈{T0:.3f}y (~{days}d)  RMSE={info['rmse']:.4f}\n"
+            f"(Use buttons or click: L=next, R=prev)"
+        )
         if self.canvas is not None:
             self.canvas.draw_idle()
+
+    def is_smile_active(self) -> bool:
+        return (
+            self._current_plot_type is not None
+            and self._current_plot_type.startswith("Smile")
+            and self._smile_ctx is not None
+        )
+
+    def next_expiry(self):
+        if not self.is_smile_active():
+            return
+        Ts = self._smile_ctx["Ts"]
+        self._smile_ctx["idx"] = min(self._smile_ctx["idx"] + 1, len(Ts) - 1)
+        self._render_smile_at_index()
+
+    def prev_expiry(self):
+        if not self.is_smile_active():
+            return
+        Ts = self._smile_ctx["Ts"]
+        self._smile_ctx["idx"] = max(self._smile_ctx["idx"] - 1, 0)
+        self._render_smile_at_index()
 
     def _plot_term(self, ax, df, target, asof, x_units, ci, overlay, peers, weight_mode):
         """
