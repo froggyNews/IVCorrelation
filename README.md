@@ -9,6 +9,7 @@ A comprehensive Python application for analyzing implied volatility correlations
 - **Correlation Analysis**: Compute correlations across different modes (ATM, term structure, full surface)
 - **Synthetic ETF Modeling**: Create synthetic volatility surfaces using correlation-weighted combinations
 - **Greeks Calculation**: Full Black-Scholes Greeks computation with risk-free rates and dividend yields
+- **Standard Rates**: Assumes a 4.08% risk-free rate by default, adjustable in the GUI
 
 ### Advanced Modeling
 - **SVI & SABR Volatility Models**: Fit industry-standard volatility models with confidence intervals

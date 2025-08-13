@@ -32,6 +32,7 @@ import numpy as np
 # --- project modules ---
 from data.historical_saver import save_for_tickers
 from data.db_utils import get_conn
+from data.rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 from analysis.syntheticETFBuilder import build_surface_grids, DEFAULT_TENORS, DEFAULT_MNY_BINS
 from analysis.syntheticETFBuilder import combine_surfaces, build_synthetic_iv as build_synthetic_iv_pillars
 from analysis.beta_builder import   pca_weights, ul_betas, iv_atm_betas, surface_betas
@@ -66,8 +67,8 @@ class PipelineConfig:
 def ingest_and_process(
     tickers: Iterable[str],
     max_expiries: int = 6,
-    r: float = 0.0,
-    q: float = 0.0,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
 ) -> int:
     """Download raw chains, enrich via pipeline, and persist to DB."""
     return save_for_tickers(tickers, max_expiries=max_expiries, r=r, q=q)
@@ -659,7 +660,7 @@ def load_surface_from_cache(path: str) -> Dict[str, Dict[pd.Timestamp, pd.DataFr
 if __name__ == "__main__":
     cfg = PipelineConfig()
     # 1) Ingest a couple of tickers (comment out if DB already populated)
-    inserted = ingest_and_process(["SPY", "QQQ"], max_expiries=6, r=0.0, q=0.0)
+    inserted = ingest_and_process(["SPY", "QQQ"], max_expiries=6)
     print(f"Inserted rows: {inserted}")
 
     # 2) Build and cache surfaces for the GUI

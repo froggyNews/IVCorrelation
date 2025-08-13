@@ -13,13 +13,18 @@ import numpy as np
 import pandas as pd
 
 from .greeks import compute_all_greeks_df
+from .rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 
 def _compute_ttm_years(expiry_iso: str, asof_date_iso: str) -> float:
     expiry_dt = pd.to_datetime(expiry_iso, utc=True)
     asof_dt = pd.to_datetime(asof_date_iso, utc=True)
     return float((expiry_dt - asof_dt) / pd.Timedelta(days=365.25))
 
-def enrich_quotes(raw_df: pd.DataFrame, r: float = 0.0, q: float = 0.0) -> pd.DataFrame:
+def enrich_quotes(
+    raw_df: pd.DataFrame,
+    r: float = STANDARD_RISK_FREE_RATE,
+    q: float = STANDARD_DIVIDEND_YIELD,
+) -> pd.DataFrame:
     if raw_df is None or raw_df.empty:
         return raw_df
 
