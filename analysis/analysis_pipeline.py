@@ -17,33 +17,34 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from functools import lru_cache
 from typing import Dict, Iterable, Optional, Tuple, List, Mapping, Union
-import os
-import sys
-from pathlib import Path
-
-# Add project root to sys.path
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 import json
-import pandas as pd
-import numpy as np
+import os
 
-# --- project modules ---
+import numpy as np
+import pandas as pd
+
 from data.historical_saver import save_for_tickers
 from data.db_utils import get_conn
 from data.rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
-from analysis.syntheticETFBuilder import build_surface_grids, DEFAULT_TENORS, DEFAULT_MNY_BINS
-from analysis.syntheticETFBuilder import combine_surfaces, build_synthetic_iv as build_synthetic_iv_pillars
-from analysis.beta_builder import   pca_weights, ul_betas, iv_atm_betas, surface_betas
-from analysis.pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
-
-
-
-from volModel.volModel import VolModel
-
-
 from data.data_pipeline import enrich_quotes
+from volModel.volModel import VolModel
+from .syntheticETFBuilder import (
+    build_surface_grids,
+    DEFAULT_TENORS,
+    DEFAULT_MNY_BINS,
+    combine_surfaces,
+    build_synthetic_iv as build_synthetic_iv_pillars,
+)
+from .beta_builder import (
+    pca_weights,
+    ul_betas,
+    iv_atm_betas,
+    surface_betas,
+    peer_weights_from_correlations,
+    build_vol_betas,
+    save_correlations,
+)
+from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 
 # =========================
 # Config (GUI friendly)
