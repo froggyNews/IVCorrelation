@@ -188,7 +188,7 @@ class InputPanel(ttk.Frame):
         self.ent_pillars.grid(row=0, column=1, padx=6)
 
         self.var_overlay = tk.BooleanVar(value=bool(overlay))
-        self.chk_overlay = ttk.Checkbutton(row3, text="Overlay synthetic", variable=self.var_overlay)
+        self.chk_overlay = ttk.Checkbutton(row3, text="Overlay synthetic & peers", variable=self.var_overlay)
         self.chk_overlay.grid(row=0, column=4, padx=8, sticky="w")
 
         self.btn_plot = ttk.Button(row3, text="Plot")

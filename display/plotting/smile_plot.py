@@ -1,6 +1,6 @@
 # display/plotting/smile_plot.py
 from __future__ import annotations
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple, Dict
 import numpy as np
 
 import matplotlib.pyplot as plt
@@ -22,6 +22,8 @@ def fit_and_plot_smile(
     ci_level: float = 0.68,
     show_points: bool = True,
     beta: float = 0.5,
+    label: Optional[str] = None,
+    line_kwargs: Optional[Dict] = None,
 ) -> dict:
     """
     Scatter observed points + fitted curve + shaded CI.
@@ -50,7 +52,10 @@ def fit_and_plot_smile(
             bands = sabr_confidence_bands(S, K, T, iv, K_grid, beta=beta, level=ci_level, n_boot=200)
 
     # line
-    ax.plot(K_grid / S, y_fit, lw=2, label=f"{model.upper()} fit")
+    lw_default = 2 if show_points else 1.5
+    line_kwargs = line_kwargs.copy() if line_kwargs else {}
+    line_kwargs.setdefault("lw", lw_default)
+    ax.plot(K_grid / S, y_fit, label=label or f"{model.upper()} fit", **line_kwargs)
 
     # bands
     if bands is not None:

@@ -117,6 +117,7 @@ class PlotManager:
 
             weights = None
             synth_curve = None
+            peer_slices: dict[str, dict] = {}
             if overlay and peers:
                 weights = self._weights_from_ui_or_matrix(
                     target, peers, weight_mode, asof=asof,
@@ -126,6 +127,20 @@ class PlotManager:
                     asof=asof, peers=peers, weights=weights,
                     atm_band=ATM_BAND, t_tolerance_days=10.0,
                 )
+                for p in peers:
+                    df_p = get_smile_slice(p, asof, T_target_years=None)
+                    if df_p is None or df_p.empty:
+                        continue
+                    T_p = pd.to_numeric(df_p["T"], errors="coerce").to_numpy(float)
+                    K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float)
+                    sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float)
+                    S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float)
+                    peer_slices[p.upper()] = {
+                        "T_arr": T_p,
+                        "K_arr": K_p,
+                        "sigma_arr": sigma_p,
+                        "S_arr": S_p,
+                    }
 
             self._smile_ctx = {
                 "ax": ax,
@@ -138,6 +153,7 @@ class PlotManager:
                 "settings": settings,
                 "weights": weights,
                 "synth_curve": synth_curve,
+                "peer_slices": peer_slices,
             }
             self._render_smile_at_index()
             return
@@ -397,7 +413,8 @@ class PlotManager:
 
         info = fit_and_plot_smile(
             ax, S=S, K=K, T=T0, iv=IV,
-            model=model, moneyness_grid=(0.7, 1.3, 121), ci_level=ci, show_points=True
+            model=model, moneyness_grid=(0.7, 1.3, 121), ci_level=ci, show_points=True,
+            label=f"{target} {model.upper()}"
         )
 
         # overlay: horizontal synthetic ATM (from cached curve) at this T
@@ -408,7 +425,34 @@ class PlotManager:
             jx = int(np.argmin(np.abs(x_days - T0 * 365.25)))
             iv_synth = float(y[jx])
             ax.axhline(iv_synth, linestyle="--", linewidth=1.5, alpha=0.9, label="Synthetic ATM (corr-matrix)")
-            ax.legend(loc="best", fontsize=8)
+
+        peer_slices = self._smile_ctx.get("peer_slices") or {}
+        if peer_slices:
+            for p, d in peer_slices.items():
+                T_p = d["T_arr"]
+                K_p = d["K_arr"]
+                sigma_p = d["sigma_arr"]
+                S_p = d["S_arr"]
+                if T_p.size == 0:
+                    continue
+                jp = int(np.nanargmin(np.abs(T_p - T0)))
+                T0p = float(T_p[jp])
+                maskp = np.isclose(T_p, T0p)
+                if not np.any(maskp):
+                    tol = 1e-6
+                    maskp = (T_p >= T0p - tol) & (T_p <= T0p + tol)
+                if not np.any(maskp):
+                    continue
+                Sp = float(np.nanmedian(S_p[maskp]))
+                Kp = K_p[maskp]
+                IVp = sigma_p[maskp]
+                fit_and_plot_smile(
+                    ax, S=Sp, K=Kp, T=T0p, iv=IVp,
+                    model=model, moneyness_grid=(0.7, 1.3, 121), ci_level=0,
+                    show_points=False, label=p, line_kwargs={"alpha":0.7}
+                )
+
+        ax.legend(loc="best", fontsize=8)
 
         days = int(round(T0 * 365.25))
         ax.set_title(
