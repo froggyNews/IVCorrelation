@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import sys
 from pathlib import Path
+import argparse
 
 # Add project root to sys.path
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,14 +19,14 @@ from display.gui.gui_plot_manager import PlotManager
 
 
 class BrowserApp(tk.Tk):
-    def __init__(self):
+    def __init__(self, *, overlay: bool = True, ci_percent: float = 68.0):
         super().__init__()
         self.title("Implied Volatility Browser")
         self.geometry("1200x820")
         self.minsize(800, 600)
 
         # Inputs
-        self.inputs = InputPanel(self)
+        self.inputs = InputPanel(self, overlay=overlay, ci_percent=ci_percent)
         self.inputs.bind_download(self._on_download)
         self.inputs.bind_plot(self._refresh_plot)
         self.inputs.bind_target_change(self._on_target_change)
@@ -110,7 +111,12 @@ class BrowserApp(tk.Tk):
             return []
 
 def main():
-    app = BrowserApp()
+    parser = argparse.ArgumentParser(description="Vol Browser")
+    parser.add_argument("--overlay", action="store_true", help="Overlay synthetic curves")
+    parser.add_argument("--ci", type=float, default=68.0,
+                        help="Confidence interval percentage (e.g. 95 for 95%)")
+    args = parser.parse_args()
+    app = BrowserApp(overlay=args.overlay, ci_percent=args.ci)
     app.mainloop()
 
 if __name__ == "__main__":
