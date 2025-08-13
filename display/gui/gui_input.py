@@ -15,6 +15,11 @@ from data.ticker_groups import (
     save_ticker_group, load_ticker_group, list_ticker_groups, 
     delete_ticker_group, create_default_groups
 )
+from data.interest_rates import (
+    save_interest_rate, load_interest_rate, get_default_interest_rate,
+    list_interest_rates, delete_interest_rate, set_default_interest_rate,
+    get_interest_rate_names, create_default_interest_rates
+)
 from data.db_utils import get_conn, ensure_initialized
 
 DEFAULT_MODEL = "svi"
@@ -47,6 +52,7 @@ class InputPanel(ttk.Frame):
         
         # Initialize database and create default groups if needed
         self._init_ticker_groups()
+        self._init_interest_rates()
 
         # =======================
         # Row 0: Presets
@@ -92,17 +98,24 @@ class InputPanel(ttk.Frame):
         self.ent_maxexp.grid(row=0, column=5, padx=(4,10))
 
         ttk.Label(row1, text="r").grid(row=0, column=6, sticky="w")
-        self.ent_r = ttk.Entry(row1, width=6)
-        self.ent_r.insert(0, "0.0")
-        self.ent_r.grid(row=0, column=7, padx=(4,10))
+        self.ent_r = ttk.Entry(row1, width=8)
+        self.ent_r.grid(row=0, column=7, padx=(4,4))
+        
+        # Interest rate dropdown and management
+        self.cmb_r_presets = ttk.Combobox(row1, values=[], width=12, state="readonly")
+        self.cmb_r_presets.grid(row=0, column=8, padx=(2,2))
+        self.cmb_r_presets.bind("<<ComboboxSelected>>", self._on_rate_preset_selected)
+        
+        self.btn_save_rate = ttk.Button(row1, text="Save R", command=self._save_interest_rate, width=6)
+        self.btn_save_rate.grid(row=0, column=9, padx=2)
 
-        ttk.Label(row1, text="q").grid(row=0, column=8, sticky="w")
+        ttk.Label(row1, text="q").grid(row=0, column=10, sticky="w")
         self.ent_q = ttk.Entry(row1, width=6)
         self.ent_q.insert(0, "0.0")
-        self.ent_q.grid(row=0, column=9, padx=(4,10))
+        self.ent_q.grid(row=0, column=11, padx=(4,10))
 
         self.btn_download = ttk.Button(row1, text="Download / Ingest")
-        self.btn_download.grid(row=0, column=10, padx=8)
+        self.btn_download.grid(row=0, column=12, padx=8)
 
         # =======================
         # Row 2: Plot controls
@@ -123,10 +136,16 @@ class InputPanel(ttk.Frame):
         self.cmb_model.set(DEFAULT_MODEL)
         self.cmb_model.grid(row=0, column=5, padx=6)
 
+        ttk.Label(row2, text="Overlay").grid(row=0, column=6, sticky="w")
+        self.var_overlay = tk.BooleanVar(value=True)
+        self.chk_overlay = ttk.Checkbutton(row2, variable=self.var_overlay, onvalue=True, offvalue=False)
+        self.chk_overlay.grid(row=0, column=7, padx=6)
+
         ttk.Label(row2, text="Target T (days)").grid(row=0, column=6, sticky="w")
         self.ent_days = ttk.Entry(row2, width=6)
         self.ent_days.insert(0, "30")
         self.ent_days.grid(row=0, column=7, padx=6)
+        self.var_overlay = tk.BooleanVar(value=True)
 
         self.btn_plot = ttk.Button(row2, text="Plot")
         self.btn_plot.grid(row=0, column=8, padx=8)
@@ -158,6 +177,9 @@ class InputPanel(ttk.Frame):
         if not txt:
             return []
         return [p.strip().upper() for p in txt.split(",") if p.strip()]
+    
+    def get_overlay(self) -> bool:
+        return bool(self.var_overlay.get())
 
     def get_max_exp(self) -> int:
         try:
@@ -166,10 +188,8 @@ class InputPanel(ttk.Frame):
             return 6
 
     def get_rates(self) -> tuple[float, float]:
-        try:
-            r = float(self.ent_r.get())
-        except Exception:
-            r = 0.0
+        """Get interest rate and dividend yield. Uses persistent interest rate system."""
+        r = self.get_interest_rate()  # Use our new persistent interest rate method
         try:
             q = float(self.ent_q.get())
         except Exception:
@@ -205,6 +225,9 @@ class InputPanel(ttk.Frame):
 
     def get_pillars(self) -> list[int]:
         return list(DEFAULT_PILLARS)
+    
+    def get_overlay(self) -> bool:
+        return bool(self.var_overlay.get())
     
     # ---------- preset management ----------
     def _init_ticker_groups(self):
@@ -344,3 +367,130 @@ class InputPanel(ttk.Frame):
     def get_selected_preset_name(self) -> str:
         """Get the currently selected preset name."""
         return self.cmb_presets.get()
+    
+    # ==========================================
+    # Interest Rate Management Methods
+    # ==========================================
+    
+    def _init_interest_rates(self):
+        """Initialize interest rates and load default."""
+        try:
+            conn = get_conn()
+            ensure_initialized(conn)
+            create_default_interest_rates()
+            self._refresh_interest_rates()
+            
+            # Load and set the default rate
+            default_rate = get_default_interest_rate()
+            self.ent_r.delete(0, tk.END)
+            self.ent_r.insert(0, f"{default_rate:.4f}")
+            
+        except Exception as e:
+            print(f"Error initializing interest rates: {e}")
+    
+    def _refresh_interest_rates(self):
+        """Refresh the interest rate dropdown with current rates."""
+        try:
+            rate_names = get_interest_rate_names()
+            self.cmb_r_presets['values'] = rate_names
+            
+            # Set to default if exists
+            for rate_id, rate_value, description, is_default in list_interest_rates():
+                if is_default:
+                    self.cmb_r_presets.set(rate_id)
+                    break
+                    
+        except Exception as e:
+            print(f"Error refreshing interest rates: {e}")
+    
+    def _on_rate_preset_selected(self, event=None):
+        """Handle selection of an interest rate preset."""
+        selected = self.cmb_r_presets.get()
+        if not selected:
+            return
+        
+        try:
+            rate_data = load_interest_rate(selected)
+            if rate_data:
+                rate_value, description, is_default = rate_data
+                self.ent_r.delete(0, tk.END)
+                self.ent_r.insert(0, f"{rate_value:.4f}")
+                
+        except Exception as e:
+            print(f"Error loading interest rate: {e}")
+            messagebox.showerror("Error", f"Failed to load interest rate: {e}")
+    
+    def _save_interest_rate(self):
+        """Save the current interest rate as a new preset."""
+        try:
+            # Get current rate value
+            rate_str = self.ent_r.get().strip()
+            if not rate_str:
+                messagebox.showerror("Error", "Please enter an interest rate value.")
+                return
+            
+            try:
+                rate_value = float(rate_str)
+            except ValueError:
+                messagebox.showerror("Error", "Please enter a valid numeric interest rate.")
+                return
+            
+            # Convert to percentage if needed (values > 1 are assumed to be percentages)
+            if rate_value > 1:
+                rate_value = rate_value / 100.0
+                messagebox.showinfo("Info", f"Converted {rate_str}% to {rate_value:.4f} (decimal form)")
+            
+            # Ask for rate name
+            rate_id = simpledialog.askstring(
+                "Save Interest Rate", 
+                "Enter a name for this interest rate:",
+                initialvalue=f"rate_{rate_value*100:.2f}pct"
+            )
+            
+            if not rate_id:
+                return
+            
+            # Ask for description
+            description = simpledialog.askstring(
+                "Save Interest Rate", 
+                "Enter an optional description:",
+                initialvalue=f"{rate_value*100:.2f}% interest rate"
+            ) or ""
+            
+            # Ask if this should be the default
+            is_default = messagebox.askyesno(
+                "Set as Default", 
+                "Set this as the default interest rate?"
+            )
+            
+            # Save the rate
+            save_interest_rate(rate_id, rate_value, description, is_default)
+            
+            # Refresh the dropdown
+            self._refresh_interest_rates()
+            self.cmb_r_presets.set(rate_id)
+            
+            messagebox.showinfo("Success", f"Interest rate '{rate_id}' saved successfully!")
+            
+        except Exception as e:
+            print(f"Error saving interest rate: {e}")
+            messagebox.showerror("Error", f"Failed to save interest rate: {e}")
+    
+    def get_interest_rate(self) -> float:
+        """Get the current interest rate value."""
+        try:
+            rate_str = self.ent_r.get().strip()
+            if not rate_str:
+                return get_default_interest_rate()
+            
+            rate_value = float(rate_str)
+            
+            # Convert to decimal if percentage (values > 1 are assumed to be percentages)
+            if rate_value > 1:
+                rate_value = rate_value / 100.0
+            
+            return rate_value
+            
+        except ValueError:
+            # Return default if parsing fails
+            return get_default_interest_rate()
