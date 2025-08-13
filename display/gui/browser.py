@@ -2,6 +2,7 @@
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox
+import threading
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import sys
@@ -99,9 +100,19 @@ class BrowserApp(tk.Tk):
         if not settings["target"] or not settings["asof"]:
             self.status.config(text="Enter target and date to plot")
             return
-        self.plot_mgr.plot(self.ax, settings)
-        self.canvas.draw()
-        self.status.config(text="Plot updated")
+
+        self.status.config(text="Loading...")
+
+        def worker():
+            try:
+                self.plot_mgr.plot(self.ax, settings)
+                self.canvas.draw()
+                self.after(0, lambda: self.status.config(text="Plot updated"))
+            except Exception as e:
+                self.after(0, lambda: (messagebox.showerror("Plot error", str(e)),
+                                       self.status.config(text="Plot failed")))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ---------- helpers ----------
     def _load_tickers(self):
