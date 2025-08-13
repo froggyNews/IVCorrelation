@@ -19,6 +19,10 @@ except Exception:
 
 
 
+# In-memory cache for pillar detection results
+# Keyed by (sorted tickers tuple, asof)
+_PILLAR_DETECTION_CACHE: Dict[Tuple[Tuple[str, ...], str], Optional[List[int]]] = {}
+
 # ---------------------------------------------------------------
 # Corr → weights
 # ---------------------------------------------------------------
@@ -65,33 +69,64 @@ def compute_and_plot_correlation(
     show_values: bool = True,
     clip_negative: bool = True,
     power: float = 1.0,
+
     auto_detect_pillars: bool = True,  # New parameter
     min_tickers_per_pillar: int = 3,   # ETF builder style: need at least 3 tickers per pillar
     min_pillars_per_ticker: int = 2,   # ETF builder style: need at least 2 pillars per ticker
+
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.Series]]:
     """
     Build ATM-by-pillar matrix and correlation matrix; draw heatmap.
     If `target` and `peers` are provided, also compute and display corr-based weights.
+    If ``auto_detect_pillars`` is ``True`` the function will look up a cached set of
+    pillars for ``(tickers, asof)`` and only call :func:`detect_available_pillars`
+    when no cached value is present.  When ``auto_detect_pillars`` is ``False`` the
+    cached pillars are used if available, otherwise ``pillars_days`` is used as-is.
     Returns: (atm_df, corr_df, weights or None)
     """
     tickers = [t.upper() for t in tickers]
-    
-    # Auto-detect available pillars if requested
+
+    key = (tuple(sorted(tickers)), asof)
+
+    cached_pillars = _PILLAR_DETECTION_CACHE.get(key)
+
     if auto_detect_pillars:
-        available_pillars = detect_available_pillars(
-            get_smile_slice=get_smile_slice,
-            tickers=tickers,
-            asof=asof,
-            candidate_pillars=pillars_days,
-            min_tickers_per_pillar=min_tickers_per_pillar,  # ETF builder style: at least 3 tickers per pillar
-            tol_days=tol_days,
-        )
-        if available_pillars:
-            pillars_days = available_pillars
-            print(f"📊 Auto-detected pillars with sufficient data: {pillars_days}")
+
+        if cached_pillars is not None:
+            if cached_pillars:
+                pillars_days = cached_pillars
+                print(f"📊 Using cached pillars: {pillars_days}")
+            else:
+                print(
+                    f"⚠️ Cached detection found no pillars, using defaults: {list(pillars_days)}"
+                )
         else:
-            print(f"⚠️ No pillars found with sufficient data, using defaults: {list(pillars_days)}")
-    
+            available_pillars = detect_available_pillars(
+                get_smile_slice=get_smile_slice,
+                tickers=tickers,
+                asof=asof,
+                candidate_pillars=pillars_days,
+                min_tickers_per_pillar=max(2, len(tickers) // 2),  # At least half the tickers
+                tol_days=tol_days,
+            )
+            _PILLAR_DETECTION_CACHE[key] = available_pillars
+            if available_pillars:
+                pillars_days = available_pillars
+                print(
+                    f"📊 Auto-detected pillars with sufficient data: {pillars_days}"
+                )
+            else:
+                print(
+                    f"⚠️ No pillars found with sufficient data, using defaults: {list(pillars_days)}"
+                )
+    else:
+        if cached_pillars:
+            pillars_days = cached_pillars
+            print(
+                f"⚡ Auto-detection skipped; using cached pillars: {pillars_days}"
+            )
+
+
     atm_df, corr_df = build_atm_matrix(
         get_smile_slice=get_smile_slice,
         tickers=tickers,
