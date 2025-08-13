@@ -54,6 +54,17 @@ def _get_ro_conn() -> sqlite3.Connection:
         _RO_CONN = get_conn()
     return _RO_CONN
 
+# Module-level read-only connection cache for lightweight queries
+_RO_CONN: Optional[sqlite3.Connection] = None
+
+
+def _get_ro_conn() -> sqlite3.Connection:
+    """Return a cached sqlite3 connection for read-only queries."""
+    global _RO_CONN
+    if _RO_CONN is None:
+        _RO_CONN = get_conn()
+    return _RO_CONN
+
 # =========================
 # Config (GUI friendly)
 # =========================
