@@ -50,6 +50,12 @@ from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 
 
 # =========================
+# Global connection cache
+# =========================
+_RO_CONN = None
+
+
+# =========================
 # Config (GUI friendly)
 # =========================
 @dataclass(frozen=True)
@@ -395,6 +401,11 @@ def latest_relative_snapshot_corrweighted(
     cols = ["asof_date","pillar_days","iv_target","iv_synth","spread","z","pct_rank"]
     return last[cols].sort_values("pillar_days"), w
 
+def _get_ro_conn():
+    global _RO_CONN
+    if _RO_CONN is None:
+        _RO_CONN = get_conn()
+    return _RO_CONN
 
 # =========================
 # ATM pillars (for GUI lists & filters)
