@@ -24,6 +24,7 @@ PLOT_TYPES = (
     "Term (ATM vs T)",
     "Corr Matrix (ATM)",
     "Synthetic Surface (Smile)",
+    "ETF Weights",
 )
 
 class InputPanel(ttk.Frame):

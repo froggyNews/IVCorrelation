@@ -1,5 +1,3 @@
-"""
-Plotting module for CleanIV_Correlation project.
+"""Plotting utilities for the project."""
 
-This module contains plotting utilities for term structures, smiles, and confidence bands.
-"""
+from .weights_plot import plot_weights
