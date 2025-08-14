@@ -148,16 +148,48 @@ except Exception:
 # ----------------------------
 # DB helpers (optional)
 # ----------------------------
-def load_atm() -> pd.DataFrame:
+def load_atm(conn=None) -> pd.DataFrame:
     """Load rows flagged as ATM from DB (if you persist such a flag)."""
-    conn = get_conn()
+    if conn is None:
+        conn = get_conn()
+        should_close = True
+    else:
+        should_close = False
+    
     try:
-        return pd.read_sql_query("SELECT * FROM options_quotes WHERE is_atm = 1", conn)
+        # First try to get pre-flagged ATM data
+        df = pd.read_sql_query("SELECT * FROM options_quotes WHERE is_atm = 1", conn)
+        
+        # If we don't have enough pre-flagged data, dynamically identify ATM options
+        if df.empty or len(df) < 100:  # Threshold for sufficient data
+            print(f"Warning: Only {len(df)} pre-flagged ATM rows found. Dynamically identifying ATM options...")
+            
+            # Get all options data with key columns
+            all_data = pd.read_sql_query(
+                "SELECT asof_date, ticker, expiry, strike, call_put, iv, spot, ttm_years, moneyness, delta, volume, bid, ask, mid, price, gamma, vega, theta, rho, d1, d2, r, q FROM options_quotes WHERE iv IS NOT NULL AND moneyness IS NOT NULL AND ttm_years IS NOT NULL", 
+                conn
+            )
+            
+            if not all_data.empty:
+                # Identify ATM options (moneyness close to 1.0)
+                atm_mask = (all_data['moneyness'] >= 0.95) & (all_data['moneyness'] <= 1.05)
+                df = all_data[atm_mask].copy()
+                print(f"Dynamically identified {len(df)} ATM options (moneyness 0.95-1.05)")
+        
+        if not df.empty:
+            # Rename columns to match expected interface
+            if 'ttm_years' in df.columns and 'T' not in df.columns:
+                df = df.rename(columns={'ttm_years': 'T'})
+            if 'asof_date' in df.columns and 'asof_date' not in df.columns:
+                df = df.rename(columns={'asof_date': 'asof_date'})
+        
+        return df
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if should_close:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 def nearest_pillars(
     df: pd.DataFrame,
@@ -187,6 +219,7 @@ def nearest_pillars(
             j = int(np.argmin(np.abs(tt - P)))
             row = g.iloc[j].to_dict()
             row["pillar_days"] = P
+            row["pillar_diff_days"] = float(tt[j] - P)  # Add the difference column
             row["within_tol"] = bool(abs(float(tt[j]) - P) <= float(tolerance_days))
             out_rows.append(row)
 

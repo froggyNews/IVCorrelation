@@ -5,7 +5,7 @@ from typing import Iterable
 from .db_utils import get_conn, ensure_initialized, insert_quotes
 from .data_downloader import download_raw_option_data
 from .data_pipeline import enrich_quotes
-from .rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
+from .interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 
 def save_for_tickers(
     tickers: Iterable[str],

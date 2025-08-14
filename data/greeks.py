@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from typing import Literal, Dict, Any
 
-from .rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
+from .interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD, get_ticker_interest_rate
 
 OptionCP = Literal["C", "P"]
 
@@ -214,10 +214,16 @@ def compute_all_greeks(
 
 def compute_all_greeks_df(
     df,
-    r: float = STANDARD_RISK_FREE_RATE,
+    r: float = None,  # Changed to None to allow ticker-specific rates
     q: float = STANDARD_DIVIDEND_YIELD,
+    use_ticker_rates: bool = True,  # New parameter
+    rate_date: str = None,  # Optional specific date for rates
 ):
     """Given a DataFrame with columns S, K, T, sigma, call_put -> add price & Greeks.
+    
+    If use_ticker_rates=True and 'ticker' column exists, will use ticker-specific rates.
+    Otherwise falls back to the provided r or STANDARD_RISK_FREE_RATE.
+    
     Modifies a copy and returns it (does not mutate in-place).
     """
     import pandas as pd
@@ -229,16 +235,37 @@ def compute_all_greeks_df(
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
+    # Determine if we can use ticker-specific rates
+    has_ticker = 'ticker' in out.columns
+    
     def row_fn(rw):
+        # Determine the interest rate to use
+        if use_ticker_rates and has_ticker:
+            ticker = str(rw.get("ticker", ""))
+            if ticker and ticker != "nan":
+                # Convert percentage to decimal (ML rates are in percentage form)
+                ticker_rate = get_ticker_interest_rate(ticker, rate_date)
+                if ticker_rate is not None:
+                    # ML rates are in percentage form, convert to decimal
+                    effective_r = ticker_rate / 100.0
+                else:
+                    effective_r = r if r is not None else STANDARD_RISK_FREE_RATE
+            else:
+                effective_r = r if r is not None else STANDARD_RISK_FREE_RATE
+        else:
+            effective_r = r if r is not None else STANDARD_RISK_FREE_RATE
+        
         g = compute_all_greeks(
             S=float(rw["S"]),
             K=float(rw["K"]),
             T=float(rw["T"]),
             sigma=float(rw["sigma"]),
-            r=r,
+            r=effective_r,
             q=q,
             cp=str(rw["call_put"]).upper(),
         )
+        # Add the actual rate used to the output
+        g['r'] = effective_r
         return pd.Series(g)
 
     greeks_df = out.apply(row_fn, axis=1)

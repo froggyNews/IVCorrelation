@@ -65,7 +65,23 @@ CREATE TABLE IF NOT EXISTS interest_rates (
     updated_at     TEXT    NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ticker_interest_rates (
+    ticker         TEXT    NOT NULL,
+    rate_date      TEXT    NOT NULL,
+    rate_value     REAL    NOT NULL,
+    fee            REAL,
+    adjusted_float REAL,
+    lender_count   INTEGER,
+    borrow_status  TEXT,
+    source_file    TEXT,
+    created_at     TEXT    NOT NULL,
+    updated_at     TEXT    NOT NULL,
+    PRIMARY KEY (ticker, rate_date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_interest_rates_default ON interest_rates(is_default);
+CREATE INDEX IF NOT EXISTS idx_ticker_rates_ticker ON ticker_interest_rates(ticker);
+CREATE INDEX IF NOT EXISTS idx_ticker_rates_date ON ticker_interest_rates(rate_date);
 """
 
 MIGRATIONS = [

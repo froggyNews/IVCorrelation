@@ -403,9 +403,20 @@ def peer_weights_from_correlations(
         mny_bins=mny_bins,
     )
 
+    # Handle empty results gracefully
     if isinstance(res, dict):
-        ser = pd.concat(res).groupby(level=1).mean()
+        if not res:  # Empty dictionary
+            print(f"Warning: No correlation data available for {mode} mode with benchmark {benchmark}")
+            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+        try:
+            ser = pd.concat(res).groupby(level=1).mean()
+        except Exception as e:
+            print(f"Warning: Failed to process correlation data: {e}")
+            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
     else:
+        if res is None or res.empty:
+            print(f"Warning: No correlation data available for {mode} mode with benchmark {benchmark}")
+            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
         ser = res
 
     ser = ser.reindex(peers_list).dropna()

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from .greeks import compute_all_greeks_df
-from .rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
+from .interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD, get_ticker_interest_rate
 
 def _compute_ttm_years(expiry_iso: str, asof_date_iso: str) -> float:
     expiry_dt = pd.to_datetime(expiry_iso, utc=True)
@@ -44,10 +44,12 @@ def enrich_quotes(
     df["log_moneyness"] = np.log(df["moneyness"])
 
     # Compute Greeks in bulk (adds: price, delta, gamma, vega, theta, rho, d1, d2)
-    # Requires columns: S, K, T, sigma, call_put
+    # Uses ticker-specific rates if available, falls back to provided r
     df = df.rename(columns={"call_put": "call_put"})
-    df = compute_all_greeks_df(df, r=r, q=q)
-    df["r"] = r
+    df = compute_all_greeks_df(df, r=r, q=q, use_ticker_rates=True)
+    
+    # Store the rates that were actually used in the calculation
+    # The compute_all_greeks_df function handles ticker-specific rates internally
     df["q"] = q
 
     # ATM flag per (date, ticker, expiry, call_put)
@@ -91,5 +93,6 @@ def enrich_quotes(
     for c in ["volume_raw", "bid_raw", "ask_raw", "last_raw"]:
         if c not in out.columns:
             out[c] = None
+
 
     return out[cols]

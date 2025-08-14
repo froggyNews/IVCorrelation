@@ -18,10 +18,10 @@ from data.ticker_groups import (
 from data.interest_rates import (
     save_interest_rate, load_interest_rate, get_default_interest_rate,
     list_interest_rates, delete_interest_rate, set_default_interest_rate,
-    get_interest_rate_names, create_default_interest_rates
+    get_interest_rate_names, create_default_interest_rates, STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 )
 from data.db_utils import get_conn, ensure_initialized
-from data.rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
+
 
 DEFAULT_MODEL = "svi"
 DEFAULT_ATM_BAND = 0.05

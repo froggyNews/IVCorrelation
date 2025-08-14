@@ -522,37 +522,109 @@ class PlotManager:
                     asof=asof, peers=peers, weights=w, atm_band=ATM_BAND, t_tolerance_days=10.0
                 )
                 if synth_curve is not None and not synth_curve.empty:
-                    x = synth_curve["T"].to_numpy(float)
-                    if x_units == "days":
-                        x = x * 365.25
-                    y = synth_curve["atm_vol"].to_numpy(float)
-                    order = np.argsort(x)
-                    ax.plot(x[order], y[order], linestyle="--", linewidth=1.6, alpha=0.9,
-                            label="Synthetic ATM (corr-matrix)")
-                    ax.scatter(x, y, s=18, alpha=0.8)
+                    # Ensure synthetic curve has same expiries as raw curve for consistency
+                    raw_T = atm_target["T"].to_numpy(float)
+                    synth_T = synth_curve["T"].to_numpy(float)
                     
-                    # Add confidence bands for synthetic curve if enough points
-                    if len(x) >= 3:
-                        try:
-                            from display.plotting.term_plot import generate_term_structure_confidence_bands
-                            T_orig = synth_curve["T"].to_numpy(float)  # Keep in years for CI calculation
-                            T_grid, ci_lo, ci_hi = generate_term_structure_confidence_bands(
-                                T=T_orig,
-                                atm_vol=y,
-                                level=ci,
-                                n_boot=0,  # disable bootstrap to avoid UI stall
+                    # Find common expiries within tolerance
+                    # Use percentage-based tolerance: 10% of the shorter expiry, with minimum 2 days
+                    tol_days = max(2.0 / 365.25, 0.1 * min(raw_T.min(), synth_T.min()))
+                    common_T = []
+                    for rt in raw_T:
+                        for st in synth_T:
+                            if abs(rt - st) <= tol_days:
+                                common_T.append(rt)
+                                break
+                    
+                    if len(common_T) > 0:
+                        # Filter both curves to common expiries
+                        common_T = np.array(common_T)
+                        common_T.sort()
+                        
+                        # Filter raw curve to common expiries
+                        raw_filtered = atm_target[atm_target["T"].apply(lambda x: any(abs(x - ct) <= tol_days for ct in common_T))]
+                        
+                        # Filter synthetic curve to common expiries
+                        synth_filtered = synth_curve[synth_curve["T"].apply(lambda x: any(abs(x - ct) <= tol_days for ct in common_T))]
+                        
+                        # Debug info (can be removed in production)
+                        print(f"Term plot: Found {len(common_T)} common expiries between raw ({len(atm_target)}) and synthetic ({len(synth_curve)}) curves")
+                        print(f"  Tolerance: {tol_days*365.25:.1f} days")
+                        print(f"  Raw filtered: {len(raw_filtered)} points")
+                        print(f"  Synthetic filtered: {len(synth_filtered)} points")
+                        
+                        # Safety check: ensure we have data after filtering
+                        if len(raw_filtered) == 0 or len(synth_filtered) == 0:
+                            print("Warning: Filtering resulted in empty curves, falling back to original")
+                            # Fallback to original synthetic curve
+                            x = synth_curve["T"].to_numpy(float)
+                            if x_units == "days":
+                                x = x * 365.25
+                            y = synth_curve["atm_vol"].to_numpy(float)
+                            order = np.argsort(x)
+                            ax.plot(x[order], y[order], linestyle="--", linewidth=1.6, alpha=0.9,
+                                    label="Synthetic ATM (corr-matrix)")
+                            ax.scatter(x, y, s=18, alpha=0.8)
+                            ax.legend(loc="best", fontsize=8)
+                        else:
+                            # Re-plot raw curve with filtered data to ensure consistency
+                            ax.clear()
+                            plot_atm_term_structure(
+                                ax,
+                                raw_filtered,
+                                x_units=x_units,
+                                connect=True,
+                                smooth=True,
+                                show_ci=True,
+                                ci_level=ci,
+                                generate_ci=False,
                             )
-                            if len(T_grid) > 0:
-                                if x_units == "days":
-                                    T_grid_plot = T_grid * 365.25
-                                else:
-                                    T_grid_plot = T_grid
-                                ax.fill_between(T_grid_plot, ci_lo, ci_hi, alpha=0.1, 
-                                               color='orange', label=f"Synthetic CI ({ci:.0%})")
-                        except Exception:
-                            pass  # CI generation failed, continue without
-                    
-                    ax.legend(loc="best", fontsize=8)
+                            
+                            # Plot synthetic curve with same expiries
+                            x = synth_filtered["T"].to_numpy(float)
+                            if x_units == "days":
+                                x = x * 365.25
+                            y = synth_filtered["atm_vol"].to_numpy(float)
+                            order = np.argsort(x)
+                            ax.plot(x[order], y[order], linestyle="--", linewidth=1.6, alpha=0.9,
+                                    label="Synthetic ATM (corr-matrix)")
+                            ax.scatter(x, y, s=18, alpha=0.8)
+                            
+                            # Add confidence bands for synthetic curve if enough points
+                            if len(x) >= 3:
+                                try:
+                                    from display.plotting.term_plot import generate_term_structure_confidence_bands
+                                    T_orig = synth_filtered["T"].to_numpy(float)
+                                    T_grid, ci_lo, ci_hi = generate_term_structure_confidence_bands(
+                                        T=T_orig,
+                                        atm_vol=y,
+                                        level=ci,
+                                        n_boot=0,
+                                    )
+                                    if len(T_grid) > 0:
+                                        if x_units == "days":
+                                            T_grid_plot = T_grid * 365.25
+                                        else:
+                                            T_grid_plot = T_grid
+                                        ax.fill_between(T_grid_plot, ci_lo, ci_hi, alpha=0.1, 
+                                                       color='orange', label=f"Synthetic CI ({ci:.0%})")
+                                except Exception:
+                                    pass
+                            
+                            # Update title to reflect filtered data
+                            title = f"{target}  {asof}  ATM Term Structure  (N={len(raw_filtered)}) - Synthetic Overlay (N={len(synth_filtered)})"
+                            ax.legend(loc="best", fontsize=8)
+                    else:
+                        # Fallback: plot original synthetic curve if no common expiries
+                        x = synth_curve["T"].to_numpy(float)
+                        if x_units == "days":
+                            x = x * 365.25
+                        y = synth_curve["atm_vol"].to_numpy(float)
+                        order = np.argsort(x)
+                        ax.plot(x[order], y[order], linestyle="--", linewidth=1.6, alpha=0.9,
+                                label="Synthetic ATM (corr-matrix)")
+                        ax.scatter(x, y, s=18, alpha=0.8)
+                        ax.legend(loc="best", fontsize=8)
             except Exception:
                 pass
 
