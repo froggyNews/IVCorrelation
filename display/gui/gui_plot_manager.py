@@ -5,8 +5,8 @@ import pandas as pd
 
 from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
-    corr_weights_from_matrix,       # converts a column of the matrix to weights
 )
+from analysis.correlation_utils import corr_weights
 from analysis.beta_builder import pca_weights, pca_weights_from_atm_matrix
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
@@ -268,7 +268,7 @@ class PlotManager:
         # 1) Use cached Corr Matrix from the Corr Matrix plot
         if isinstance(self.last_corr_df, pd.DataFrame) and not self.last_corr_df.empty:
             try:
-                w = corr_weights_from_matrix(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
+                w = corr_weights(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
                 if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
                     # Normalize and keep only peers that had a column in the matrix
                     w = w.dropna().astype(float)
