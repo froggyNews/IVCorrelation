@@ -69,7 +69,7 @@ class VolModel:
             if len(K_slice) < 3:
                 continue
             if self.model == "svi":
-                out = fit_svi_slice(S, K_slice, float(T), iv_slice, weights=W[m] if W is not None else None)
+                out = fit_svi_slice(S, K_slice, float(T), iv_slice)
             else:
                 out = fit_sabr_slice(S, K_slice, float(T), iv_slice, beta=self.beta_fixed)
             self.slices[float(T)] = SliceParams(T=float(T), n=int(out.get("n", len(K_slice))), rmse=float(out.get("rmse", np.nan)), params=out)

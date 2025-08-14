@@ -359,7 +359,6 @@ def build_vol_betas(
     mode = (mode or "").lower()
     if mode in ("ul", "underlying"):
         from data.db_utils import get_conn
-
         return ul_correlations(benchmark, get_conn)
     if mode == "iv_atm":
         return iv_atm_betas(benchmark, pillar_days=pillar_days or DEFAULT_PILLARS_DAYS)
@@ -369,7 +368,59 @@ def build_vol_betas(
             tenors=tenor_days or (7, 30, 60, 90, 180, 365),
             mny_bins=mny_bins or ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
         )
+    if mode == "surface_grid":
+        return iv_surface_betas(
+            benchmark,
+            tenors=tenor_days or (7, 30, 60, 90, 180, 365),
+            mny_bins=mny_bins or ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+        )
     raise ValueError(f"unknown beta mode: {mode}")
+def iv_surface_betas(
+    benchmark: str,
+    tenors: Iterable[int] = (7, 30, 60, 90, 180, 365),
+    mny_bins: Iterable[Tuple[float, float]] = ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+    conn_fn=None,
+) -> Dict[str, pd.Series]:
+    """
+    Compute betas for each (tenor, moneyness) grid cell, for each peer vs benchmark.
+    Returns a dict: keys are grid cell labels (e.g., 'T30_0.95-1.05'), values are Series of betas per peer.
+    """
+    if conn_fn is None:
+        from data.db_utils import get_conn as conn_fn
+    conn = conn_fn()
+    df = pd.read_sql_query("SELECT asof_date, ticker, ttm_years, moneyness, iv FROM options_quotes", conn)
+    if df.empty:
+        return {}
+    df = df.dropna(subset=["iv", "ttm_years", "moneyness"]).copy()
+    df["ttm_days"] = df["ttm_years"] * 365.25
+    tarr = pd.Series(list(tenors))
+    df["tenor_bin"] = df["ttm_days"].apply(lambda d: tarr.iloc[(tarr - d).abs().argmin()])
+    labels = [f"{lo:.2f}-{hi:.2f}" for (lo, hi) in mny_bins]
+    edges = [mny_bins[0][0]] + [hi for (_, hi) in mny_bins]
+    df["mny_bin"] = pd.cut(df["moneyness"], bins=edges, labels=labels, include_lowest=True)
+    df = df.dropna(subset=["mny_bin"])
+    cell = df.groupby(["asof_date", "ticker", "tenor_bin", "mny_bin"])["iv"].mean().reset_index()
+    grid = cell.pivot_table(index=["asof_date"], columns=["ticker", "tenor_bin", "mny_bin"], values="iv")
+    # For each (tenor_bin, mny_bin), compute beta vs benchmark
+    betas_dict = {}
+    tickers = grid.columns.get_level_values(0).unique()
+    for tenor in tarr:
+        for mny in labels:
+            col_slice = (slice(None), tenor, mny)
+            subgrid = grid.xs((tenor, mny), axis=1, level=[1,2], drop_level=False)
+            # subgrid: index=asof_date, columns=ticker
+            if benchmark not in subgrid.columns.get_level_values(0):
+                continue
+            wide = subgrid.droplevel([1,2], axis=1)
+            # de-mean per day to reduce common level
+            wide = wide.sub(wide.mean(axis=1), axis=0)
+            betas = {}
+            for t in wide.columns:
+                if t == benchmark:
+                    continue
+                betas[t] = _beta(wide.rename(columns={t: "x", benchmark: "b"}), "x", "b")
+            betas_dict[f"T{int(tenor)}_{mny}"] = pd.Series(betas, name=f"iv_surface_beta_T{int(tenor)}_{mny}")
+    return betas_dict
 
 
 def peer_weights_from_correlations(

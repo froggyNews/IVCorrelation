@@ -62,6 +62,8 @@ class PlotManager:
         self.get_smile_slice = get_smile_slice
         self.last_corr_df: pd.DataFrame | None = None
         self.last_corr_meta: dict = {}
+        # Current max_expiries setting
+        self._current_max_expiries = None
         # --- click-through TTE state ---
         self.canvas = None
         self._cid_click = None
@@ -90,16 +92,23 @@ class PlotManager:
         overlay    = settings["overlay"]
         peers      = settings["peers"]
         pillars    = settings["pillars"]
+        max_expiries = settings.get("max_expiries", 6)
 
         # remember current plot type for the click handler
         self._current_plot_type = plot_type
+        self._current_max_expiries = max_expiries
+
+        # create a bounded get_smile_slice function with current max_expiries
+        def bounded_get_smile_slice(ticker, asof_date=None, T_target_years=None, call_put=None, nearest_by="T"):
+            return get_smile_slice(ticker, asof_date, T_target_years, call_put, nearest_by, max_expiries=self._current_max_expiries)
+        self.get_smile_slice = bounded_get_smile_slice
 
         ax.clear()
 
         # --- Smile: click-through path (NO df_all needed here) ---
         if plot_type.startswith("Smile"):
             # load all expiries so we can click through them
-            chain_df = get_smile_slice(target, asof, T_target_years=None)
+            chain_df = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
             if chain_df is None or chain_df.empty:
                 ax.set_title("No data"); return
 
@@ -128,7 +137,7 @@ class PlotManager:
                     atm_band=ATM_BAND, t_tolerance_days=10.0,
                 )
                 for p in peers:
-                    df_p = get_smile_slice(p, asof, T_target_years=None)
+                    df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
                     if df_p is None or df_p.empty:
                         continue
                     T_p = pd.to_numeric(df_p["T"], errors="coerce").to_numpy(float)
@@ -160,7 +169,7 @@ class PlotManager:
 
         # --- Term: needs all expiries for this day ---
         elif plot_type.startswith("Term"):
-            df_all = get_smile_slice(target, asof, T_target_years=None)
+            df_all = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
             if df_all is None or df_all.empty:
                 ax.set_title("No data"); return
             self._plot_term(ax, df_all, target, asof, x_units, ci, overlay, peers, weight_mode)
@@ -204,7 +213,7 @@ class PlotManager:
         elif event.button in (3, 2):
             self.prev_expiry()
 
-    def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None) -> pd.Series:
+    def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
         """
         Compute weights using the selected mode (including PCA).
         Priority: PCA modes > cached correlation matrix > legacy correlation methods
@@ -241,6 +250,20 @@ class PlotManager:
             except Exception as e:
                 print(f"PCA weights failed: {e}")
                 pass  # fall through to corr/legacy
+
+        # 0b) surface_grid mode: return the full grid of betas (dict of Series)
+        if weight_mode == "surface_grid":
+            try:
+                from analysis.analysis_pipeline import compute_peer_weights
+                grid_betas = compute_peer_weights(
+                    target=target,
+                    peers=peers,
+                    weight_mode="surface_grid",
+                )
+                return grid_betas  # dict: key=grid cell, value=Series of betas
+            except Exception as e:
+                print(f"surface_grid weights failed: {e}")
+                return None
 
         # 1) Use cached Corr Matrix from the Corr Matrix plot
         if isinstance(self.last_corr_df, pd.DataFrame) and not self.last_corr_df.empty:
@@ -287,7 +310,7 @@ class PlotManager:
 
                 # build target + peers surfaces, combine peers using matrix weights
                 tickers = list({target, *peers})
-                surfaces = build_surface_grids(tickers=tickers, tenors=None, mny_bins=None, use_atm_only=False)
+                surfaces = build_surface_grids(tickers=tickers, tenors=None, mny_bins=None, use_atm_only=False, max_expiries=max_expiries)
                 if target in surfaces and asof in surfaces[target]:
                     peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
                     synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
@@ -330,7 +353,7 @@ class PlotManager:
         try:
             # Build target and peer surfaces, then combine peers using correlation weights
             tickers = list({target, *peers})
-            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False)
+            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False, max_expiries=max_expiries)
 
             if target not in surfaces or asof not in surfaces[target]:
                 ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center")
