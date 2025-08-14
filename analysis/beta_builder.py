@@ -123,7 +123,7 @@ def pca_market_weights(X_peers: np.ndarray, ridge: float = 1e-6) -> np.ndarray:
     Z, _, _ = _zscore_cols(_impute_col_median(X_peers))
     return _first_pc_weights_from_rows_improved(Z, ridge=ridge)
 
-def _first_pc_weights_from_rows_improved(Z: np.ndarray, ridge: float = 1e-6, max_single_weight: float = 0.7) -> np.ndarray:
+def _first_pc_weights_from_rows_improved(Z: np.ndarray, ridge: float = 1e-6, max_single_weight: float = 0.6, min_weight: float = 0.05) -> np.ndarray:
     """
     Improved version that avoids extreme single-asset allocations.
     
@@ -132,12 +132,21 @@ def _first_pc_weights_from_rows_improved(Z: np.ndarray, ridge: float = 1e-6, max
     
     Parameters:
     - max_single_weight: maximum weight for a single asset to avoid extreme allocations
+    - min_weight: minimum weight to ensure for each asset when possible
     """
     n_rows = Z.shape[0]
     
     # Handle edge cases
     if n_rows < 2:
         return np.full(n_rows, 1.0 / n_rows) if n_rows > 0 else np.array([])
+    
+    # Check for extremely low-rank data (like identical patterns)
+    Z_var = np.var(Z, axis=1)  # Variance across features for each asset
+    low_var_threshold = 1e-10
+    
+    if np.all(Z_var < low_var_threshold):
+        # All assets have very similar patterns, use equal weights
+        return np.full(n_rows, 1.0 / n_rows)
     
     n_feat = max(Z.shape[1] - 1, 1)
     R = (Z @ Z.T) / n_feat
@@ -149,7 +158,7 @@ def _first_pc_weights_from_rows_improved(Z: np.ndarray, ridge: float = 1e-6, max
     if v1.sum() < 0:
         v1 = -v1
     
-    # Use a two-stage approach to avoid extreme allocations
+    # Use a multi-stage approach to avoid extreme allocations
     # Stage 1: Traditional approach with clipping
     w_clipped = np.clip(v1, 0.0, None)
     s_clipped = w_clipped.sum()
@@ -157,28 +166,18 @@ def _first_pc_weights_from_rows_improved(Z: np.ndarray, ridge: float = 1e-6, max
     if s_clipped > 0:
         w_normalized = w_clipped / s_clipped
         max_weight = w_normalized.max()
+        zero_weights = (w_normalized < min_weight).sum()
         
-        # Stage 2: If allocation is too extreme, use a more balanced approach
-        if max_weight > max_single_weight and n_rows > 2:
-            # Redistribute excess weight above threshold to other assets
-            excess_indices = w_normalized > max_single_weight
-            excess_weight = np.sum(w_normalized[excess_indices] - max_single_weight)
+        # Stage 2: If allocation is too extreme or has too many zeros, use a more balanced approach
+        if (max_weight > max_single_weight) or (zero_weights > n_rows * 0.5):
+            # Use a regularized approach: combine PCA weights with equal weights
+            equal_weights = np.full(n_rows, 1.0 / n_rows)
             
-            # Cap extreme weights and distribute excess to others
-            w_balanced = w_normalized.copy()
-            w_balanced[excess_indices] = max_single_weight
+            # Weight between PCA solution and equal weights based on concentration
+            concentration_factor = max_weight  # Higher concentration = more regularization
+            regularization = min(concentration_factor, 0.7)  # Max 70% regularization
             
-            # Distribute excess weight proportionally to non-extreme assets
-            non_extreme_mask = ~excess_indices
-            if non_extreme_mask.any():
-                non_extreme_weights = w_balanced[non_extreme_mask]
-                total_non_extreme = non_extreme_weights.sum()
-                if total_non_extreme > 0:
-                    # Distribute excess proportionally
-                    w_balanced[non_extreme_mask] += excess_weight * (non_extreme_weights / total_non_extreme)
-                else:
-                    # If all non-extreme weights are zero, distribute equally
-                    w_balanced[non_extreme_mask] = excess_weight / non_extreme_mask.sum()
+            w_balanced = (1 - regularization) * w_normalized + regularization * equal_weights
             
             return w_balanced / w_balanced.sum()
         else:
