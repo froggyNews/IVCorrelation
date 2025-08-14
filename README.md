@@ -7,7 +7,8 @@ A comprehensive Python application for analyzing implied volatility correlations
 ### Core Analytics
 - **Implied Volatility Surface Construction**: Build clean, interpolated IV surfaces from raw options data
 - **Correlation Analysis**: Compute correlations across different modes (ATM, term structure, full surface)
-- **Synthetic ETF Modeling**: Create synthetic volatility surfaces using correlation-weighted combinations
+- **Cosine Similarity Weights**: Alternative to correlation for small n-vectors, focuses on curve shape rather than levels
+- **Synthetic ETF Modeling**: Create synthetic volatility surfaces using correlation-weighted or cosine-weighted combinations
 - **Greeks Calculation**: Full Black-Scholes Greeks computation with risk-free rates and dividend yields
 - **Standard Rates**: Assumes a 4.08% risk-free rate by default, adjustable in the GUI
 
@@ -126,6 +127,8 @@ SQLite-based storage with tables for:
 - **Underlying (`ul`)**: Based on stock price returns
 - **IV ATM (`iv_atm`)**: Using at-the-money implied volatilities
 - **Surface (`surface`)**: Full volatility surface correlations
+- **Cosine ATM (`cosine_atm`)**: Shape-focused similarity for ATM curves
+- **PCA ATM (`pca_atm`)**: Principal component analysis of ATM vectors
 
 ### Synthetic ETF Construction
 ```python
@@ -133,6 +136,9 @@ SQLite-based storage with tables for:
 target = "SPY"
 peers = ["AAPL", "MSFT", "GOOGL", "AMZN"]
 synthetic, weights = build_synthetic_surface_corrweighted(target, peers)
+
+# Use cosine similarity for curve shape matching (ideal for ATM pillars)
+weights = compute_peer_weights(target, peers, weight_mode="cosine_atm")
 ```
 
 ## 🎨 GUI Features
@@ -164,6 +170,8 @@ synthetic, weights = build_synthetic_surface_corrweighted(target, peers)
 
 ### Correlation Methodologies
 - **Pearson/Spearman**: Configurable correlation methods
+- **Cosine Similarity**: Shape-focused similarity for small n-vectors (ideal for ATM pillars)
+- **PCA Weights**: Principal component analysis for dimensionality-aware weighting
 - **Rolling Windows**: Lookback period customization
 - **Missing Data**: Robust handling with minimum period requirements
 

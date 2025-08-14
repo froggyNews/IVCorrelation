@@ -30,7 +30,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Synthetic ETF Surface Demo")
     p.add_argument("--target", required=True, help="Target ticker")
     p.add_argument("--peers", nargs="+", required=True, help="Peer tickers")
-    p.add_argument("--weight-mode", choices=["corr", "pca", "equal", "custom"], default="corr")
+    p.add_argument("--weight-mode", choices=["corr", "pca", "cosine", "equal", "custom"], default="corr")
     p.add_argument("--custom-weights", nargs="+", help="Ticker=weight pairs if weight-mode=custom")
     p.add_argument("--pillar-days", nargs="+", type=int, default=[7, 30, 60, 90])
     p.add_argument("--tenors", nargs="+", type=int, default=None, help="Override default tenors (days)")
