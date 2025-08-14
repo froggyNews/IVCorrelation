@@ -67,6 +67,7 @@ class SyntheticETFConfig:
     use_atm_only_surface: bool = False
     cache_dir: Optional[str] = "data/cache_synth_etf"
     # If True we require surfaces for EVERY peer date to include a date in synthetic output
+    # DISABLED: Always False to prevent date filtering
     strict_date_intersection: bool = False
 
     def ensure_cache(self):
@@ -188,7 +189,8 @@ class SyntheticETFBuilder:
         synthetic = combine_surfaces(peer_surfaces, self._weights.to_dict())
 
         # Optionally restrict dates to intersection across all peer surfaces
-        if self.cfg.strict_date_intersection:
+        # DISABLED: Never apply strict date intersection filtering
+        if False:  # self.cfg.strict_date_intersection:
             date_sets = [set(dates_dict.keys()) for dates_dict in peer_surfaces.values()]
             if date_sets:
                 common = set.intersection(*date_sets)
@@ -326,7 +328,7 @@ def cosine_weights_from_atm_matrix(
     """
     from data.db_utils import get_conn
     from analysis.pillars import build_atm_matrix
-    from analysis.data_pipeline import get_smile_slice
+    from data.data_pipeline import get_smile_slice
     
     # Get latest date for target
     dates = available_dates(ticker=target, most_recent_only=True)

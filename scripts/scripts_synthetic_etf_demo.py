@@ -40,7 +40,7 @@ def parse_args():
     p.add_argument("--export-dir", help="If provided, export artifacts to this directory")
     p.add_argument("--ingest", action="store_true", help="Ingest data before running")
     p.add_argument("--tickers", nargs="+", help="Tickers to ingest (default target+peers)")
-    p.add_argument("--strict-date-intersection", action="store_true", help="Only keep dates where all peers have surfaces")
+    p.add_argument("--strict-date-intersection", action="store_true", help="Only keep dates where all peers have surfaces (DISABLED - always False)")
     return p.parse_args()
 
 
@@ -82,7 +82,7 @@ def main():
         tolerance_days=args.tolerance_days,
         lookback=args.lookback,
         weight_mode=args.weight_mode,
-        strict_date_intersection=args.strict_date_intersection,
+        strict_date_intersection=False,  # Always False - disabled filtering
     )
 
     # Fill missing tenors from default if not specified

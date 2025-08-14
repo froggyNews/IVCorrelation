@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.viz.anim_utils import (
+from display.plotting.anim_utils import (
     animate_smile_over_time,
     animate_surface_timesweep,
     animate_spillover,

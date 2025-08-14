@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 
+
 from analysis.beta_builder import cosine_similarity_weights, build_peer_weights
 
 
@@ -75,3 +76,4 @@ def test_top_k_cosine(monkeypatch):
     w = build_peer_weights('cosine', 'ul_px', 'TGT', ['P1', 'P2'], k=1)
     assert np.isclose(w.sum(), 1.0)
     assert (w > 0).sum() == 1
+

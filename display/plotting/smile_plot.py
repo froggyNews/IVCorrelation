@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from volModel.sviFit import fit_svi_slice, svi_smile_iv
 from volModel.sabrFit import fit_sabr_slice, sabr_smile_iv
 from .confidence_bands import svi_confidence_bands, sabr_confidence_bands, Bands
-from src.viz.anim_utils import (
+from display.plotting.anim_utils import (
     animate_smile_over_time,
     add_checkboxes,
     add_keyboard_toggles,
@@ -31,10 +31,13 @@ def fit_and_plot_smile(
     beta: float = 0.5,
     label: Optional[str] = None,
     line_kwargs: Optional[Dict] = None,
+    enable_svi_toggles: bool = False,
 ) -> dict:
     """
     Scatter observed points + fitted curve + shaded CI.
     Returns a dict with params and basic stats.
+    
+    If enable_svi_toggles=True, adds animation controls for SVI overlay components.
     """
     K = np.asarray(K, float)
     iv = np.asarray(iv, float)
@@ -42,8 +45,15 @@ def fit_and_plot_smile(
     m_grid = np.linspace(mlo, mhi, int(n))
     K_grid = m_grid * float(S)
 
+    # Track artists for potential toggle functionality - only for SVI
+    series_map = {}
+    
+    # Observed points
     if show_points:
-        ax.scatter(K / S, iv, s=20, alpha=0.7, label="Observed")
+        obs_scatter = ax.scatter(K / S, iv, s=20, alpha=0.7, label="Observed")
+        # Only add to series map if we're enabling SVI toggles and using SVI model
+        if enable_svi_toggles and model == "svi":
+            series_map["Observed Points"] = [obs_scatter]
 
     if model == "svi":
         params = fit_svi_slice(S, K, T, iv)
@@ -58,25 +68,48 @@ def fit_and_plot_smile(
         if ci_level and ci_level > 0:
             bands = sabr_confidence_bands(S, K, T, iv, K_grid, beta=beta, level=ci_level, n_boot=200)
 
-    # line
+    # Model fit line
     lw_default = 2 if show_points else 1.5
     line_kwargs = line_kwargs.copy() if line_kwargs else {}
     line_kwargs.setdefault("lw", lw_default)
-    ax.plot(K_grid / S, y_fit, label=label or f"{model.upper()} fit", **line_kwargs)
+    fit_line = ax.plot(K_grid / S, y_fit, label=label or f"{model.upper()} fit", **line_kwargs)
+    
+    # Only add SVI-specific components to toggle controls
+    if enable_svi_toggles and model == "svi":
+        series_map[f"SVI Fit"] = fit_line
 
-    # bands
+    # Confidence bands
+    ci_artists = []
     if bands is not None:
-        ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(ci_level*100)}% CI")
-        ax.plot(bands.x / S, bands.mean, lw=1, alpha=0.6, linestyle="--")
+        ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(ci_level*100)}% CI")
+        ci_line = ax.plot(bands.x / S, bands.mean, lw=1, alpha=0.6, linestyle="--")
+        ci_artists.extend([ci_fill])
+        ci_artists.extend(ci_line)
+        
+        # Only add confidence intervals to toggle if it's SVI model
+        if enable_svi_toggles and model == "svi":
+            series_map["SVI Confidence Interval"] = ci_artists
 
-    ax.axvline(1.0, color="grey", lw=1, ls="--")
+    # ATM line - always available for toggle if requested
+    atm_line = ax.axvline(1.0, color="grey", lw=1, ls="--")
+    
     ax.set_xlabel("Moneyness K/S")
     ax.set_ylabel("Implied Vol")
     ax.legend(loc="best", fontsize=8)
 
+    # Add toggle controls only for SVI components - using legend-based toggles only
+    if enable_svi_toggles and series_map and model == "svi":
+        # Use only legend toggles for cleaner interface
+        add_legend_toggles(ax, series_map)
+        add_keyboard_toggles(ax.figure, series_map, keymap={
+            "o": "Observed Points",
+            "f": "SVI Fit", 
+            "c": "SVI Confidence Interval"
+        })
+
     # simple fit quality
     rmse = float(params.get("rmse", np.nan))
-    return {"params": params, "rmse": rmse, "T": T, "S": float(S)}
+    return {"params": params, "rmse": rmse, "T": T, "S": float(S), "series_map": series_map if enable_svi_toggles else None}
 
 
 def main():

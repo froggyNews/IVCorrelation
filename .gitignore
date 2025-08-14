@@ -56,3 +56,9 @@ project_logging/logging_history/
 data/cache/
 improved_correlation_matrix.png
 test_correlation_matrix.png
+
+# Animation demo files
+animation_demo.png
+test_animation_integration.py
+test_browser_integration.py
+demo_animation.py
