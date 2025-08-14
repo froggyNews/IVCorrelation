@@ -21,8 +21,10 @@ from analysis.analysis_pipeline import get_smile_slice, relative_value_atm_repor
 from analysis.pillars import compute_atm_by_expiry
 
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 from analysis.pillars import atm_curve_for_ticker_on_date
+from display.plotting.anim_utils import animate_smile_over_time, animate_surface_timesweep
 DEFAULT_ATM_BAND = ATM_BAND = 0.05
 def _cols_to_days(cols) -> np.ndarray:
     out = []
@@ -69,6 +71,11 @@ class PlotManager:
         self._cid_click = None
         self._current_plot_type = None
         self._smile_ctx = None   # dict storing precomputed arrays + current index + overlay bits
+        
+        # --- animation state ---
+        self._animation = None
+        self._animation_paused = False
+        self._animation_speed = 120  # ms between frames
 
     def attach_canvas(self, canvas):
         self.canvas = canvas
@@ -298,7 +305,8 @@ class PlotManager:
 
         info = fit_and_plot_smile(
             ax, S=S, K=K, T=T_used, iv=IV,
-            model=model, moneyness_grid=(0.7, 1.3, 121), ci_level=ci, show_points=True
+            model=model, moneyness_grid=(0.7, 1.3, 121), ci_level=ci, show_points=True,
+            enable_svi_toggles=(model == "svi")  # Only enable toggles for SVI model
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
 
@@ -310,7 +318,7 @@ class PlotManager:
 
                 # build target + peers surfaces, combine peers using matrix weights
                 tickers = list({target, *peers})
-                surfaces = build_surface_grids(tickers=tickers, tenors=None, mny_bins=None, use_atm_only=False, max_expiries=max_expiries)
+                surfaces = build_surface_grids(tickers=tickers, tenors=None, mny_bins=None, use_atm_only=False, max_expiries=self._current_max_expiries)
                 if target in surfaces and asof in surfaces[target]:
                     peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
                     synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
@@ -353,7 +361,7 @@ class PlotManager:
         try:
             # Build target and peer surfaces, then combine peers using correlation weights
             tickers = list({target, *peers})
-            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False, max_expiries=max_expiries)
+            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False, max_expiries=self._current_max_expiries)
 
             if target not in surfaces or asof not in surfaces[target]:
                 ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center")
@@ -771,4 +779,366 @@ class PlotManager:
         return pd.DataFrame(
             {"T": np.array(out_T, float), "atm_vol": np.array(out_iv, float)}
         ).sort_values("T")
+
+    # ---- animation control methods ----
+    
+    def has_animation_support(self, plot_type: str) -> bool:
+        """Check if a plot type supports animation."""
+        return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
+    
+    def is_animation_active(self) -> bool:
+        """Check if an animation is currently active."""
+        return self._animation is not None
+    
+    def start_animation(self) -> bool:
+        """Start or resume animation. Returns True if animation was started."""
+        if not self._animation:
+            return False
+        if self._animation_paused:
+            self._animation.resume()
+            self._animation_paused = False
+        return True
+    
+    def pause_animation(self) -> bool:
+        """Pause animation. Returns True if animation was paused."""
+        if not self._animation:
+            return False
+        if not self._animation_paused:
+            self._animation.pause()
+            self._animation_paused = True
+        return True
+    
+    def stop_animation(self):
+        """Stop and cleanup current animation."""
+        if self._animation:
+            try:
+                self._animation.pause()
+                self._animation = None
+                self._animation_paused = False
+            except Exception:
+                pass
+    
+    def set_animation_speed(self, interval_ms: int):
+        """Set animation speed in milliseconds between frames."""
+        self._animation_speed = max(50, min(2000, interval_ms))
+        if self._animation:
+            self._animation.event_source.interval = self._animation_speed
+    
+    def get_animation_speed(self) -> int:
+        """Get current animation speed in milliseconds."""
+        return self._animation_speed
+    
+    def plot_animated(self, ax: plt.Axes, settings: dict) -> bool:
+        """
+        Create animated version of plot if supported.
+        Returns True if animation was created, False if not supported.
+        """
+        plot_type = settings["plot_type"]
+        
+        if not self.has_animation_support(plot_type):
+            return False
+            
+        self.stop_animation()  # cleanup any existing animation
+        
+        try:
+            if plot_type.startswith("Smile"):
+                return self._create_animated_smile(ax, settings)
+            elif plot_type.startswith("Synthetic Surface"):
+                return self._create_animated_surface(ax, settings)
+        except Exception as e:
+            print(f"Failed to create animation: {e}")
+            return False
+        
+        return False
+    
+    def _create_animated_smile(self, ax: plt.Axes, settings: dict) -> bool:
+        """Create animated smile plot over time/expiries."""
+        target = settings["target"]
+        asof = settings["asof"]
+        max_expiries = settings.get("max_expiries", 6)
+        
+        try:
+            # First try to animate over different dates
+            if self._try_animate_smile_over_dates(ax, settings):
+                return True
+                
+            # Fall back to animating over expiries for the given date
+            return self._try_animate_smile_over_expiries(ax, settings)
+            
+        except Exception as e:
+            print(f"Error creating animated smile: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _try_animate_smile_over_dates(self, ax: plt.Axes, settings: dict) -> bool:
+        """Try to create smile animation over multiple dates."""
+        target = settings["target"]
+        max_expiries = settings.get("max_expiries", 6)
+        T_days = settings.get("T_days", 30)
+        
+        from analysis.analysis_pipeline import available_dates
+        
+        dates = available_dates(target)
+        if len(dates) < 2:
+            return False  # Need multiple dates for animation
+            
+        # Use up to 10 most recent dates for animation
+        animation_dates = dates[-10:] if len(dates) > 10 else dates
+        
+        # Collect data for each date
+        k_data, iv_data = [], []
+        valid_dates = []
+        
+        for date in animation_dates:
+            df = get_smile_slice(target, date, T_target_years=T_days/365.25, max_expiries=max_expiries)
+            if df is None or df.empty:
+                continue
+                
+            # Extract K and sigma for this date
+            K_arr = pd.to_numeric(df["K"], errors="coerce").to_numpy(float)
+            sigma_arr = pd.to_numeric(df["sigma"], errors="coerce").to_numpy(float)
+            S_arr = pd.to_numeric(df["S"], errors="coerce").to_numpy(float)
+            
+            # Convert to moneyness
+            S = np.nanmedian(S_arr)
+            if not np.isfinite(S) or S <= 0:
+                continue
+            k = K_arr / S
+            
+            # Filter valid data
+            valid_mask = np.isfinite(k) & np.isfinite(sigma_arr)
+            if not np.any(valid_mask):
+                continue
+                
+            k_clean = k[valid_mask]
+            iv_clean = sigma_arr[valid_mask]
+            
+            # Sort by moneyness
+            sort_idx = np.argsort(k_clean)
+            k_data.append(k_clean[sort_idx])
+            iv_data.append(iv_clean[sort_idx])
+            valid_dates.append(date)
+        
+        if len(valid_dates) < 2:
+            return False
+            
+        return self._create_smile_animation(ax, k_data, iv_data, valid_dates, f"{target} Smile Over Time")
+    
+    def _try_animate_smile_over_expiries(self, ax: plt.Axes, settings: dict) -> bool:
+        """Try to create smile animation over different expiries for single date."""
+        target = settings["target"]
+        asof = settings["asof"]
+        max_expiries = settings.get("max_expiries", 6)
+        
+        # Load all expiries for this date
+        df = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
+        if df is None or df.empty:
+            return False
+            
+        # Group by expiry
+        T_arr = pd.to_numeric(df["T"], errors="coerce").to_numpy(float)
+        K_arr = pd.to_numeric(df["K"], errors="coerce").to_numpy(float)
+        sigma_arr = pd.to_numeric(df["sigma"], errors="coerce").to_numpy(float)
+        S_arr = pd.to_numeric(df["S"], errors="coerce").to_numpy(float)
+        
+        # Get unique expiries
+        Ts = np.sort(np.unique(T_arr[np.isfinite(T_arr)]))
+        if len(Ts) < 2:
+            return False
+            
+        # Collect data for each expiry
+        k_data, iv_data = [], []
+        valid_expiries = []
+        
+        for T in Ts:
+            mask = np.isclose(T_arr, T, atol=1e-6)
+            if not np.any(mask):
+                continue
+                
+            K_T = K_arr[mask]
+            sigma_T = sigma_arr[mask] 
+            S_T = S_arr[mask]
+            
+            # Convert to moneyness
+            S = np.nanmedian(S_T)
+            if not np.isfinite(S) or S <= 0:
+                continue
+            k = K_T / S
+            
+            # Filter valid data
+            valid_mask = np.isfinite(k) & np.isfinite(sigma_T)
+            if not np.any(valid_mask):
+                continue
+                
+            k_clean = k[valid_mask]
+            iv_clean = sigma_T[valid_mask]
+            
+            # Sort by moneyness
+            sort_idx = np.argsort(k_clean)
+            k_data.append(k_clean[sort_idx])
+            iv_data.append(iv_clean[sort_idx])
+            
+            # Format expiry label
+            days = int(round(T * 365.25))
+            valid_expiries.append(f"T={T:.3f}y ({days}d)")
+        
+        if len(valid_expiries) < 2:
+            return False
+            
+        return self._create_smile_animation(ax, k_data, iv_data, valid_expiries, f"{target} Smile Over Expiries - {asof}")
+    
+    def _create_smile_animation(self, ax: plt.Axes, k_data: list, iv_data: list, labels: list, base_title: str) -> bool:
+        """Create the actual smile animation from prepared data."""
+        # Create common moneyness grid
+        all_k = np.concatenate(k_data)
+        k_min, k_max = np.nanpercentile(all_k, [5, 95])
+        k_grid = np.linspace(k_min, k_max, 50)
+        
+        # Interpolate all curves to common grid
+        iv_grid_data = []
+        for k_points, iv_points in zip(k_data, iv_data):
+            if len(k_points) > 1:
+                iv_interp = np.interp(k_grid, k_points, iv_points, left=np.nan, right=np.nan)
+            else:
+                iv_interp = np.full_like(k_grid, np.nan)
+            iv_grid_data.append(iv_interp)
+        
+        iv_tk = np.array(iv_grid_data)
+        
+        # Clear the axes and set up the plot
+        ax.clear()
+        
+        # Create the animated line
+        line, = ax.plot(k_grid, iv_tk[0], label="Smile", lw=2, color='blue')
+        ax.set_xlim(k_grid.min(), k_grid.max())
+        iv_min, iv_max = np.nanpercentile(iv_tk, [1, 99])
+        iv_range = iv_max - iv_min
+        ax.set_ylim(iv_min - 0.1*iv_range, iv_max + 0.1*iv_range)
+        ax.set_xlabel("Moneyness (K/S)")
+        ax.set_ylabel("Implied Volatility")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        def update_frame(i):
+            line.set_ydata(iv_tk[i])
+            ax.set_title(f"{base_title} - {labels[i]}")
+            return [line]
+        
+        # Create animation on the current figure
+        fig = ax.figure
+        self._animation = FuncAnimation(
+            fig, update_frame, frames=len(labels),
+            interval=self._animation_speed, blit=True, repeat=True
+        )
+        
+        # Start with initial frame
+        update_frame(0)
+        
+        return True
+    
+    def _create_animated_surface(self, ax: plt.Axes, settings: dict) -> bool:
+        """Create animated surface plot over time."""
+        target = settings["target"]
+        asof = settings["asof"]
+        peers = settings.get("peers", [])
+        weight_mode = settings.get("weight_mode", "iv_atm")
+        
+        try:
+            # Load surface data for animation
+            from analysis.analysis_pipeline import available_dates
+            from analysis.syntheticETFBuilder import build_surface_grids
+            
+            dates = available_dates(target)
+            if len(dates) < 2:
+                return False
+                
+            # Use up to 8 most recent dates for surface animation
+            animation_dates = dates[-8:] if len(dates) > 8 else dates
+            
+            # Build surface grids for each date
+            surfaces_data = []
+            valid_dates = []
+            
+            for date in animation_dates:
+                try:
+                    # Build surface for this date
+                    surfaces = build_surface_grids(
+                        tickers=[target] + peers if peers else [target],
+                        asof_dates=[date],
+                        max_expiries=settings.get("max_expiries", 6)
+                    )
+                    
+                    if target in surfaces and date in surfaces[target]:
+                        surface = surfaces[target][date]
+                        if not surface.empty:
+                            surfaces_data.append(surface)
+                            valid_dates.append(date)
+                            
+                except Exception:
+                    continue
+            
+            if len(valid_dates) < 2:
+                return False
+                
+            # Extract common grid parameters
+            first_surface = surfaces_data[0]
+            tau_days = first_surface.columns.values
+            k_levels = first_surface.index.values
+            
+            # Convert to numpy arrays for animation
+            tau = np.array([float(t) for t in tau_days])
+            k = np.array([float(k_str.split('-')[0]) if '-' in str(k_str) else float(k_str) for k_str in k_levels])
+            
+            # Stack all surface data
+            iv_tktau = []
+            for surface in surfaces_data:
+                # Align surface to common grid
+                aligned_surface = surface.reindex(index=k_levels, columns=tau_days, fill_value=np.nan)
+                iv_tktau.append(aligned_surface.values)
+                
+            iv_tktau = np.array(iv_tktau)
+            
+            # Clear axes and create surface plot
+            ax.clear()
+            
+            # Create initial surface image
+            vmin, vmax = np.nanpercentile(iv_tktau, [1, 99])
+            im = ax.imshow(
+                iv_tktau[0],
+                origin="lower",
+                aspect="auto", 
+                extent=[tau.min(), tau.max(), k.min(), k.max()],
+                vmin=vmin,
+                vmax=vmax,
+                animated=True
+            )
+            
+            ax.set_xlabel("Time to Expiry (days)")
+            ax.set_ylabel("Moneyness")
+            cbar = ax.figure.colorbar(im, ax=ax)
+            cbar.set_label("Implied Volatility")
+            
+            def update_surface(i):
+                im.set_array(iv_tktau[i])
+                ax.set_title(f"{target} IV Surface Animation - {valid_dates[i]}")
+                return [im]
+            
+            # Create animation
+            fig = ax.figure
+            self._animation = FuncAnimation(
+                fig, update_surface, frames=len(valid_dates),
+                interval=self._animation_speed, blit=True, repeat=True
+            )
+            
+            # Show initial frame
+            update_surface(0)
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error creating animated surface: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 

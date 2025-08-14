@@ -305,7 +305,7 @@ class InputPanel(ttk.Frame):
                 val /= 100.0
             return val
         except Exception:
-          return DEFAULT_CI
+            return DEFAULT_CI
 
 
     def get_x_units(self) -> str:
@@ -378,8 +378,7 @@ class InputPanel(ttk.Frame):
             
             # Show description if available
             if group.get("description"):
-                messagebox.showinfo("Preset Loaded", 
-                    f"Loaded: {selected}\n\nDescription: {group['description']}")
+                print(f"Loaded preset: {selected} - {group['description']}")
             
         except Exception as e:
             print(f"Error loading preset: {e}")
@@ -426,7 +425,7 @@ class InputPanel(ttk.Frame):
             if success:
                 self._refresh_presets()
                 self.cmb_presets.set(group_name)
-                messagebox.showinfo("Success", f"Preset '{group_name}' saved successfully!")
+                print(f"Success: Preset '{group_name}' saved successfully!")
             else:
                 messagebox.showerror("Error", "Failed to save preset.")
                 
@@ -450,7 +449,7 @@ class InputPanel(ttk.Frame):
             success = delete_ticker_group(selected)
             if success:
                 self._refresh_presets()
-                messagebox.showinfo("Success", f"Preset '{selected}' deleted successfully!")
+                print(f"Success: Preset '{selected}' deleted successfully!")
             else:
                 messagebox.showerror("Error", f"Preset '{selected}' not found or could not be deleted.")
                 
@@ -532,7 +531,7 @@ class InputPanel(ttk.Frame):
             # Convert to percentage if needed (values > 1 are assumed to be percentages)
             if rate_value > 1:
                 rate_value = rate_value / 100.0
-                messagebox.showinfo("Info", f"Converted {rate_str}% to {rate_value:.4f} (decimal form)")
+                print(f"Info: Converted {rate_str}% to {rate_value:.4f} (decimal form)")
             
             # Ask for rate name
             rate_id = simpledialog.askstring(
@@ -564,7 +563,6 @@ class InputPanel(ttk.Frame):
             self._refresh_interest_rates()
             self.cmb_r_presets.set(rate_id)
             
-            messagebox.showinfo("Success", f"Interest rate '{rate_id}' saved successfully!")
             
         except Exception as e:
             print(f"Error saving interest rate: {e}")

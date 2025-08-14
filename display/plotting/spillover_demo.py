@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from src.viz.anim_utils import (
+from display.plotting.anim_utils import (
     animate_spillover,
     add_checkboxes,
     add_keyboard_toggles,
