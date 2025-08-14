@@ -330,8 +330,8 @@ def surface_betas(benchmark: str,
     edges = [mny_bins[0][0]] + [hi for (_, hi) in mny_bins]
     df["mny_bin"] = pd.cut(df["moneyness"], bins=edges, labels=labels, include_lowest=True)
     df = df.dropna(subset=["mny_bin"])
-    cell = df.groupby(["asof_date", "ticker", "tenor_bin", "mny_bin"])["iv"].mean().reset_index()
-    grid = cell.pivot_table(index=["asof_date", "ticker"], columns=["tenor_bin", "mny_bin"], values="iv")
+    cell = df.groupby(["asof_date", "ticker", "tenor_bin", "mny_bin"], observed=True)["iv"].mean().reset_index()
+    grid = cell.pivot_table(index=["asof_date", "ticker"], columns=["tenor_bin", "mny_bin"], values="iv", observed=True)
     level = grid.mean(axis=1).rename("iv_surface_level").reset_index()
     wide = level.pivot(index="asof_date", columns="ticker", values="iv_surface_level").sort_index()
     if benchmark not in wide.columns:
@@ -399,27 +399,68 @@ def iv_surface_betas(
     edges = [mny_bins[0][0]] + [hi for (_, hi) in mny_bins]
     df["mny_bin"] = pd.cut(df["moneyness"], bins=edges, labels=labels, include_lowest=True)
     df = df.dropna(subset=["mny_bin"])
-    cell = df.groupby(["asof_date", "ticker", "tenor_bin", "mny_bin"])["iv"].mean().reset_index()
-    grid = cell.pivot_table(index=["asof_date"], columns=["ticker", "tenor_bin", "mny_bin"], values="iv")
+    cell = df.groupby(["asof_date", "ticker", "tenor_bin", "mny_bin"], observed=True)["iv"].mean().reset_index()
+    grid = cell.pivot_table(index=["asof_date"], columns=["ticker", "tenor_bin", "mny_bin"], values="iv", observed=True)
+    
+    # Get the actual moneyness bins and tenors that exist in the data
+    # This prevents KeyError when trying to access non-existent combinations
+    if grid.empty:
+        return {}
+    
+    actual_tenors = set(grid.columns.get_level_values(1))
+    actual_mny_bins = set(grid.columns.get_level_values(2))
+    
     # For each (tenor_bin, mny_bin), compute beta vs benchmark
     betas_dict = {}
     tickers = grid.columns.get_level_values(0).unique()
+    
     for tenor in tarr:
+        # Only process tenors that actually exist in the data
+        if tenor not in actual_tenors:
+            continue
+            
         for mny in labels:
-            col_slice = (slice(None), tenor, mny)
-            subgrid = grid.xs((tenor, mny), axis=1, level=[1,2], drop_level=False)
-            # subgrid: index=asof_date, columns=ticker
-            if benchmark not in subgrid.columns.get_level_values(0):
+            # Only process moneyness bins that actually exist in the data
+            if mny not in actual_mny_bins:
                 continue
-            wide = subgrid.droplevel([1,2], axis=1)
-            # de-mean per day to reduce common level
-            wide = wide.sub(wide.mean(axis=1), axis=0)
-            betas = {}
-            for t in wide.columns:
-                if t == benchmark:
+                
+            try:
+                # Check if this (tenor, mny) combination has data for the benchmark
+                available_tickers_for_combo = []
+                for ticker in tickers:
+                    if (ticker, tenor, mny) in grid.columns:
+                        available_tickers_for_combo.append(ticker)
+                
+                if benchmark not in available_tickers_for_combo:
                     continue
-                betas[t] = _beta(wide.rename(columns={t: "x", benchmark: "b"}), "x", "b")
-            betas_dict[f"T{int(tenor)}_{mny}"] = pd.Series(betas, name=f"iv_surface_beta_T{int(tenor)}_{mny}")
+                
+                # Extract the subgrid for this (tenor, mny) combination
+                subgrid = grid.xs((tenor, mny), axis=1, level=[1,2], drop_level=False)
+                # subgrid: index=asof_date, columns=ticker
+                
+                wide = subgrid.droplevel([1,2], axis=1)
+                
+                # Ensure we have sufficient data points for beta calculation
+                if len(wide) < 5:  # _beta function requires at least 5 data points
+                    continue
+                
+                # de-mean per day to reduce common level
+                wide = wide.sub(wide.mean(axis=1), axis=0)
+                
+                betas = {}
+                for t in wide.columns:
+                    if t == benchmark:
+                        continue
+                    if t in available_tickers_for_combo:  # Only calculate for tickers with data
+                        betas[t] = _beta(wide.rename(columns={t: "x", benchmark: "b"}), "x", "b")
+                
+                if betas:  # Only add if we actually calculated some betas
+                    betas_dict[f"T{int(tenor)}_{mny}"] = pd.Series(betas, name=f"iv_surface_beta_T{int(tenor)}_{mny}")
+                    
+            except (KeyError, ValueError) as e:
+                # Gracefully handle cases where the data combination doesn't exist
+                continue
+    
     return betas_dict
 
 
