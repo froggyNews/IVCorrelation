@@ -44,6 +44,7 @@ from .beta_builder import (
     peer_weights_from_correlations,
     build_vol_betas,
     save_correlations,
+    cosine_similarity_weights,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 
@@ -201,8 +202,9 @@ def compute_peer_weights(
     Parameters
     ----------
     weight_mode : str
-        ``"iv_atm"`` (default), ``"surface"``, ``"ul"``/``"underlying```, or
-        PCA variants such as ``"pca_atm_market"``.
+        ``"iv_atm"`` (default), ``"surface"``, ``"ul"``/``"underlying"``,
+        PCA variants such as ``"pca_atm_market"``, or
+        cosine similarity variants such as ``"cosine_atm"``/``"cosine_surface"``.
     """
     target = target.upper()
     peers = [p.upper() for p in peers]
@@ -214,6 +216,22 @@ def compute_peer_weights(
         if asof is None:
             return pd.Series(dtype=float)
         return pca_weights(
+            get_smile_slice=get_smile_slice,
+            mode=mode,
+            target=target,
+            peers=peers,
+            asof=asof,
+            pillars_days=pillar_days,
+            tenors=tenor_days,
+            mny_bins=mny_bins,
+        )
+    if mode.startswith("cosine"):
+        if asof is None:
+            dates = available_dates(ticker=target, most_recent_only=True)
+            asof = dates[0] if dates else None
+        if asof is None:
+            return pd.Series(dtype=float)
+        return cosine_similarity_weights(
             get_smile_slice=get_smile_slice,
             mode=mode,
             target=target,
