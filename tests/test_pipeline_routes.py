@@ -54,6 +54,7 @@ def test_compute_peer_weights_route_logging(monkeypatch, caplog):
     mode_map = {
         "pca_atm_market": "pca_weights",
         "cosine_surface": "cosine_similarity_weights",
+        "cosine_ul": "cosine_similarity_weights",
         "surface_grid": "build_vol_betas",
         "iv_atm": "peer_weights_from_correlations",
     }
