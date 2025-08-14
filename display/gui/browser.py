@@ -32,12 +32,35 @@ class BrowserApp(tk.Tk):
         self.inputs.bind_plot(self._refresh_plot)
         self.inputs.bind_target_change(self._on_target_change)
 
-        # Expiry navigation
+        # Expiry navigation and animation controls
         nav = ttk.Frame(self); nav.pack(side=tk.TOP, fill=tk.X, pady=(0,4))
+        
+        # Expiry navigation (existing)
         self.btn_prev = ttk.Button(nav, text="Prev Expiry", command=self._prev_expiry)
         self.btn_prev.pack(side=tk.LEFT, padx=4)
         self.btn_next = ttk.Button(nav, text="Next Expiry", command=self._next_expiry)
         self.btn_next.pack(side=tk.LEFT, padx=4)
+        
+        # Animation controls (new)
+        ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        
+        self.var_animated = tk.BooleanVar(value=False)
+        self.chk_animated = ttk.Checkbutton(nav, text="Animate", variable=self.var_animated,
+                                           command=self._toggle_animation_mode)
+        self.chk_animated.pack(side=tk.LEFT, padx=4)
+        
+        self.btn_play_pause = ttk.Button(nav, text="Play", command=self._toggle_animation)
+        self.btn_play_pause.pack(side=tk.LEFT, padx=2)
+        
+        self.btn_stop = ttk.Button(nav, text="Stop", command=self._stop_animation)
+        self.btn_stop.pack(side=tk.LEFT, padx=2)
+        
+        ttk.Label(nav, text="Speed:").pack(side=tk.LEFT, padx=(8,2))
+        self.speed_var = tk.IntVar(value=500)  # Default speed
+        self.speed_scale = ttk.Scale(nav, from_=100, to=2000, variable=self.speed_var, 
+                                    orient=tk.HORIZONTAL, length=100,
+                                    command=self._on_speed_change)
+        self.speed_scale.pack(side=tk.LEFT, padx=2)
 
         # Canvas
         self.fig = plt.Figure(figsize=(11.2, 6.6))
@@ -60,6 +83,7 @@ class BrowserApp(tk.Tk):
             self._on_target_change()
 
         self._update_nav_buttons()
+        self._update_animation_buttons()
 
     # ---------- events ----------
     def _on_target_change(self, *_):
@@ -115,15 +139,32 @@ class BrowserApp(tk.Tk):
 
         def worker():
             try:
-                self.plot_mgr.plot(self.ax, settings)
+                # Check if animation is requested and supported
+                if (self.var_animated.get() and 
+                    self.plot_mgr.has_animation_support(settings["plot_type"])):
+                    
+                    # Try to create animated plot
+                    if self.plot_mgr.plot_animated(self.ax, settings):
+                        self.after(0, lambda: self.status.config(text="Animated plot created"))
+                    else:
+                        # Fall back to static plot
+                        self.plot_mgr.plot(self.ax, settings)
+                        self.after(0, lambda: self.status.config(text="Animation failed - using static plot"))
+                else:
+                    # Create static plot
+                    self.plot_mgr.stop_animation()  # Stop any existing animation
+                    self.plot_mgr.plot(self.ax, settings)
+                    
                 self.canvas.draw()
                 self.after(0, self._update_nav_buttons)
-                self.after(0, lambda: self.status.config(text="Plot updated"))
+                self.after(0, self._update_animation_buttons)
+                
             except Exception as e:
                 def handle_err():
                     messagebox.showerror("Plot error", str(e))
                     self.status.config(text="Plot failed")
                     self._update_nav_buttons()
+                    self._update_animation_buttons()
                 self.after(0, handle_err)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -141,6 +182,56 @@ class BrowserApp(tk.Tk):
         state = tk.NORMAL if self.plot_mgr.is_smile_active() else tk.DISABLED
         self.btn_prev.config(state=state)
         self.btn_next.config(state=state)
+    
+    def _update_animation_buttons(self):
+        """Update animation control button states."""
+        plot_type = self.inputs.get_plot_type()
+        has_anim_support = self.plot_mgr.has_animation_support(plot_type)
+        is_animated = self.var_animated.get()
+        is_anim_active = self.plot_mgr.is_animation_active()
+        
+        # Enable/disable animation checkbox based on plot type support
+        anim_state = tk.NORMAL if has_anim_support else tk.DISABLED
+        self.chk_animated.config(state=anim_state)
+        
+        # Enable/disable animation controls based on animation state
+        control_state = tk.NORMAL if (is_animated and is_anim_active) else tk.DISABLED
+        self.btn_play_pause.config(state=control_state)
+        self.btn_stop.config(state=control_state)
+        self.speed_scale.config(state=control_state)
+        
+        # Update play/pause button text
+        if is_anim_active and not self.plot_mgr._animation_paused:
+            self.btn_play_pause.config(text="Pause")
+        else:
+            self.btn_play_pause.config(text="Play")
+    
+    def _toggle_animation_mode(self):
+        """Handle animation checkbox toggle."""
+        # Refresh plot when animation mode changes
+        self._refresh_plot()
+    
+    def _toggle_animation(self):
+        """Toggle animation play/pause."""
+        if self.plot_mgr.is_animation_active():
+            if self.plot_mgr._animation_paused:
+                self.plot_mgr.start_animation()
+            else:
+                self.plot_mgr.pause_animation()
+            self._update_animation_buttons()
+    
+    def _stop_animation(self):
+        """Stop animation."""
+        self.plot_mgr.stop_animation()
+        self._update_animation_buttons()
+    
+    def _on_speed_change(self, value):
+        """Handle animation speed change."""
+        try:
+            speed_ms = int(2100 - float(value))  # Invert scale (higher value = faster)
+            self.plot_mgr.set_animation_speed(speed_ms)
+        except Exception:
+            pass
 
     def _load_tickers(self):
         try:
