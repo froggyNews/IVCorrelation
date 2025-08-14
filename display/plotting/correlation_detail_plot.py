@@ -257,3 +257,65 @@ def plot_correlation_details(
         ax.text(1.02, 0.5, txt, transform=ax.transAxes, va="center", ha="left",
                 fontsize=9, bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
 
+
+def scatter_corr_matrix(
+    df_or_path: pd.DataFrame | str,
+    columns: Optional[Iterable[str]] = None,
+    *,
+    plot: bool = True,
+) -> pd.DataFrame:
+    """Compute pairwise correlation coefficients for numeric columns and
+    optionally draw a scatter-matrix plot.
+
+    Parameters
+    ----------
+    df_or_path:
+        Either a :class:`pandas.DataFrame` or path to a CSV file containing the
+        data.
+    columns:
+        Optional iterable of column names to include.  Columns not present in
+        the data are ignored, so the function continues to work if the caller
+        has pre-filtered ("down-selected") the available columns.
+    plot:
+        If ``True`` (default) a scatter-matrix is produced using
+        :func:`pandas.plotting.scatter_matrix`.
+
+    Returns
+    -------
+    :class:`pandas.DataFrame`
+        The correlation matrix of the selected numeric columns.  An empty
+        DataFrame is returned if fewer than two numeric columns are available.
+    """
+
+    # ------------------------------------------------------------------
+    # Load data & select columns
+    # ------------------------------------------------------------------
+    if isinstance(df_or_path, str):
+        df = pd.read_csv(df_or_path)
+    else:
+        df = df_or_path.copy()
+
+    if columns is not None:
+        # Keep only columns that actually exist to avoid KeyError when the
+        # caller has already removed some columns before plotting.
+        cols = [c for c in columns if c in df.columns]
+        df = df[cols]
+
+    # Work only with numeric columns and drop rows with NA to avoid
+    # spurious NaNs in the correlation calculation.
+    num_df = df.select_dtypes(include=[np.number]).dropna()
+    if num_df.shape[1] < 2:
+        return pd.DataFrame()
+
+    corr_df = num_df.corr()
+
+    if plot:
+        try:
+            pd.plotting.scatter_matrix(num_df, figsize=(6, 6))
+        except Exception:
+            # The plot is best-effort; failure to plot should not crash the
+            # correlation computation.
+            pass
+
+    return corr_df
+
