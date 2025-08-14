@@ -47,6 +47,7 @@ from .beta_builder import (
     cosine_similarity_weights,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
+from .correlation_utils import compute_atm_corr, corr_weights
 
 
 # =========================
@@ -249,6 +250,19 @@ def compute_peer_weights(
             tenor_days=tenor_days,
             mny_bins=mny_bins,
         )
+    if mode == "corr_atm":
+        if asof is None:
+            dates = available_dates(ticker=target, most_recent_only=True)
+            asof = dates[0] if dates else None
+        if asof is None:
+            return pd.Series(dtype=float)
+        atm_df, corr_df = compute_atm_corr(
+            get_smile_slice=get_smile_slice,
+            tickers=[target] + peers,
+            asof=asof,
+            pillars_days=pillar_days,
+        )
+        return corr_weights(corr_df, target, peers)
     return peer_weights_from_correlations(
         benchmark=target,
         peers=peers,

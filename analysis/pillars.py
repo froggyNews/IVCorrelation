@@ -427,32 +427,6 @@ def compute_atm_by_expiry(
 
     return pd.DataFrame(rows).sort_values("T").reset_index(drop=True)
 
-# ---------------------------------------------------------------------
-# Weights from a live correlation matrix (target vs peers)
-# ---------------------------------------------------------------------
-def corr_weights_from_matrix(
-    corr_df: pd.DataFrame,
-    target: str,
-    peers: List[str],
-    clip_negative: bool = True,
-    power: float = 1.0,
-) -> pd.Series:
-    """
-    Convert correlation column (w.r.t. target) into normalized positive weights.
-    """
-    target = target.upper()
-    peers = [p.upper() for p in peers]
-    s = corr_df.reindex(index=peers, columns=[target]).iloc[:, 0].astype(float)
-    if clip_negative:
-        s = s.clip(lower=0.0)
-    if power is not None and power != 1.0:
-        s = s.pow(float(power))
-    total = float(s.sum())
-    if not np.isfinite(total) or total <= 0:
-        # fallback equal
-        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
-    return s / total
-
 # Public tiny helper: build ATM curve for GUI/plots
 def atm_curve_for_ticker_on_date(
     get_smile_slice,
