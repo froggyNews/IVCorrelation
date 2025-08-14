@@ -62,7 +62,6 @@ class InputPanel(ttk.Frame):
         
         # Initialize database and create default groups if needed
         self._init_ticker_groups()
-        self._init_interest_rates()
 
         # =======================
         # Row 0: Presets
@@ -126,6 +125,9 @@ class InputPanel(ttk.Frame):
 
         self.btn_download = ttk.Button(row1, text="Download / Ingest")
         self.btn_download.grid(row=0, column=12, padx=8)
+
+        # Initialize interest rates now that the related widgets exist
+        self._init_interest_rates()
 
         # =======================
         # Row 2: Plot controls
@@ -567,22 +569,3 @@ class InputPanel(ttk.Frame):
         except Exception as e:
             print(f"Error saving interest rate: {e}")
             messagebox.showerror("Error", f"Failed to save interest rate: {e}")
-    
-    def get_interest_rate(self) -> float:
-        """Get the current interest rate value."""
-        try:
-            rate_str = self.ent_r.get().strip()
-            if not rate_str:
-                return get_default_interest_rate()
-            
-            rate_value = float(rate_str)
-            
-            # Convert to decimal if percentage (values > 1 are assumed to be percentages)
-            if rate_value > 1:
-                rate_value = rate_value / 100.0
-            
-            return rate_value
-            
-        except ValueError:
-            # Return default if parsing fails
-            return get_default_interest_rate()
