@@ -63,6 +63,7 @@ class PipelineConfig:
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS
     pillar_days: Tuple[int, ...] = tuple(DEFAULT_PILLARS_DAYS)
     use_atm_only: bool = False
+    max_expiries: Optional[int] = None  # Limit number of expiries
     cache_dir: str = "data/cache"  # optional disk cache for GUI speed
 
     def ensure_cache_dir(self) -> None:
@@ -97,6 +98,7 @@ def get_surface_grids_cached(
         tenors=cfg.tenors,
         mny_bins=cfg.mny_bins,
         use_atm_only=cfg.use_atm_only,
+        max_expiries=cfg.max_expiries,
     )
 
 
@@ -480,6 +482,7 @@ def get_smile_slice(
     T_target_years: float | None = None,
     call_put: Optional[str] = None,  # 'C' or 'P' or None for both
     nearest_by: str = "T",           # 'T' or 'moneyness'
+    max_expiries: Optional[int] = None,  # Limit number of expiries
 ) -> pd.DataFrame:
     """
     Return a slice of quotes for plotting a smile (one date, one ticker).
@@ -509,6 +512,13 @@ def get_smile_slice(
     if call_put in ("C", "P"):
         df = df[df["call_put"] == call_put]
 
+    # Limit number of expiries if requested
+    if max_expiries is not None and max_expiries > 0 and not df.empty:
+        # Get the closest expiries to today (smallest T values first)
+        unique_expiries = df.groupby('expiry')['T'].first().sort_values()
+        limited_expiries = unique_expiries.head(max_expiries).index.tolist()
+        df = df[df['expiry'].isin(limited_expiries)]
+
     if T_target_years is not None and not df.empty:
         # pick nearest expiry
         idx = (df["T"] - float(T_target_years)).abs().groupby(df["expiry"]).transform("min") == \
@@ -529,6 +539,7 @@ def fit_smile_for(
     model: str = "svi",             # "svi" or "sabr"
     min_quotes_per_expiry: int = 3, # skip super sparse expiries
     beta: float = 0.5,              # SABR beta (fixed)
+    max_expiries: Optional[int] = None,  # Limit number of expiries
 ) -> VolModel:
     """
     Fit a volatility smile model (SVI or SABR) for one day/ticker using all expiries available that day.
@@ -571,6 +582,15 @@ def fit_smile_for(
     if df.empty:
         return VolModel(model=model)
 
+    # Limit number of expiries if requested
+    if max_expiries is not None and max_expiries > 0:
+        # Get the closest expiries to today (smallest T values first)
+        unique_T_values = df.groupby('T')['T'].first().sort_values()
+        limited_T_values = unique_T_values.head(max_expiries).values
+        df = df[df['T'].isin(limited_T_values)]
+        if df.empty:
+            return VolModel(model=model)
+
     # keep only expiries with at least min_quotes_per_expiry quotes
     counts = df.groupby("T").size()
     good_T = counts[counts >= max(1, int(min_quotes_per_expiry))].index
@@ -593,6 +613,7 @@ def sample_smile_curve(
     model: str = "svi",
     moneyness_grid: tuple[float, float, int] = (0.6, 1.4, 81),  # (lo, hi, n)
     beta: float = 0.5,
+    max_expiries: Optional[int] = None,  # Limit number of expiries
 ) -> pd.DataFrame:
     """
     Convenience: fit a smile then return a tidy curve at the nearest expiry to T_target_years.
@@ -611,7 +632,7 @@ def sample_smile_curve(
         from data.db_utils import get_most_recent_date
         actual_date = get_most_recent_date(conn, ticker)
     
-    vm = fit_smile_for(ticker, asof_date, model=model, beta=beta)
+    vm = fit_smile_for(ticker, asof_date, model=model, beta=beta, max_expiries=max_expiries)
     if not vm.available_expiries() or vm.S is None:
         return pd.DataFrame(columns=["asof_date","ticker","model","T_used","moneyness","K","IV"])
 
