@@ -45,6 +45,9 @@ from .beta_builder import (
     build_vol_betas,
     save_correlations,
     cosine_similarity_weights,
+    surface_feature_matrix,
+    build_peer_weights,
+    corr_weights_from_matrix,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 from .correlation_utils import compute_atm_corr, corr_weights
@@ -192,12 +195,13 @@ def build_synthetic_iv_series(
 def compute_peer_weights(
     target: str,
     peers: Iterable[str],
-    weight_mode: str = "iv_atm",
+    weight_mode: Union[str, Tuple[str, str]] = ("corr", "iv_atm"),
     asof: str | None = None,
     pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
     tenor_days: Iterable[int] = DEFAULT_TENORS,
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
 ) -> pd.Series:
+
     """Compute peer weights via correlation or PCA metrics vs a target.
 
     Parameters
@@ -210,48 +214,87 @@ def compute_peer_weights(
     """
     target = target.upper()
     peers = [p.upper() for p in peers]
-    mode = (weight_mode or "iv_atm").lower()
-    if mode.startswith("pca"):
-        if asof is None:
-            dates = available_dates(ticker=target, most_recent_only=True)
-            asof = dates[0] if dates else None
-        if asof is None:
-            return pd.Series(dtype=float)
-        return pca_weights(
-            get_smile_slice=get_smile_slice,
-            mode=mode,
-            target=target,
-            peers=peers,
-            asof=asof,
-            pillars_days=pillar_days,
-            tenors=tenor_days,
-            mny_bins=mny_bins,
-        )
-    if mode.startswith("cosine"):
-        if asof is None:
-            dates = available_dates(ticker=target, most_recent_only=True)
-            asof = dates[0] if dates else None
-        if asof is None:
-            return pd.Series(dtype=float)
-        return cosine_similarity_weights(
-            get_smile_slice=get_smile_slice,
-            mode=mode,
-            target=target,
-            peers=peers,
-            asof=asof,
-            pillars_days=pillar_days,
-            tenors=tenor_days,
-            mny_bins=mny_bins,
-        )
-    if mode == "surface_grid":
-        # Return the full grid of betas for downstream use
-        return build_vol_betas(
-            mode=mode,
-            benchmark=target,
-            tenor_days=tenor_days,
-            mny_bins=mny_bins,
-        )
-    if mode == "corr_atm":
+
+    if isinstance(weight_mode, tuple):
+        method, feature = weight_mode
+    else:
+        mode = (weight_mode or "corr_iv_atm").lower()
+        if mode == "surface_grid":
+            return build_vol_betas(
+                mode=mode,
+                benchmark=target,
+                tenor_days=tenor_days,
+                mny_bins=mny_bins,
+            )
+        if "_" in mode:
+            method, feature = mode.split("_", 1)
+        else:
+            method, feature = mode, "iv_atm"
+
+        # legacy modes routed to existing helpers
+        if feature in ("iv_atm", "surface", "ul") and method == "corr":
+            return peer_weights_from_correlations(
+                benchmark=target,
+                peers=peers,
+                mode=feature if feature != "ul" else "ul",
+                pillar_days=pillar_days,
+                tenor_days=tenor_days,
+                mny_bins=mny_bins,
+                clip_negative=True,
+                power=1.0,
+            )
+        if feature in ("surface",) and method.startswith("pca"):
+            if asof is None:
+                dates = available_dates(ticker=target, most_recent_only=True)
+                asof = dates[0] if dates else None
+            if asof is None:
+                return pd.Series(dtype=float)
+            return pca_weights(
+                get_smile_slice=get_smile_slice,
+                mode="pca_surface_market",
+                target=target,
+                peers=peers,
+                asof=asof,
+                pillars_days=pillar_days,
+                tenors=tenor_days,
+                mny_bins=mny_bins,
+            )
+        if feature == "iv_atm" and method.startswith("pca"):
+            if asof is None:
+                dates = available_dates(ticker=target, most_recent_only=True)
+                asof = dates[0] if dates else None
+            if asof is None:
+                return pd.Series(dtype=float)
+            return pca_weights(
+                get_smile_slice=get_smile_slice,
+                mode="pca_atm_market",
+                target=target,
+                peers=peers,
+                asof=asof,
+                pillars_days=pillar_days,
+                tenors=tenor_days,
+                mny_bins=mny_bins,
+            )
+        if method.startswith("cosine") and feature in ("iv_atm", "surface", "ul"):
+            if asof is None:
+                dates = available_dates(ticker=target, most_recent_only=True)
+                asof = dates[0] if dates else None
+            if asof is None:
+                return pd.Series(dtype=float)
+            mode = f"cosine_{feature}" if feature != "iv_atm" else "cosine_atm"
+            return cosine_similarity_weights(
+                get_smile_slice=get_smile_slice,
+                mode=mode,
+                target=target,
+                peers=peers,
+                asof=asof,
+                pillars_days=pillar_days,
+                tenors=tenor_days,
+                mny_bins=mny_bins,
+            )
+
+    # For new unified API
+    if feature == "atm" and method == "corr":
         if asof is None:
             dates = available_dates(ticker=target, most_recent_only=True)
             asof = dates[0] if dates else None
@@ -264,15 +307,34 @@ def compute_peer_weights(
             pillars_days=pillar_days,
         )
         return corr_weights(corr_df, target, peers)
-    return peer_weights_from_correlations(
-        benchmark=target,
-        peers=peers,
-        mode=mode,
-        pillar_days=pillar_days,
-        tenor_days=tenor_days,
-        mny_bins=mny_bins,
-        clip_negative=True,
-        power=1.0,
+
+    if feature == "surface_vector" and method == "corr":
+        if asof is None:
+            dates = available_dates(ticker=target, most_recent_only=True)
+            asof = dates[0] if dates else None
+        if asof is None:
+            return pd.Series(dtype=float)
+        grids, X, names = surface_feature_matrix(
+            [target] + peers, asof, tenors=tenor_days, mny_bins=mny_bins
+        )
+
+        df = pd.DataFrame(X, index=list(grids.keys()), columns=names)
+        return corr_weights_from_matrix(df, target, peers)
+
+    # For all other combinations, defer to build_peer_weights
+    if asof is None and feature in ("atm", "surface_vector"):
+        dates = available_dates(ticker=target, most_recent_only=True)
+        asof = dates[0] if dates else None
+    return build_peer_weights(
+        method,
+        feature,
+        target,
+        peers,
+        get_smile_slice=get_smile_slice,
+        asof=asof,
+        pillars_days=pillar_days,
+        tenors=tenor_days,
+
     )
 
 
