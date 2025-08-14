@@ -1,3 +1,4 @@
+import tkinter
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -222,27 +223,106 @@ def add_keyboard_toggles(
 
 
 def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) -> Legend:
-    """Make legend entries clickable to toggle series."""
+    """Make legend entries clickable to toggle series with improved visual feedback."""
 
     leg = ax.legend()
     fig = ax.figure
     handles = leg.legend_handles if hasattr(leg, "legend_handles") else leg.legendHandles
+    texts = leg.get_texts()
+    
+    # Make handles clickable
     for handle in handles:
         handle.set_picker(True)
+        # Only set pickradius if the method exists
+        if hasattr(handle, 'set_pickradius'):
+            handle.set_pickradius(15)  # Increase click area
+    
+    # Also make text labels clickable  
+    for text in texts:
+        text.set_picker(True)
+        if hasattr(text, 'set_pickradius'):
+            text.set_pickradius(15)
 
     def on_pick(event):
         artist = event.artist
-        label = artist.get_label()
-        arts = series_map.get(label, [])
+        
+        # Determine which legend entry was clicked
+        if hasattr(artist, 'get_label'):
+            # Clicked on a handle
+            label_text = artist.get_label()
+        else:
+            # Clicked on text - find corresponding handle
+            try:
+                text_index = texts.index(artist)
+                label_text = texts[text_index].get_text()
+            except (ValueError, IndexError):
+                return
+        
+        # Find matching series in series_map
+        # Try exact match first, then partial match
+        matched_key = None
+        for key in series_map.keys():
+            if key == label_text or label_text in key or key in label_text:
+                matched_key = key
+                break
+        
+        if not matched_key:
+            # Fallback: try to match based on common words or special cases
+            label_words = label_text.lower().split()
+            for key in series_map.keys():
+                key_words = key.lower().split()
+                # Check for word overlap
+                if any(word in key_words for word in label_words):
+                    matched_key = key
+                    break
+                # Special case: CI/Confidence Interval matching
+                if ('ci' in label_text.lower() or '%' in label_text) and 'confidence' in key.lower():
+                    matched_key = key
+                    break
+                # Special case: fit matching
+                if 'fit' in label_text.lower() and 'fit' in key.lower():
+                    matched_key = key
+                    break
+        
+        if not matched_key:
+            print(f"Warning: Could not find series for legend label '{label_text}'")
+            print(f"Available series: {list(series_map.keys())}")
+            return
+            
+        arts = series_map[matched_key]
         if not arts:
             return
-        visible = not arts[0].get_visible()
+            
+        # Toggle visibility
+        current_visible = arts[0].get_visible()
+        new_visible = not current_visible
+        
         for art in arts:
-            art.set_visible(visible)
-        artist.set_alpha(1.0 if visible else 0.2)
+            art.set_visible(new_visible)
+        
+        # Update legend visual feedback
+        # Find the corresponding handle and text
+        for i, handle in enumerate(handles):
+            if (hasattr(handle, 'get_label') and handle.get_label() == label_text) or \
+               (i < len(texts) and texts[i].get_text() == label_text):
+                # Update handle appearance
+                handle.set_alpha(1.0 if new_visible else 0.3)
+                # Update text appearance  
+                if i < len(texts):
+                    texts[i].set_alpha(1.0 if new_visible else 0.5)
+                    texts[i].set_weight('normal' if new_visible else 'normal')
+                    texts[i].set_style('normal' if new_visible else 'italic')
+                break
+        
         fig.canvas.draw_idle()
 
     fig.canvas.mpl_connect("pick_event", on_pick)
+    
+    # Add instruction text
+    ax.text(0.02, 0.98, "Click legend entries to toggle visibility", 
+            transform=ax.transAxes, fontsize=8, alpha=0.7,
+            verticalalignment='top', bbox=dict(boxstyle="round,pad=0.3", alpha=0.1))
+    
     return leg
 
 
@@ -284,3 +364,159 @@ def set_scatter_group_visibility(
         fc[mask, 3] = 0.0
     scat.set_sizes(sizes)
     scat.set_facecolors(fc)
+
+import pandas as pd
+import numpy as np
+from typing import List, Dict, Iterable
+
+"""Tools to detect implied-volatility events and measure spillovers.
+
+This module loads a daily IV dataset, flags events where a ticker's ATM IV
+moves by a configurable percentage threshold and then measures how those shocks
+propagate to its peers.
+"""
+
+
+def load_iv_data(path: str, use_raw: bool = False) -> pd.DataFrame:
+    """Load IV data from a Parquet file.
+
+    Parameters
+    ----------
+    path: str
+        Location of the ``iv_daily`` Parquet file.
+    use_raw: bool
+        If ``True`` use the ``atm_iv_raw`` column, otherwise use
+        ``atm_iv_synth``.
+    """
+    df = pd.read_parquet(path)
+    col = "atm_iv_raw" if use_raw else "atm_iv_synth"
+    df = df[["date", "ticker", col]].rename(columns={col: "atm_iv"})
+    df["date"] = pd.to_datetime(df["date"])
+    return df.sort_values(["ticker", "date"])
+
+
+def detect_events(df: pd.DataFrame, threshold: float = 0.10) -> pd.DataFrame:
+    """Flag dates where a ticker's IV changes by ``threshold`` or more.
+
+    Returns a DataFrame with columns ``ticker``, ``date``, ``rel_change`` and
+    ``sign`` (1 or -1).
+    """
+    df = df.sort_values(["ticker", "date"]).copy()
+    df["rel_change"] = df.groupby("ticker")["atm_iv"].pct_change()
+    events = df.loc[df["rel_change"].abs() >= threshold,
+                    ["ticker", "date", "rel_change"]].copy()
+    events["sign"] = np.sign(events["rel_change"]).astype(int)
+    return events.reset_index(drop=True)
+
+
+def select_peers(df: pd.DataFrame, lookback: int = 60, top_k: int = 3) -> Dict[str, List[str]]:
+    """Identify top-K peers for each ticker using rolling correlation of ΔIV."""
+    df = df.sort_values(["ticker", "date"]).copy()
+    df["dIV"] = df.groupby("ticker")["atm_iv"].pct_change()
+    piv = df.pivot(index="date", columns="ticker", values="dIV")
+    peers: Dict[str, List[str]] = {}
+    for t in piv.columns:
+        corr = piv.rolling(lookback).corr(piv[t]).iloc[-1]
+        corr = corr.drop(index=t).dropna().sort_values(ascending=False).head(top_k)
+        peers[t] = list(corr.index)
+    return peers
+
+
+def compute_responses(df: pd.DataFrame,
+                      events: pd.DataFrame,
+                      peers: Dict[str, List[str]],
+                      horizons: Iterable[int] = (1, 3, 5)) -> pd.DataFrame:
+    """Compute peer responses for each event over given horizons.
+
+    Response for peer j at horizon h is the percentage change in j's IV from
+    t0-1 to t0+h.
+    """
+    panel = df.set_index(["date", "ticker"]).sort_index()
+    dates = panel.index.get_level_values(0).unique()
+    rows = []
+    for _, e in events.iterrows():
+        t0 = e["date"]
+        i = e["ticker"]
+        idx0 = dates.searchsorted(t0)
+        if idx0 == 0:
+            continue  # need t-1
+        t_minus1 = dates[idx0 - 1]
+        for j in peers.get(i, []):
+            if (t_minus1, j) not in panel.index:
+                continue
+            base = panel.loc[(t_minus1, j), "atm_iv"]
+            for h in horizons:
+                idx_h = idx0 + h
+                if idx_h >= len(dates):
+                    continue
+                d_h = dates[idx_h]
+                if (d_h, j) not in panel.index:
+                    continue
+                resp = panel.loc[(d_h, j), "atm_iv"]
+                pct = (resp - base) / base
+                rows.append({
+                    "ticker": i,
+                    "peer": j,
+                    "t0": t0,
+                    "h": int(h),
+                    "trigger_pct": e["rel_change"],
+                    "peer_pct": pct,
+                    "sign": e["sign"],
+                })
+    return pd.DataFrame(rows)
+
+
+def summarise(responses: pd.DataFrame, threshold: float = 0.10) -> pd.DataFrame:
+    """Summarise peer responses across events."""
+    def _agg(g: pd.DataFrame) -> pd.Series:
+        hr = (g["peer_pct"].abs() >= threshold).mean()
+        sc = (np.sign(g["peer_pct"]) == g["sign"]).mean()
+        med_resp = g["peer_pct"].median()
+        med_elast = (g["peer_pct"] / g["trigger_pct"]).median()
+        return pd.Series({
+            "hit_rate": hr,
+            "sign_concord": sc,
+            "median_resp": med_resp,
+            "median_elasticity": med_elast,
+            "n": len(g),
+        })
+    return responses.groupby(["ticker", "peer", "h"]).apply(_agg).reset_index()
+
+
+def persist_events(events: pd.DataFrame, path: str) -> None:
+    """Write event table to Parquet."""
+    events.to_parquet(path)
+
+
+def persist_summary(summary: pd.DataFrame, path: str) -> None:
+    """Write summary metrics to Parquet."""
+    summary.to_parquet(path)
+
+
+def run_spillover(
+    iv_path: str,
+    *,
+    tickers: Iterable[str] | None = None,
+    threshold: float = 0.10,
+    lookback: int = 60,
+    top_k: int = 3,
+    horizons: Iterable[int] = (1, 3, 5),
+    use_raw: bool = False,
+    events_path: str = "spill_events.parquet",
+    summary_path: str = "spill_summary.parquet",
+) -> Dict[str, pd.DataFrame]:
+    """High level helper that runs the full spillover analysis.
+
+    Returns a dictionary with keys ``events`` and ``summary``.
+    """
+    df = load_iv_data(iv_path, use_raw=use_raw)
+    if tickers is not None:
+        tickers = [t.upper() for t in tickers]
+        df = df[df["ticker"].str.upper().isin(tickers)]
+    events = detect_events(df, threshold=threshold)
+    peers = select_peers(df, lookback=lookback, top_k=top_k)
+    responses = compute_responses(df, events, peers, horizons=horizons)
+    summary = summarise(responses, threshold=threshold)
+    persist_events(events, events_path)
+    persist_summary(summary, summary_path)
+    return {"events": events, "responses": responses, "summary": summary}

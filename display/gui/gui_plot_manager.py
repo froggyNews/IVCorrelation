@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 from analysis.pillars import atm_curve_for_ticker_on_date
-from src.viz.anim_utils import animate_smile_over_time, animate_surface_timesweep
+from display.plotting.anim_utils import animate_smile_over_time, animate_surface_timesweep
 DEFAULT_ATM_BAND = ATM_BAND = 0.05
 def _cols_to_days(cols) -> np.ndarray:
     out = []
@@ -305,7 +305,8 @@ class PlotManager:
 
         info = fit_and_plot_smile(
             ax, S=S, K=K, T=T_used, iv=IV,
-            model=model, moneyness_grid=(0.7, 1.3, 121), ci_level=ci, show_points=True
+            model=model, moneyness_grid=(0.7, 1.3, 121), ci_level=ci, show_points=True,
+            enable_svi_toggles=(model == "svi")  # Only enable toggles for SVI model
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
 
@@ -317,7 +318,7 @@ class PlotManager:
 
                 # build target + peers surfaces, combine peers using matrix weights
                 tickers = list({target, *peers})
-                surfaces = build_surface_grids(tickers=tickers, tenors=None, mny_bins=None, use_atm_only=False, max_expiries=max_expiries)
+                surfaces = build_surface_grids(tickers=tickers, tenors=None, mny_bins=None, use_atm_only=False, max_expiries=self._current_max_expiries)
                 if target in surfaces and asof in surfaces[target]:
                     peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
                     synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
@@ -360,7 +361,7 @@ class PlotManager:
         try:
             # Build target and peer surfaces, then combine peers using correlation weights
             tickers = list({target, *peers})
-            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False, max_expiries=max_expiries)
+            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False, max_expiries=self._current_max_expiries)
 
             if target not in surfaces or asof not in surfaces[target]:
                 ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center")

@@ -217,18 +217,18 @@ def demo_advanced_caching_scenarios():
             print(f"   {name:>15}: Valid={valid:<5} Loaded={len(loaded)} tickers")
         
         print(f"\n2. Cache performance with different data sizes:")
-        sizes = [10, 100, 500]
+        sizes = [10, 50, 100]
         
         for size in sizes:
-            # Generate larger surface data
+            # Generate simpler surface data to avoid index conflicts
             large_surfaces = {}
             for i in range(size):
                 ticker = f"STOCK_{i:03d}"
                 large_surfaces[ticker] = {
                     pd.Timestamp("2024-01-15"): pd.DataFrame(
-                        data=np.random.rand(5, 4) * 0.1 + 0.2,  # Random IVs around 20-30%
-                        columns=[7, 30, 60, 90],
-                        index=[f"{0.8+i*0.05:.1f}-{0.85+i*0.05:.1f}" for i in range(5)]
+                        data=[[0.20 + i*0.001, 0.22 + i*0.001, 0.24 + i*0.001]],
+                        columns=[30, 60, 90],
+                        index=[f"MNY_{i}"]  # Unique index per ticker
                     )
                 }
             
@@ -337,9 +337,7 @@ def benchmark_cache_operations(sizes=[100, 500, 1000, 2000], operations=['dump',
         cfg = PipelineConfig(cache_dir=tmp_dir)
         
         for size in sizes:
-            print(f"Benchmarking {size} tickers...")
-            
-            # Generate test data
+            # Generate test data with unique indices
             surfaces = {}
             for i in range(size):
                 ticker = f"STOCK_{i:04d}"
@@ -347,7 +345,7 @@ def benchmark_cache_operations(sizes=[100, 500, 1000, 2000], operations=['dump',
                     pd.Timestamp("2024-01-15"): pd.DataFrame(
                         data=np.random.rand(3, 4) * 0.1 + 0.2,
                         columns=[7, 30, 60, 90],
-                        index=["0.9-1.0", "1.0-1.1", "1.1-1.2"]
+                        index=[f"MNY_{j}_{i}" for j in range(3)]  # Unique indices
                     )
                 }
             
@@ -450,6 +448,40 @@ def main():
         demo_smart_caching() 
         demo_advanced_caching_scenarios()
         demo_cache_management()
+        
+        # Demonstrate utility functions
+        print("\n=== Performance Benchmarking ===\n")
+        print("Running cache benchmarks across different sizes...")
+        benchmark_results = benchmark_cache_operations(sizes=[50, 100, 200])
+        print("\nBenchmark Results:")
+        for _, row in benchmark_results.iterrows():
+            print(f"  {row['size']} tickers: "
+                  f"Dump {row['dump_time']*1000:.1f}ms, "
+                  f"Load {row['load_time']*1000:.1f}ms, "
+                  f"Size {row['file_size']/1024:.1f}KB")
+        
+        print("\n=== Cache Analysis ===\n")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create some test data for analysis
+            cfg = PipelineConfig(cache_dir=tmp_dir)
+            test_surfaces = {
+                "TEST": {
+                    pd.Timestamp("2024-01-01"): pd.DataFrame([[0.2, 0.3]], columns=[30, 60], index=["1.0"])
+                }
+            }
+            dump_surface_to_cache(test_surfaces, cfg, "analysis_test")
+            
+            analysis = analyze_cache_efficiency(tmp_dir)
+            print("Cache efficiency analysis:")
+            print(f"  Disk cache: {analysis['disk_cache']['total_files']} files, "
+                  f"{analysis['disk_cache']['total_size_mb']:.2f} MB")
+            for ext, info in analysis['disk_cache']['file_types'].items():
+                print(f"    {ext} files: {info['count']} files, {info['size_mb']:.2f} MB")
+            
+            if analysis['recommendations']:
+                print("  Recommendations:")
+                for rec in analysis['recommendations']:
+                    print(f"    • {rec}")
         
         print(f"\n{'=' * 60}")
         print("🎉 COMPREHENSIVE CACHING IMPROVEMENTS SUMMARY:")
