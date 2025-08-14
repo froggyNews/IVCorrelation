@@ -11,6 +11,7 @@ try:
     from analysis.syntheticETFBuilder import build_surface_grids  # :contentReference[oaicite:3]{index=3}
 except Exception:
     build_surface_grids = None  # optional
+from .correlation_utils import corr_weights as corr_weights_from_corr_df
 
 # =========================
 # small numeric helpers
@@ -280,6 +281,22 @@ def _underlying_log_returns(conn_fn) -> pd.DataFrame:
     return ret
 
 
+def _underlying_vol_series(
+    conn_fn,
+    window: int = 21,
+    min_obs: int = 10,
+    demean: bool = False,
+) -> pd.DataFrame:
+    """Rolling realized volatility for each underlying ticker."""
+    ret = _underlying_log_returns(conn_fn)
+    if ret is None or ret.empty:
+        return ret
+    vol = ret.rolling(int(window), min_periods=int(min_obs)).std()
+    if demean:
+        vol = vol.sub(vol.mean(), axis=0)
+    return vol.dropna(how="all")
+
+
 def ul_correlations(benchmark: str, conn_fn) -> pd.Series:
     """Correlation of peer underlying returns vs benchmark returns."""
     ret = _underlying_log_returns(conn_fn)
@@ -524,78 +541,88 @@ def peer_weights_from_correlations(
 
 
 # =========================
+# Generic correlation helper
+# =========================
+def corr_weights_from_matrix(
+    feature_df: pd.DataFrame,
+    target: str,
+    peers: List[str],
+    clip_negative: bool = True,
+    power: float = 1.0,
+) -> pd.Series:
+    """Correlation-based weights from a per-ticker feature matrix."""
+    corr_df = feature_df.T.corr()
+    return corr_weights_from_corr_df(
+        corr_df, target, peers, clip_negative=clip_negative, power=power
+    )
+
+
+# =========================
 # Cosine Similarity Weights
 # =========================
+def cosine_similarity_weights_from_matrix(
+    feature_df: pd.DataFrame,
+    target: str,
+    peers: List[str],
+    clip_negative: bool = True,
+    power: float = 1.0,
+) -> pd.Series:
+    """Cosine-similarity weights given a per-ticker feature matrix."""
+    target = target.upper()
+    peers = [p.upper() for p in peers]
+    if target not in feature_df.index:
+        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
+
+    df = feature_df.apply(pd.to_numeric, errors="coerce")
+    X = _impute_col_median(df.to_numpy(float))
+    tickers = list(df.index)
+    t_idx = tickers.index(target)
+    t_vec = X[t_idx]
+
+    sims: dict[str, float] = {}
+    t_norm = np.linalg.norm(t_vec)
+    for i, peer in enumerate(tickers):
+        if peer == target or peer not in peers:
+            continue
+        p_vec = X[i]
+        denom = t_norm * np.linalg.norm(p_vec)
+        sims[peer] = float(np.dot(t_vec, p_vec) / denom) if denom > 0 else 0.0
+
+    ser = pd.Series(sims, dtype=float)
+    if clip_negative:
+        ser = ser.clip(lower=0.0)
+    if power is not None and float(power) != 1.0:
+        ser = ser.pow(float(power))
+    total = float(ser.sum())
+    if not np.isfinite(total) or total <= 0:
+        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
+    return (ser / total).reindex(peers).fillna(0.0)
+
+
 def cosine_similarity_weights_from_atm_matrix(
     atm_df: pd.DataFrame,
     target: str,
     peers: List[str],
     clip_negative: bool = True,
+    power: float = 1.0,
 ) -> pd.Series:
-    """
-    Compute cosine similarity weights between target and peer ATM vectors.
-    
-    Cosine similarity measures the cosine of the angle between two vectors,
-    which can be more appropriate than correlation for small n-vectors.
-    
-    Parameters
-    ----------
-    atm_df : pd.DataFrame
-        ATM volatility matrix with tickers as rows and pillars as columns
-    target : str
-        Target ticker name
-    peers : List[str]
-        List of peer ticker names
-    clip_negative : bool, default True
-        Whether to clip negative similarities to 0
-        
-    Returns
-    -------
-    pd.Series
-        Normalized weights for each peer based on cosine similarity with target
-    """
-    target = target.upper()
-    peers = [p.upper() for p in peers]
-    
-    # Extract target vector
-    if target not in atm_df.index:
-        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
-    
-    target_vec = atm_df.loc[target].values
-    
-    # Handle missing data by imputing with column medians
-    target_vec = _impute_col_median(target_vec.reshape(1, -1)).ravel()
-    
-    similarities = {}
-    for peer in peers:
-        if peer not in atm_df.index:
-            similarities[peer] = 0.0
-            continue
-            
-        peer_vec = atm_df.loc[peer].values
-        peer_vec = _impute_col_median(peer_vec.reshape(1, -1)).ravel()
-        
-        # Compute cosine similarity
-        dot_product = np.dot(target_vec, peer_vec)
-        target_norm = np.linalg.norm(target_vec)
-        peer_norm = np.linalg.norm(peer_vec)
-        
-        if target_norm == 0 or peer_norm == 0:
-            similarities[peer] = 0.0
-        else:
-            similarities[peer] = dot_product / (target_norm * peer_norm)
-    
-    ser = pd.Series(similarities, dtype=float)
-    
-    if clip_negative:
-        ser = ser.clip(lower=0.0)
-    
-    total = float(ser.sum())
-    if not np.isfinite(total) or total <= 0:
-        # fallback to equal weights
-        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
-    
-    return (ser / total).reindex(peers).fillna(0.0)
+    """Backward-compatible wrapper for ATM matrices."""
+    return cosine_similarity_weights_from_matrix(
+        atm_df, target, peers, clip_negative=clip_negative, power=power
+    )
+
+
+def cosine_similarity_weights_from_returns(
+    return_df: pd.DataFrame,
+    target: str,
+    peers: List[str],
+    clip_negative: bool = True,
+    power: float = 1.0,
+) -> pd.Series:
+    """Cosine weights from a ticker×time return matrix (rows=tickers)."""
+    return cosine_similarity_weights_from_matrix(
+        return_df, target, peers, clip_negative=clip_negative, power=power
+    )
 
 
 def cosine_similarity_weights(
@@ -608,6 +635,8 @@ def cosine_similarity_weights(
     tenors: Iterable[int] | None = None,
     mny_bins: Iterable[Tuple[float, float]] | None = None,
     k: Optional[int] = None,
+    clip_negative: bool = True,
+    power: float = 1.0,
 ) -> pd.Series:
     """
     Compute cosine similarity-based weights for different modes.
@@ -637,23 +666,46 @@ def cosine_similarity_weights(
         Normalized cosine similarity weights
     """
     mode_lower = mode.lower()
-    
+
     if "atm" in mode_lower:
-        # Use ATM vectors for cosine similarity
-        atm_df, _, _ = atm_feature_matrix(get_smile_slice, [target] + peers, asof, pillars_days)
-        weights = cosine_similarity_weights_from_atm_matrix(atm_df, target, peers)
-        
+        atm_df, _, _ = atm_feature_matrix(
+            get_smile_slice, [target] + peers, asof, pillars_days
+        )
+        weights = cosine_similarity_weights_from_atm_matrix(
+            atm_df, target, peers, clip_negative=clip_negative, power=power
+        )
+
     elif "surface" in mode_lower:
-        # Use surface feature vectors for cosine similarity
-        # This would require surface feature extraction similar to PCA surface mode
-        # For now, fall back to ATM mode
-        atm_df, _, _ = atm_feature_matrix(get_smile_slice, [target] + peers, asof, pillars_days)
-        weights = cosine_similarity_weights_from_atm_matrix(atm_df, target, peers)
-        
+        grids, X, names = surface_feature_matrix(
+            [target] + peers, asof, tenors=tenors, mny_bins=mny_bins
+        )
+        df = pd.DataFrame(X, index=list(grids.keys()), columns=names)
+        weights = cosine_similarity_weights_from_matrix(
+            df, target, peers, clip_negative=clip_negative, power=power
+        )
+
+    elif "ul" in mode_lower:
+        try:
+            from data.db_utils import get_conn as conn_fn  # late import
+        except Exception:  # pragma: no cover - fallback for environments without DB
+            conn_fn = lambda: None  # type: ignore
+        ret = _underlying_log_returns(conn_fn)
+        if ret.empty or target.upper() not in ret.columns:
+            return pd.Series(
+                1.0 / max(len(peers), 1), index=[p.upper() for p in peers], dtype=float
+            )
+        df = ret[[c for c in [target] + peers if c in ret.columns]].T
+        weights = cosine_similarity_weights_from_matrix(
+            df, target, peers, clip_negative=clip_negative, power=power
+        )
+
     else:
-        # Default to ATM mode
-        atm_df, _, _ = atm_feature_matrix(get_smile_slice, [target] + peers, asof, pillars_days)
-        weights = cosine_similarity_weights_from_atm_matrix(atm_df, target, peers)
+        atm_df, _, _ = atm_feature_matrix(
+            get_smile_slice, [target] + peers, asof, pillars_days
+        )
+        weights = cosine_similarity_weights_from_atm_matrix(
+            atm_df, target, peers, clip_negative=clip_negative, power=power
+        )
     
     # Optionally keep only top-k most similar peers
     if k is not None and k > 0:
@@ -665,6 +717,99 @@ def cosine_similarity_weights(
         weights = weights.reindex(peers).fillna(0.0)
     
     return weights
+
+
+def build_peer_weights(
+    method: str,
+    feature_set: str,
+    target: str,
+    peers: Iterable[str],
+    *,
+    get_smile_slice=None,
+    asof: str | None = None,
+    pillars_days: Iterable[int] = (7, 30, 60, 90, 180, 365),
+    tenors: Iterable[int] | None = None,
+    mny_bins: Iterable[Tuple[float, float]] | None = None,
+    window: int = 21,
+    min_obs: int = 10,
+    clip_negative: bool = True,
+    power: float = 1.0,
+    k: Optional[int] = None,
+) -> pd.Series:
+    """Unified dispatcher for peer weights across methods/features."""
+    method = (method or "corr").lower()
+    feature = (feature_set or "atm").lower()
+    target = target.upper()
+    peers_list = [p.upper() for p in peers]
+
+    feature_df: pd.DataFrame | None = None
+
+    if feature in ("atm", "surface_vector"):
+        if asof is None:
+            raise ValueError("asof date required for feature matrices")
+        if feature == "atm":
+            atm_df, _, _ = atm_feature_matrix(
+                get_smile_slice, [target] + peers_list, asof, pillars_days
+            )
+            feature_df = atm_df
+        else:
+            grids, X, names = surface_feature_matrix(
+                [target] + peers_list, asof, tenors=tenors, mny_bins=mny_bins
+            )
+            feature_df = pd.DataFrame(X, index=list(grids.keys()), columns=names)
+    elif feature == "ul_px":
+        try:
+            from data.db_utils import get_conn as conn_fn  # late import
+        except Exception:  # pragma: no cover
+            conn_fn = lambda: None  # type: ignore
+        ret = _underlying_log_returns(conn_fn)
+        if ret.empty:
+            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+        subset = ret[[c for c in [target] + peers_list if c in ret.columns]]
+        feature_df = subset.T
+    elif feature == "ul_vol":
+        try:
+            from data.db_utils import get_conn as conn_fn  # late import
+        except Exception:  # pragma: no cover
+            conn_fn = lambda: None  # type: ignore
+        vol = _underlying_vol_series(conn_fn, window=window, min_obs=min_obs)
+        if vol.empty:
+            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+        subset = vol[[c for c in [target] + peers_list if c in vol.columns]]
+        feature_df = subset.T
+
+    if feature_df is None or feature_df.empty:
+        return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+
+    if method == "corr":
+        return corr_weights_from_matrix(
+            feature_df, target, peers_list, clip_negative=clip_negative, power=power
+        )
+    if method == "cosine":
+        w = cosine_similarity_weights_from_matrix(
+            feature_df, target, peers_list, clip_negative=clip_negative, power=power
+        )
+        if k is not None and k > 0:
+            w = w.nlargest(k)
+            s = float(w.sum())
+            if s > 0:
+                w = w / s
+            w = w.reindex(peers_list).fillna(0.0)
+        return w
+    if method == "pca":
+        if target not in feature_df.index:
+            return pd.Series(dtype=float)
+        y = _impute_col_median(feature_df.loc[[target]].to_numpy(float)).ravel()
+        Xp = feature_df.loc[[p for p in peers_list if p in feature_df.index]].to_numpy(float)
+        if Xp.size == 0:
+            return pd.Series(dtype=float)
+        w = pca_regress_weights(Xp, y, k=None, nonneg=True)
+        ser = pd.Series(w, index=[p for p in peers_list if p in feature_df.index])
+        ser = ser.clip(lower=0.0)
+        s = float(ser.sum())
+        ser = ser / s if s > 0 else ser
+        return ser.reindex(peers_list).fillna(0.0)
+    raise ValueError(f"unknown method {method}")
 
 
 def save_correlations(
