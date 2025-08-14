@@ -100,7 +100,7 @@ def build_surface_grids(
 
     # Average IV per day/ticker cell
     cell = (
-        df.groupby(["asof_date", "ticker", "mny_bin", "tenor_bin"])  #
+        df.groupby(["asof_date", "ticker", "mny_bin", "tenor_bin"], observed=True)  #
           ["iv"].mean().reset_index()
     )
 
