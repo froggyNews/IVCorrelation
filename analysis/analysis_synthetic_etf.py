@@ -44,11 +44,12 @@ from analysis.analysis_pipeline import (
 )
 from analysis.beta_builder import peer_weights_from_correlations
 from analysis.beta_builder import pca_weights_from_atm_matrix
+from analysis.beta_builder import cosine_similarity_weights_from_atm_matrix
 from analysis.analysis_pipeline import ingest_and_process, available_tickers
 from analysis.analysis_pipeline import get_most_recent_date_global
-from analysis.pillars import compute_atm_by_expiry
+from analysis.pillars import compute_atm_by_expiry, load_atm, build_atm_matrix
 
-WeightMode = Literal["corr", "pca", "equal", "custom"]
+WeightMode = Literal["corr", "pca", "cosine", "equal", "custom"]
 
 
 @dataclass
@@ -127,6 +128,19 @@ class SyntheticETFBuilder:
             )
             if w.empty:
                 raise ValueError("PCA weight computation returned empty series")
+            self._weights = w
+            return w
+
+        if self.cfg.weight_mode == "cosine":
+            # Cosine similarity weights from ATM vol matrix
+            w = cosine_weights_from_atm_matrix(
+                target=self.cfg.target,
+                peers=self.cfg.peers,
+                pillar_days=self.cfg.pillar_days,
+                tolerance_days=self.cfg.tolerance_days,
+            )
+            if w.empty:
+                raise ValueError("Cosine similarity weight computation returned empty series")
             self._weights = w
             return w
 
@@ -293,6 +307,56 @@ class SyntheticETFBuilder:
             T_target_years=T_days / 365.25,
             model=model,
         )
+
+
+# ----------------------
+# Helper functions for weight computation
+# ----------------------
+def cosine_weights_from_atm_matrix(
+    target: str,
+    peers: Iterable[str],
+    pillar_days: Tuple[int, ...] = (7, 30, 60, 90),
+    tolerance_days: float = 7.0,
+) -> pd.Series:
+    """
+    Compute cosine similarity weights using ATM vol matrix.
+    
+    This function builds an ATM matrix from the database and computes
+    cosine similarity weights between target and peers.
+    """
+    from data.db_utils import get_conn
+    from analysis.pillars import build_atm_matrix
+    from analysis.data_pipeline import get_smile_slice
+    
+    # Get latest date for target
+    dates = available_dates(ticker=target, most_recent_only=True)
+    if not dates:
+        peers_list = list(peers) if peers else []
+        return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+    
+    asof = dates[0]
+    tickers = [target] + list(peers)
+    
+    # Build ATM matrix
+    atm_df, _ = build_atm_matrix(
+        get_smile_slice=get_smile_slice,
+        tickers=tickers,
+        asof=asof,
+        pillars_days=pillar_days,
+        tol_days=tolerance_days,
+    )
+    
+    if atm_df.empty:
+        peers_list = list(peers) if peers else []
+        return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+    
+    # Use the cosine similarity function from beta_builder
+    return cosine_similarity_weights_from_atm_matrix(
+        atm_df=atm_df,
+        target=target,
+        peers=list(peers),
+        clip_negative=True,
+    )
 
 
 # ----------------------
