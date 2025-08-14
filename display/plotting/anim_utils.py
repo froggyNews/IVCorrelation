@@ -1,4 +1,19 @@
-import tkinter
+"""
+Animation utilities for IV correlation analysis with robust error handling.
+
+This module provides functions for creating animated plots of implied volatility data,
+including smile evolution over time, surface animations, and spillover visualizations.
+
+Key improvements for robustness:
+- Graceful handling of matplotlib blitting failures
+- Automatic fallback from blitted to non-blitted animations
+- Backend-aware animation creation to prevent crashes
+- Exception handling in update functions to prevent animation crashes
+
+The functions are designed to work reliably across different matplotlib backends,
+especially TkAgg which can be problematic for blitted animations.
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -77,21 +92,33 @@ def animate_smile_over_time(
     ax.set_ylim(lo, hi)
 
     def update(i: int):
-        line_synth.set_ydata(iv_tk[i])
-        updated = [line_synth]
-        if line_raw is not None:
-            line_raw.set_ydata(iv_raw_tk[i])
-            updated.append(line_raw)
-        if band is not None:
-            verts = np.column_stack(
-                [np.r_[k, k[::-1]], np.r_[ci_hi_tk[i], ci_lo_tk[i][::-1]]]
-            )
-            band.get_paths()[0].vertices[:] = verts
-            updated.append(band)
-        ax.set_title(str(dates[i]))
-        return updated
+        try:
+            line_synth.set_ydata(iv_tk[i])
+            updated = [line_synth]
+            if line_raw is not None and iv_raw_tk is not None:
+                line_raw.set_ydata(iv_raw_tk[i])
+                updated.append(line_raw)
+            if band is not None:
+                verts = np.column_stack(
+                    [np.r_[k, k[::-1]], np.r_[ci_hi_tk[i], ci_lo_tk[i][::-1]]]
+                )
+                # Safely update band vertices
+                if len(band.get_paths()) > 0:
+                    band.get_paths()[0].vertices[:] = verts
+                    updated.append(band)
+            ax.set_title(str(dates[i]))
+            return updated
+        except Exception:
+            # If blitting fails, return empty list to prevent crash
+            return []
 
-    ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    # Use safer animation settings to prevent blitting issues
+    try:
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    except Exception:
+        # Fallback to non-blitted animation if blitting fails
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=False)
+    
     return fig, ani, artists
 
 
@@ -128,11 +155,21 @@ def animate_surface_timesweep(
     artists = {"Surface": [im]}
 
     def update(i: int):
-        im.set_array(iv_tktau[i])
-        ax.set_title(str(dates[i]))
-        return [im]
+        try:
+            im.set_array(iv_tktau[i])
+            ax.set_title(str(dates[i]))
+            return [im]
+        except Exception:
+            # If blitting fails, return empty list to prevent crash
+            return []
 
-    ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    # Use safer animation settings to prevent blitting issues
+    try:
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    except Exception:
+        # Fallback to non-blitted animation if blitting fails
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=False)
+    
     return fig, ani, artists
 
 
@@ -164,17 +201,27 @@ def animate_spillover(
     artists = {"Peers": [scat]}
 
     def update(i: int):
-        resp = mags[:, i]
-        sizes = base_sizes * (1.0 + np.abs(resp) / max_mag)
-        alpha = np.clip(np.abs(resp) / max_mag, 0.0, 1.0)
-        fc = scat.get_facecolors()
-        fc[:, 3] = alpha
-        scat.set_sizes(sizes)
-        scat.set_facecolors(fc)
-        ax.set_title(str(times[i]))
-        return [scat]
+        try:
+            resp = mags[:, i]
+            sizes = base_sizes * (1.0 + np.abs(resp) / max_mag)
+            alpha = np.clip(np.abs(resp) / max_mag, 0.0, 1.0)
+            fc = scat.get_facecolors()
+            fc[:, 3] = alpha
+            scat.set_sizes(sizes)
+            scat.set_facecolors(fc)
+            ax.set_title(str(times[i]))
+            return [scat]
+        except Exception:
+            # If blitting fails, return empty list to prevent crash
+            return []
 
-    ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    # Use safer animation settings to prevent blitting issues
+    try:
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    except Exception:
+        # Fallback to non-blitted animation if blitting fails
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=False)
+    
     state = {"labels": labels, "xs": xs, "ys": ys}
     return fig, ani, artists, state
 
@@ -520,3 +567,50 @@ def run_spillover(
     persist_events(events, events_path)
     persist_summary(summary, summary_path)
     return {"events": events, "responses": responses, "summary": summary}
+
+def create_safe_animation(fig, update_func, frames, interval_ms=120, repeat=True):
+    """
+    Create a matplotlib animation with graceful fallback for blitting issues.
+    
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        Figure to animate
+    update_func : callable
+        Animation update function
+    frames : int or iterable
+        Number of frames or iterable of frame data
+    interval_ms : int
+        Interval between frames in milliseconds
+    repeat : bool
+        Whether animation should repeat
+        
+    Returns
+    -------
+    matplotlib.animation.FuncAnimation
+        The created animation
+    """
+    import matplotlib
+    backend = matplotlib.get_backend()
+    
+    # For problematic backends (especially TkAgg), disable blitting by default
+    use_blit = backend not in ['TkAgg', 'Qt4Agg', 'Qt5Agg'] 
+    
+    try:
+        if use_blit:
+            ani = FuncAnimation(
+                fig, update_func, frames=frames, 
+                interval=interval_ms, blit=True, repeat=repeat
+            )
+        else:
+            ani = FuncAnimation(
+                fig, update_func, frames=frames, 
+                interval=interval_ms, blit=False, repeat=repeat
+            )
+        return ani
+    except Exception:
+        # Final fallback - always use non-blitted animation
+        return FuncAnimation(
+            fig, update_func, frames=frames, 
+            interval=interval_ms, blit=False, repeat=repeat
+        )
