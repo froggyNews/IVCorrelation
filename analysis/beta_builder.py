@@ -41,7 +41,7 @@ def _beta(df: pd.DataFrame, x: str, b: str) -> float:
     vb = _safe_var(a[b])
     return float(a[x].cov(a[b]) / vb) if np.isfinite(vb) else float("nan")
 
-# =========================
+# analysis/beta_builder.py=========================
 # feature matrices (ATM & surface)
 # =========================
 def atm_feature_matrix(
