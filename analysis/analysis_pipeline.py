@@ -205,7 +205,8 @@ def compute_peer_weights(
     weight_mode : str
         ``"iv_atm"`` (default), ``"surface"``, ``"ul"``/``"underlying"``,
         PCA variants such as ``"pca_atm_market"``, or
-        cosine similarity variants such as ``"cosine_atm"``/``"cosine_surface"``.
+        cosine similarity variants such as ``"cosine_atm"``, ``"cosine_surface"`` or
+        ``"cosine_ul"``.
     """
     target = target.upper()
     peers = [p.upper() for p in peers]

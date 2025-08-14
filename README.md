@@ -143,6 +143,8 @@ SQLite-based storage with tables for:
 - **IV ATM (`iv_atm`)**: Using at-the-money implied volatilities
 - **Surface (`surface`)**: Full volatility surface correlations
 - **Cosine ATM (`cosine_atm`)**: Shape-focused similarity for ATM curves
+- **Cosine Surface (`cosine_surface`)**: Cosine similarity on full surface grids
+- **Cosine UL (`cosine_ul`)**: Cosine similarity on underlying returns
 - **PCA ATM (`pca_atm`)**: Principal component analysis of ATM vectors
 
 ### Synthetic ETF Construction
