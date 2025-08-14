@@ -30,6 +30,7 @@ def build_surface_grids(
     tenors: Iterable[int] = DEFAULT_TENORS,
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
     use_atm_only: bool = False,
+    max_expiries: Optional[int] = None,
 ) -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
     """Return dict[ticker][date] -> DataFrame (rows=mny bins, cols=tenor bins) with IV means.
 
@@ -70,6 +71,21 @@ def build_surface_grids(
 
     df = df.dropna(subset=["iv", "ttm_years", "moneyness"]).copy()
     df["ttm_days"] = df["ttm_years"] * 365.25
+
+    # Limit number of expiries if requested
+    if max_expiries is not None and max_expiries > 0:
+        # Group by ticker and asof_date, then limit expiries for each combination
+        limited_dfs = []
+        for (ticker, asof_date), group in df.groupby(['ticker', 'asof_date']):
+            # Get the closest expiries to today (smallest ttm_years first)
+            unique_expiries = group.groupby('ttm_years')['ttm_years'].first().sort_values()
+            limited_expiries = unique_expiries.head(max_expiries).values
+            limited_group = group[group['ttm_years'].isin(limited_expiries)]
+            limited_dfs.append(limited_group)
+        if limited_dfs:
+            df = pd.concat(limited_dfs, ignore_index=True)
+        else:
+            return {}
 
     # Bin to nearest tenor (vectorized)
     tenor_arr = np.asarray(list(tenors), dtype=float)

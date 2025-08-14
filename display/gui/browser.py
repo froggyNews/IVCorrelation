@@ -105,6 +105,7 @@ class BrowserApp(tk.Tk):
             overlay    = self.inputs.get_overlay(),
             peers      = self.inputs.get_peers(),
             pillars    = self.inputs.get_pillars(),
+            max_expiries = self.inputs.get_max_exp(),
         )
         if not settings["target"] or not settings["asof"]:
             self.status.config(text="Enter target and date to plot")
