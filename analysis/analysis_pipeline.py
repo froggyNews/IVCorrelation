@@ -221,6 +221,14 @@ def compute_peer_weights(
             tenors=tenor_days,
             mny_bins=mny_bins,
         )
+    if mode == "surface_grid":
+        # Return the full grid of betas for downstream use
+        return build_vol_betas(
+            mode=mode,
+            benchmark=target,
+            tenor_days=tenor_days,
+            mny_bins=mny_bins,
+        )
     return peer_weights_from_correlations(
         benchmark=target,
         peers=peers,
@@ -285,8 +293,8 @@ def compute_betas(
     cfg: PipelineConfig = PipelineConfig(),
 ):
     """Compute vol betas per requested mode (GUI can show table/heatmap)."""
-    if mode == "surface":
-        # surface mode uses DB directly; cfg.tenors/mny_bins are respected in builder
+    if mode in ("surface", "surface_grid"):
+        # surface modes use DB directly; cfg.tenors/mny_bins are respected in builder
         return build_vol_betas(
             mode=mode, benchmark=benchmark,
             tenor_days=cfg.tenors, mny_bins=cfg.mny_bins

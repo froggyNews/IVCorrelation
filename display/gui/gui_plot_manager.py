@@ -204,7 +204,7 @@ class PlotManager:
         elif event.button in (3, 2):
             self.prev_expiry()
 
-    def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None) -> pd.Series:
+    def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
         """
         Compute weights using the selected mode (including PCA).
         Priority: PCA modes > cached correlation matrix > legacy correlation methods
@@ -241,6 +241,20 @@ class PlotManager:
             except Exception as e:
                 print(f"PCA weights failed: {e}")
                 pass  # fall through to corr/legacy
+
+        # 0b) surface_grid mode: return the full grid of betas (dict of Series)
+        if weight_mode == "surface_grid":
+            try:
+                from analysis.analysis_pipeline import compute_peer_weights
+                grid_betas = compute_peer_weights(
+                    target=target,
+                    peers=peers,
+                    weight_mode="surface_grid",
+                )
+                return grid_betas  # dict: key=grid cell, value=Series of betas
+            except Exception as e:
+                print(f"surface_grid weights failed: {e}")
+                return None
 
         # 1) Use cached Corr Matrix from the Corr Matrix plot
         if isinstance(self.last_corr_df, pd.DataFrame) and not self.last_corr_df.empty:
