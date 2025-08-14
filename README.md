@@ -43,6 +43,10 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Optional: save animations (MP4/GIF)
+# Requires `ffmpeg`. On Windows you can install via:
+# https://www.gyan.dev/ffmpeg/builds/
 ```
 
 ## 🎯 Quick Start
@@ -68,6 +72,17 @@ synthetic_surface, weights = build_synthetic_surface_corrweighted(target, peers)
 # Compute volatility betas
 betas = compute_betas("iv_atm", benchmark="SPY")
 ```
+
+### Animation Controls
+
+Interactive plots support quick visibility toggles:
+
+* `r` – toggle Raw series
+* `s` – toggle Synthetic series
+* `c` – toggle confidence band
+* `u` – toggle surface views
+
+Check boxes can be enabled with `add_checkboxes` in the plotting modules for mouse-driven toggles.
 
 ## 🏗️ Project Structure
 

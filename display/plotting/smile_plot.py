@@ -8,6 +8,13 @@ import matplotlib.pyplot as plt
 from volModel.sviFit import fit_svi_slice, svi_smile_iv
 from volModel.sabrFit import fit_sabr_slice, sabr_smile_iv
 from .confidence_bands import svi_confidence_bands, sabr_confidence_bands, Bands
+from src.viz.anim_utils import (
+    animate_smile_over_time,
+    add_checkboxes,
+    add_keyboard_toggles,
+    add_legend_toggles,
+    apply_profile_visibility,
+)
 
 ModelName = Literal["svi", "sabr"]
 
@@ -70,3 +77,53 @@ def fit_and_plot_smile(
     # simple fit quality
     rmse = float(params.get("rmse", np.nan))
     return {"params": params, "rmse": rmse, "T": T, "S": float(S)}
+
+
+def main():
+    """Demonstration of the smile animation utilities."""
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="Smile animation demo")
+    parser.add_argument("--save", type=str, default=None, help="Output path for MP4/GIF")
+    parser.add_argument(
+        "--profile", type=str, default=None, help="JSON dict for initial visibility"
+    )
+    args = parser.parse_args()
+
+    # generate synthetic data
+    T, N_k = 40, 31
+    k = np.linspace(0.7, 1.3, N_k)
+    base = 0.2 + 0.1 * (k - 1.0) ** 2
+    iv_syn_tk = base + 0.02 * np.sin(np.linspace(0, 4 * np.pi, T))[:, None]
+    iv_raw_tk = iv_syn_tk + 0.01 * np.random.randn(T, N_k)
+    ci_lo_tk = iv_syn_tk - 0.015
+    ci_hi_tk = iv_syn_tk + 0.015
+    dates = [f"t{i}" for i in range(T)]
+
+    fig, ani, series_map = animate_smile_over_time(
+        k,
+        iv_syn_tk,
+        dates,
+        iv_raw_tk=iv_raw_tk,
+        ci_lo_tk=ci_lo_tk,
+        ci_hi_tk=ci_hi_tk,
+    )
+
+    add_checkboxes(fig, series_map)
+    add_keyboard_toggles(fig, series_map, keymap={"r": "Raw", "s": "Synthetic", "c": "CI"})
+    ax = fig.axes[0]
+    add_legend_toggles(ax, series_map)
+
+    if args.profile:
+        profile = json.loads(args.profile)
+        apply_profile_visibility(series_map, profile)
+
+    if args.save:
+        ani.save(args.save, writer="ffmpeg", dpi=120)
+    else:
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()
