@@ -211,15 +211,15 @@ def plot_correlation_details(
     data_quality = finite_count / total_elements if total_elements > 0 else 0
     
     if data_quality < 0.3:
-        ax.text(0.5, 0.9, f"⚠️ Poor data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
+        ax.text(0.5, 0.9, f"Poor data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
                 ha="center", va="top", fontsize=10, color="red",
                 transform=ax.transAxes, bbox=dict(boxstyle="round", facecolor="lightcoral", alpha=0.3))
     elif data_quality < 0.7:
-        ax.text(0.5, 0.9, f"⚠️ Limited data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
+        ax.text(0.5, 0.9, f"Limited data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
                 ha="center", va="top", fontsize=10, color="orange",
                 transform=ax.transAxes, bbox=dict(boxstyle="round", facecolor="yellow", alpha=0.3))
     else:
-        ax.text(0.5, 0.9, f"✅ Good data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
+        ax.text(0.5, 0.9, f"Good data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
                 ha="center", va="top", fontsize=10, color="green",
                 transform=ax.transAxes, bbox=dict(boxstyle="round", facecolor="lightgreen", alpha=0.3))
 
