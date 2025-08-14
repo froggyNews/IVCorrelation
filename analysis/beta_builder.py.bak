@@ -121,71 +121,7 @@ def _first_pc_weights_from_rows(Z: np.ndarray, ridge: float = 1e-6) -> np.ndarra
 def pca_market_weights(X_peers: np.ndarray, ridge: float = 1e-6) -> np.ndarray:
     """Market‑mode weights across peer rows via first PC on ridge‑regularized R."""
     Z, _, _ = _zscore_cols(_impute_col_median(X_peers))
-    return _first_pc_weights_from_rows_improved(Z, ridge=ridge)
-
-def _first_pc_weights_from_rows_improved(Z: np.ndarray, ridge: float = 1e-6, max_single_weight: float = 0.7) -> np.ndarray:
-    """
-    Improved version that avoids extreme single-asset allocations.
-    
-    Z: rows=samples (tickers), cols=features (pillars or surface dims).
-    Do PCA on ticker×ticker matrix (Z Zᵀ) with a small ridge to avoid SVD issues.
-    
-    Parameters:
-    - max_single_weight: maximum weight for a single asset to avoid extreme allocations
-    """
-    n_rows = Z.shape[0]
-    
-    # Handle edge cases
-    if n_rows < 2:
-        return np.full(n_rows, 1.0 / n_rows) if n_rows > 0 else np.array([])
-    
-    n_feat = max(Z.shape[1] - 1, 1)
-    R = (Z @ Z.T) / n_feat
-    R[np.arange(R.shape[0]), np.arange(R.shape[0])] += float(ridge)
-    vals, vecs = np.linalg.eigh(R)  # symmetric → numerically stable
-    v1 = vecs[:, -1]                # first PC loadings across rows
-    
-    # Orient consistently
-    if v1.sum() < 0:
-        v1 = -v1
-    
-    # Use a two-stage approach to avoid extreme allocations
-    # Stage 1: Traditional approach with clipping
-    w_clipped = np.clip(v1, 0.0, None)
-    s_clipped = w_clipped.sum()
-    
-    if s_clipped > 0:
-        w_normalized = w_clipped / s_clipped
-        max_weight = w_normalized.max()
-        
-        # Stage 2: If allocation is too extreme, use a more balanced approach
-        if max_weight > max_single_weight and n_rows > 2:
-            # Redistribute excess weight above threshold to other assets
-            excess_indices = w_normalized > max_single_weight
-            excess_weight = np.sum(w_normalized[excess_indices] - max_single_weight)
-            
-            # Cap extreme weights and distribute excess to others
-            w_balanced = w_normalized.copy()
-            w_balanced[excess_indices] = max_single_weight
-            
-            # Distribute excess weight proportionally to non-extreme assets
-            non_extreme_mask = ~excess_indices
-            if non_extreme_mask.any():
-                non_extreme_weights = w_balanced[non_extreme_mask]
-                total_non_extreme = non_extreme_weights.sum()
-                if total_non_extreme > 0:
-                    # Distribute excess proportionally
-                    w_balanced[non_extreme_mask] += excess_weight * (non_extreme_weights / total_non_extreme)
-                else:
-                    # If all non-extreme weights are zero, distribute equally
-                    w_balanced[non_extreme_mask] = excess_weight / non_extreme_mask.sum()
-            
-            return w_balanced / w_balanced.sum()
-        else:
-            return w_normalized
-    
-    # Fallback to equal weights if all else fails
-    return np.full(n_rows, 1.0 / n_rows)
+    return _first_pc_weights_from_rows(Z, ridge=ridge)
 
 def pca_regress_weights(X_peers: np.ndarray, y_target: np.ndarray,
                         k: Optional[int] = None, nonneg: bool = True) -> np.ndarray:
@@ -203,48 +139,6 @@ def pca_regress_weights(X_peers: np.ndarray, y_target: np.ndarray,
         w = np.clip(w, 0.0, None)
     ssum = w.sum()
     return w / ssum if ssum > 0 else np.full_like(w, 1.0 / len(w))
-
-def cosine_similarity_weights(X_peers: np.ndarray, y_target: np.ndarray) -> np.ndarray:
-    """
-    Compute weights based on cosine similarity between target and peers.
-    
-    Parameters:
-    - X_peers: (n_peers x n_features) array of peer data
-    - y_target: (n_features,) array of target data
-    
-    Returns:
-    - weights: (n_peers,) array of normalized weights
-    """
-    # Impute missing values
-    X_peers_clean = _impute_col_median(X_peers)
-    y_target_clean = _impute_col_median(y_target.reshape(1, -1)).ravel()
-    
-    # Calculate cosine similarities manually
-    similarities = []
-    target_norm = np.linalg.norm(y_target_clean)
-    
-    if target_norm == 0:
-        # If target is zero vector, return equal weights
-        return np.full(X_peers_clean.shape[0], 1.0 / X_peers_clean.shape[0])
-    
-    for peer in X_peers_clean:
-        peer_norm = np.linalg.norm(peer)
-        if peer_norm == 0:
-            sim = 0
-        else:
-            # Cosine similarity = dot product / (norm1 * norm2)
-            sim = np.dot(peer, y_target_clean) / (peer_norm * target_norm)
-        similarities.append(max(0, sim))  # Clip negative similarities
-    
-    similarities = np.array(similarities)
-    
-    # Normalize to weights
-    total_sim = similarities.sum()
-    if total_sim > 0:
-        return similarities / total_sim
-    else:
-        # Fallback to equal weights
-        return np.full(len(similarities), 1.0 / len(similarities))
 
 # =========================
 # Public weight builders
@@ -280,10 +174,11 @@ def pca_weights_from_atm_matrix(
         return pd.Series(index=peers, dtype=float)
     kept_names = [rows[i] for i in keep_rows]
     Z, _, _ = _zscore_cols(_impute_col_median(X[keep_rows, :]))
-    w_all = _first_pc_weights_from_rows_improved(Z, ridge=ridge)
+    w_all = _first_pc_weights_from_rows(Z, ridge=ridge)
     ser = pd.Series(w_all, index=kept_names).drop(index=[target], errors="ignore")
     ser = ser.reindex(peers).fillna(0.0)
-    # Note: clip_negative is not applied since the improved method already handles negative weights
+    if clip_negative:
+        ser = ser.clip(lower=0.0)
     s = ser.sum()
     return ser / s if s > 0 else ser
 
@@ -306,14 +201,10 @@ def pca_weights(
         First principal component on ATM IV pillars across peers.
     pca_atm_regress
         PCA-based regression to match the target's ATM vector.
-    pca_atm_cosine
-        Cosine similarity weights based on ATM IV pillars.
     pca_surface_market
         First principal component on full surface grids across peers.
     pca_surface_regress
         PCA-based regression to match the target's surface grid.
-    pca_surface_cosine
-        Cosine similarity weights based on full surface grids.
 
     All modes return non-negative weights normalised to sum to one.
     """
@@ -332,10 +223,7 @@ def pca_weights(
         Xp = atm_df.loc[peers].to_numpy(float)
         if Xp.shape[0] == 0:
             return pd.Series(dtype=float)
-        if "cosine" in mode:
-            w = cosine_similarity_weights(Xp, y)
-        else:
-            w = pca_regress_weights(Xp, y, k=k, nonneg=True)
+        w = pca_regress_weights(Xp, y, k=k, nonneg=True)
         return pd.Series(w / w.sum(), index=peers, dtype=float)
 
     if mode.startswith("pca_surface"):
@@ -347,8 +235,6 @@ def pca_weights(
             return pd.Series(dtype=float)
         if "market" in mode:
             w = pca_market_weights(X[1:, :])
-        elif "cosine" in mode:
-            w = cosine_similarity_weights(X[1:, :], X[0, :])
         else:
             w = pca_regress_weights(X[1:, :], X[0, :], k=k, nonneg=True)
         return pd.Series(w / w.sum(), index=labels[1:], dtype=float)

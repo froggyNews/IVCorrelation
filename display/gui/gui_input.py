@@ -178,8 +178,8 @@ class InputPanel(ttk.Frame):
         ttk.Label(row3, text="Weight mode").grid(row=0, column=2, sticky="w")
         self.cmb_weight_mode = ttk.Combobox(row3, values=[
             "iv_atm", "ul", "surface",
-            "pca_atm_market", "pca_atm_regress", 
-            "pca_surface_market", "pca_surface_regress"
+            "pca_atm_market", "pca_atm_regress", "pca_atm_cosine",
+            "pca_surface_market", "pca_surface_regress", "pca_surface_cosine"
         ], width=18, state="readonly")
         self.cmb_weight_mode.set("iv_atm")
         self.cmb_weight_mode.grid(row=0, column=3, padx=6)

@@ -223,7 +223,7 @@ class PlotManager:
                     isinstance(self.last_atm_df, pd.DataFrame) and 
                     not self.last_atm_df.empty and
                     weight_mode.startswith("pca_atm")):
-                    w = pca_weights_from_atm_matrix(self.last_atm_df, target, peers, verbose=False)
+                    w = pca_weights_from_atm_matrix(self.last_atm_df, target, peers)
                 else:
                     # Fallback to computing fresh ATM matrix
                     w = pca_weights(
@@ -234,7 +234,7 @@ class PlotManager:
                         asof=asof,
                         pillars_days=pillars or [7,30,60,90,180,365],
                         # you can pass tenors/mny_bins if you've customized them
-                        k=None, nonneg=True, standardize=True,
+                        k=None,
                     )
                 if not w.empty and np.isfinite(w.to_numpy(float)).any():
                     return (w / w.sum()).astype(float)
