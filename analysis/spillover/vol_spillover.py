@@ -61,8 +61,12 @@ def compute_responses(df: pd.DataFrame,
                       horizons: Iterable[int] = (1, 3, 5)) -> pd.DataFrame:
     """Compute peer responses for each event over given horizons.
 
-    Response for peer j at horizon h is the percentage change in j's IV from
-    t0-1 to t0h.
+    Response for peer j at horizon ``h`` is the percentage change in j's IV
+    from ``t0-1`` to ``t0+h``.  This means ``h=1`` measures the response on the
+    day *after* the trigger event and ``h=0`` would correspond to the trigger
+    day itself.  The previous implementation incorrectly used ``t0+h-1`` which
+    shifted all horizons one day earlier and was incompatible with other parts
+    of the program that expect horizons to be offset from the event date.
     """
     panel = df.set_index(["date", "ticker"]).sort_index()
     dates = panel.index.get_level_values(0).unique()
@@ -79,7 +83,8 @@ def compute_responses(df: pd.DataFrame,
                 continue
             base = panel.loc[(t_minus1, j), "atm_iv"]
             for h in horizons:
-                idx_h = idx0 + h - 1  # t0h is idx0 + h - 1
+                # Use t0 + h to express the response h days after the event.
+                idx_h = idx0 + h
                 if idx_h >= len(dates):
                     continue
                 d_h = dates[idx_h]
