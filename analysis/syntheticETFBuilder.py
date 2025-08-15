@@ -38,18 +38,6 @@ def build_surface_grids(
     """
     conn = get_conn()
 
-    # Ensure helpful indexes exist for common query filters
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_options_quotes_ticker ON options_quotes(ticker)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_options_quotes_asof_date ON options_quotes(asof_date)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_options_quotes_is_atm ON options_quotes(is_atm)"
-    )
-    conn.commit()
-
     cols = "asof_date, ticker, ttm_years, moneyness, iv, is_atm"
     q = f"SELECT {cols} FROM options_quotes"
     params: list = []

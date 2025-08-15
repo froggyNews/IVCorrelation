@@ -24,7 +24,10 @@ def detect_available_pillars(
 ) -> List[int]:
     """
     Detect which pillars have sufficient data across the given tickers.
-    Returns pillars where at least min_tickers_per_pillar have data.
+
+    Returns pillars where at least ``min_tickers_per_pillar`` tickers have
+    valid data. If no pillar meets this requirement, pillars with any data are
+    returned instead to provide a best-effort result for sparse datasets.
     """
     candidate_pillars = list(candidate_pillars)
     pillar_coverage = {p: 0 for p in candidate_pillars}
@@ -41,6 +44,11 @@ def detect_available_pillars(
     
     # Return pillars with sufficient coverage
     good_pillars = [p for p, count in pillar_coverage.items() if count >= min_tickers_per_pillar]
+
+    if not good_pillars:
+        # Fallback: include pillars that have any data at all
+        good_pillars = [p for p, count in pillar_coverage.items() if count > 0]
+
     return sorted(good_pillars)
 
 def _atm_by_pillar_from_day_slice(day_df: pd.DataFrame, pillar_days: int,
@@ -180,8 +188,6 @@ def load_atm(conn=None) -> pd.DataFrame:
             # Rename columns to match expected interface
             if 'ttm_years' in df.columns and 'T' not in df.columns:
                 df = df.rename(columns={'ttm_years': 'T'})
-            if 'asof_date' in df.columns and 'asof_date' not in df.columns:
-                df = df.rename(columns={'asof_date': 'asof_date'})
         
         return df
     finally:

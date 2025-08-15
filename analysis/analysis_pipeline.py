@@ -50,7 +50,7 @@ from .beta_builder import (
     corr_weights_from_matrix,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
-from .correlation_utils import compute_atm_corr, corr_weights
+from .correlation_utils import compute_atm_corr, compute_atm_corr_optimized, compute_atm_corr_restricted, corr_weights
 
 
 # =========================
@@ -653,7 +653,7 @@ def fit_smile_for(
     max_expiries: Optional[int] = None,  # Limit number of expiries
 ) -> VolModel:
     """
-    Fit a volatility smile model (SVI or SABR) for one day/ticker using all expiries available that day.
+    Fit a volatility smile model (SVI, SABR, or polynomial) for one day/ticker using all expiries available that day.
     If asof_date is None, uses the most recent date for the ticker.
 
     Returns a VolModel you can query/plot from the GUI:

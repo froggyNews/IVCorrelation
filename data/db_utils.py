@@ -13,15 +13,39 @@ def get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
     return conn
 
 
+def ensure_indexes(conn: sqlite3.Connection) -> None:
+    """Create indexes used by common query patterns if they don't exist."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_options_quotes_ticker ON options_quotes(ticker)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_options_quotes_asof_date ON options_quotes(asof_date)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_options_quotes_is_atm ON options_quotes(is_atm)"
+    )
+    conn.commit()
+
+
 def ensure_initialized(conn: sqlite3.Connection) -> None:
     init_db(conn)
+    ensure_indexes(conn)
 
 
 def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
     rows = []
     for q in quotes:
+        # Ensure dates are strings, not Timestamp objects
+        asof_date = q["asof_date"]
+        if hasattr(asof_date, 'strftime'):  # pandas Timestamp or datetime
+            asof_date = asof_date.strftime('%Y-%m-%d') if hasattr(asof_date, 'strftime') else str(asof_date)
+        
+        expiry = q["expiry"]
+        if hasattr(expiry, 'strftime'):  # pandas Timestamp or datetime
+            expiry = expiry.strftime('%Y-%m-%d') if hasattr(expiry, 'strftime') else str(expiry)
+        
         rows.append((
-            q["asof_date"], q["ticker"], q["expiry"], float(q["K"]), q["call_put"],
+            asof_date, q["ticker"], expiry, float(q["K"]), q["call_put"],
             q.get("sigma"), q.get("S"), q.get("T"), q.get("moneyness"), q.get("log_moneyness"), q.get("delta"),
             1 if q.get("is_atm") else 0,
             q.get("volume"), q.get("bid"), q.get("ask"), q.get("mid"),

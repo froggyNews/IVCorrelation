@@ -19,6 +19,7 @@ class SpilloverFrame(ttk.Frame):
         super().__init__(master)
         self.pack(fill=tk.BOTH, expand=True)
 
+
         ctrl = ttk.Frame(self)
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
@@ -129,13 +130,17 @@ class SpilloverFrame(ttk.Frame):
         self.canvas.draw()
 
 
-def launch_spillover(master=None):
-    """Launch spillover window as a child of ``master``."""
-    win = tk.Toplevel(master) if master else tk.Tk()
-    win.title("IV Spillover Explorer")
-    win.geometry("900x700")
-    SpilloverFrame(win)
-    return win
+
+class SpilloverApp(tk.Tk):
+    """Standalone application wrapper for :class:`SpilloverPanel`."""
+
+    def __init__(self):
+        super().__init__()
+        self.title("IV Spillover Explorer")
+        self.geometry("900x700")
+        panel = SpilloverPanel(self)
+        panel.pack(fill=tk.BOTH, expand=True)
+
 
 
 if __name__ == "__main__":

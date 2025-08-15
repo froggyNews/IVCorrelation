@@ -8,17 +8,15 @@ Data pipeline:
 - renames to DB schema fields ready for insert
 """
 from __future__ import annotations
-from datetime import timezone
 import numpy as np
 import pandas as pd
 
 from .greeks import compute_all_greeks_df
-from .interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD, get_ticker_interest_rate
-
-def _compute_ttm_years(expiry_iso: str, asof_date_iso: str) -> float:
-    expiry_dt = pd.to_datetime(expiry_iso, utc=True)
-    asof_dt = pd.to_datetime(asof_date_iso, utc=True)
-    return float((expiry_dt - asof_dt) / pd.Timedelta(days=365.25))
+from .interest_rates import (
+    STANDARD_RISK_FREE_RATE,
+    STANDARD_DIVIDEND_YIELD,
+    get_ticker_interest_rate,
+)
 
 def enrich_quotes(
     raw_df: pd.DataFrame,
@@ -30,9 +28,15 @@ def enrich_quotes(
 
     df = raw_df.copy()
 
-    # Compute T (years), rename fields for downstream
-    df["T"] = df.apply(lambda r_: _compute_ttm_years(r_["expiry"], r_["asof_date"]), axis=1)
+    # Parse dates and compute time to maturity in years
+    df["expiry"] = pd.to_datetime(df["expiry"], utc=True)
+    df["asof_date"] = pd.to_datetime(df["asof_date"], utc=True)
+    df["T"] = (df["expiry"] - df["asof_date"]).dt.days / 365.25
     df = df[df["T"] > 0]
+    
+    # Convert timestamps back to ISO strings for database storage
+    df["asof_date"] = df["asof_date"].dt.strftime('%Y-%m-%d')
+    df["expiry"] = df["expiry"].dt.strftime('%Y-%m-%d')
 
     # Vendor IV -> sigma, spot
     df["sigma"] = df["iv_raw"]
@@ -45,7 +49,6 @@ def enrich_quotes(
 
     # Compute Greeks in bulk (adds: price, delta, gamma, vega, theta, rho, d1, d2)
     # Uses ticker-specific rates if available, falls back to provided r
-    df = df.rename(columns={"call_put": "call_put"})
     df = compute_all_greeks_df(df, r=r, q=q, use_ticker_rates=True)
     
     # Store the rates that were actually used in the calculation
@@ -53,17 +56,17 @@ def enrich_quotes(
     df["q"] = q
 
     # ATM flag per (date, ticker, expiry, call_put)
-    def _mark_atm(g: pd.DataFrame) -> pd.DataFrame:
-        if g["delta"].notna().any():
-            idx = (g["delta"].abs() - 0.5).abs().idxmin()
-        else:
-            idx = (g["moneyness"] - 1.0).abs().idxmin()
-        g = g.copy()
-        g["is_atm"] = 0
-        g.loc[idx, "is_atm"] = 1
-        return g
-
-    df = df.groupby(["asof_date", "ticker", "expiry", "call_put"], group_keys=False).apply(_mark_atm)
+    group_cols = ["asof_date", "ticker", "expiry", "call_put"]
+    # distance from ATM using delta when available, otherwise moneyness
+    df["_atm_dist"] = np.where(
+        df["delta"].notna(),
+        (df["delta"].abs() - 0.5).abs(),
+        (df["moneyness"] - 1.0).abs(),
+    )
+    df["is_atm"] = 0
+    atm_idx = df.groupby(group_cols)["_atm_dist"].idxmin()
+    df.loc[atm_idx.to_numpy(), "is_atm"] = 1
+    df = df.drop(columns="_atm_dist")
 
     # Light sanity filters (tune later)
     df = df[(df["sigma"] > 0.01) & (df["sigma"] < 2.0)]
