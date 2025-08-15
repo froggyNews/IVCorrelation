@@ -33,6 +33,10 @@ def enrich_quotes(
     df["asof_date"] = pd.to_datetime(df["asof_date"], utc=True)
     df["T"] = (df["expiry"] - df["asof_date"]).dt.days / 365.25
     df = df[df["T"] > 0]
+    
+    # Convert timestamps back to ISO strings for database storage
+    df["asof_date"] = df["asof_date"].dt.strftime('%Y-%m-%d')
+    df["expiry"] = df["expiry"].dt.strftime('%Y-%m-%d')
 
     # Vendor IV -> sigma, spot
     df["sigma"] = df["iv_raw"]

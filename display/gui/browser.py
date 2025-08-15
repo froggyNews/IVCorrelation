@@ -164,12 +164,12 @@ class BrowserApp(tk.Tk):
                 self.after(0, self._update_animation_buttons)
                 
             except Exception as e:
-                def handle_err():
+                def handle_err(exc: Exception):
                     messagebox.showerror("Plot error", str(e))
                     self.status.config(text="Plot failed")
                     self._update_nav_buttons()
                     self._update_animation_buttons()
-                self.after(0, handle_err)
+                self.after(0, handle_err(e))
 
         threading.Thread(target=worker, daemon=True).start()
 

@@ -24,7 +24,8 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 from analysis.pillars import atm_curve_for_ticker_on_date
-from display.plotting.anim_utils import animate_smile_over_time, animate_surface_timesweep
+from display.plotting.anim_utils import animate_surface_timesweep
+# Removed animate_smile_over_time import as smile animations are disabled
 DEFAULT_ATM_BAND = ATM_BAND = 0.05
 def _cols_to_days(cols) -> np.ndarray:
     out = []
@@ -137,7 +138,7 @@ class PlotManager:
             syn_surface = None
             peer_slices: dict[str, dict] = {}
 
-            if overlay and peers:
+            if overlay_synth and peers:
                 weights = self._weights_from_ui_or_matrix(
                     target, peers, weight_mode, asof=asof,
                     pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
@@ -464,7 +465,8 @@ class PlotManager:
         info = fit_and_plot_smile(
             ax, S=S, K=K, T=T0, iv=IV,
             model=model, moneyness_grid=(0.7, 1.3, 121), ci_level=ci, show_points=True,
-            label=f"{target} {model.upper()}"
+            label=f"{target} {model.upper()}",
+            enable_svi_toggles=(model == "svi")  # Enable toggles for SVI model
         )
 
         # overlay: synthetic smile (corr-matrix) at this T
@@ -812,7 +814,9 @@ class PlotManager:
     
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if a plot type supports animation."""
-        return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
+        # Disable time-lapse animation for smile plots as requested
+        # return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
+        return plot_type.startswith("Synthetic Surface")  # Only surfaces, no smile animations
     
     def is_animation_active(self) -> bool:
         """Check if an animation is currently active."""
