@@ -53,17 +53,17 @@ def enrich_quotes(
     df["q"] = q
 
     # ATM flag per (date, ticker, expiry, call_put)
-    def _mark_atm(g: pd.DataFrame) -> pd.DataFrame:
-        if g["delta"].notna().any():
-            idx = (g["delta"].abs() - 0.5).abs().idxmin()
-        else:
-            idx = (g["moneyness"] - 1.0).abs().idxmin()
-        g = g.copy()
-        g["is_atm"] = 0
-        g.loc[idx, "is_atm"] = 1
-        return g
-
-    df = df.groupby(["asof_date", "ticker", "expiry", "call_put"], group_keys=False).apply(_mark_atm)
+    group_cols = ["asof_date", "ticker", "expiry", "call_put"]
+    # distance from ATM using delta when available, otherwise moneyness
+    df["_atm_dist"] = np.where(
+        df["delta"].notna(),
+        (df["delta"].abs() - 0.5).abs(),
+        (df["moneyness"] - 1.0).abs(),
+    )
+    df["is_atm"] = 0
+    atm_idx = df.groupby(group_cols)["_atm_dist"].idxmin()
+    df.loc[atm_idx.to_numpy(), "is_atm"] = 1
+    df = df.drop(columns="_atm_dist")
 
     # Light sanity filters (tune later)
     df = df[(df["sigma"] > 0.01) & (df["sigma"] < 2.0)]
