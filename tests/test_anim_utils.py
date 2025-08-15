@@ -117,4 +117,3 @@ def test_legend_toggle_after_axes_clear():
     add_legend_toggles(ax, series2)
     assert hasattr(ax, "_legend_toggle_text")
     plt.close(fig)
-
