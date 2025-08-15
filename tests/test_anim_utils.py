@@ -100,3 +100,21 @@ def test_legend_toggle_single_connection():
     # If multiple callbacks were registered, visibility would toggle twice and stay True
     assert series["Series"][0].get_visible() is False
     plt.close(fig)
+
+
+def test_legend_toggle_after_axes_clear():
+    fig, ax = plt.subplots()
+    (line,) = ax.plot([0, 1], [0, 1], label="Series")
+    series = {"Series": [line]}
+
+    # Create toggles then clear the axes to simulate GUI re-use
+    add_legend_toggles(ax, series)
+    ax.cla()
+    (line2,) = ax.plot([0, 1], [1, 0], label="Series2")
+    series2 = {"Series2": [line2]}
+
+    # Should not raise even though the previous instruction text is detached
+    add_legend_toggles(ax, series2)
+    assert hasattr(ax, "_legend_toggle_text")
+    plt.close(fig)
+
