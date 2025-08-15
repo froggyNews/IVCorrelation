@@ -202,16 +202,7 @@ def compute_peer_weights(
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
 ) -> pd.Series:
 
-    """Compute peer weights via correlation or PCA metrics vs a target.
 
-    Parameters
-    ----------
-    weight_mode : str
-        ``"iv_atm"`` (default), ``"surface"``, ``"ul"``/``"underlying"``,
-        PCA variants such as ``"pca_atm_market"``, or
-        cosine similarity variants such as ``"cosine_atm"``, ``"cosine_surface"`` or
-        ``"cosine_ul"``.
-    """
     target = target.upper()
     peers = [p.upper() for p in peers]
 
@@ -334,6 +325,8 @@ def compute_peer_weights(
         asof=asof,
         pillars_days=pillar_days,
         tenors=tenor_days,
+
+        mny_bins=mny_bins,
 
     )
 

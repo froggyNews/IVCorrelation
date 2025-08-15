@@ -152,7 +152,7 @@ SQLite-based storage with tables for:
 - **Cosine Surface Vector (`cosine_surface_vector`)** and **Correlation Surface Vector (`corr_surface_vector`)**: similarity using flattened smile grids
 
 
-### Synthetic ETF Construction
+
 ```python
 # Build synthetic surface from correlation/PCA-derived weights
 target = "SPY"
