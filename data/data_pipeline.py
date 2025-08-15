@@ -8,17 +8,15 @@ Data pipeline:
 - renames to DB schema fields ready for insert
 """
 from __future__ import annotations
-from datetime import timezone
 import numpy as np
 import pandas as pd
 
 from .greeks import compute_all_greeks_df
-from .interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD, get_ticker_interest_rate
-
-def _compute_ttm_years(expiry_iso: str, asof_date_iso: str) -> float:
-    expiry_dt = pd.to_datetime(expiry_iso, utc=True)
-    asof_dt = pd.to_datetime(asof_date_iso, utc=True)
-    return float((expiry_dt - asof_dt) / pd.Timedelta(days=365.25))
+from .interest_rates import (
+    STANDARD_RISK_FREE_RATE,
+    STANDARD_DIVIDEND_YIELD,
+    get_ticker_interest_rate,
+)
 
 def enrich_quotes(
     raw_df: pd.DataFrame,
@@ -30,8 +28,10 @@ def enrich_quotes(
 
     df = raw_df.copy()
 
-    # Compute T (years), rename fields for downstream
-    df["T"] = df.apply(lambda r_: _compute_ttm_years(r_["expiry"], r_["asof_date"]), axis=1)
+    # Parse dates and compute time to maturity in years
+    df["expiry"] = pd.to_datetime(df["expiry"], utc=True)
+    df["asof_date"] = pd.to_datetime(df["asof_date"], utc=True)
+    df["T"] = (df["expiry"] - df["asof_date"]).dt.days / 365.25
     df = df[df["T"] > 0]
 
     # Vendor IV -> sigma, spot
