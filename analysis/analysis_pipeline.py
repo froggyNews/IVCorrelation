@@ -50,7 +50,7 @@ from .beta_builder import (
     corr_weights_from_matrix,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
-from .correlation_utils import compute_atm_corr, corr_weights
+from .correlation_utils import compute_atm_corr, compute_atm_corr_optimized, compute_atm_corr_restricted, corr_weights
 
 
 # =========================
