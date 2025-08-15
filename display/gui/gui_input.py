@@ -37,7 +37,6 @@ PLOT_TYPES = (
     "Corr Matrix (ATM)",
     "Synthetic Surface (Smile)",
     "ETF Weights",
-    "Model Params (Time Series)",
 )
 
 class InputPanel(ttk.Frame):
