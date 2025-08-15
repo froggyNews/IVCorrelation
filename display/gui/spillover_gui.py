@@ -132,15 +132,45 @@ class SpilloverFrame(ttk.Frame):
 
 
 class SpilloverApp(tk.Tk):
-    """Standalone application wrapper for :class:`SpilloverPanel`."""
+    """Standalone application wrapper for :class:`SpilloverFrame`."""
 
     def __init__(self):
         super().__init__()
         self.title("IV Spillover Explorer")
         self.geometry("900x700")
-        panel = SpilloverPanel(self)
+        panel = SpilloverFrame(self)  # Fixed: Use SpilloverFrame not SpilloverPanel
         panel.pack(fill=tk.BOTH, expand=True)
 
+
+def launch_spillover(parent=None):
+    """
+    Launch the spillover analysis window.
+    
+    Parameters:
+    -----------
+    parent : tk.Widget, optional
+        Parent window. If None, creates standalone app.
+        
+    Returns:
+    --------
+    SpilloverApp or tk.Toplevel
+        The created spillover window.
+    """
+    if parent is None:
+        # Standalone mode
+        return SpilloverApp()
+    else:
+        # Child window mode for browser integration
+        window = tk.Toplevel(parent)
+        window.title("IV Spillover Explorer")
+        window.geometry("900x700")
+        panel = SpilloverFrame(window)
+        panel.pack(fill=tk.BOTH, expand=True)
+        return window
+
+
+# Create alias for backward compatibility
+SpilloverPanel = SpilloverFrame
 
 
 if __name__ == "__main__":

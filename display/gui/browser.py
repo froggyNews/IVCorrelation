@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 from analysis.analysis_pipeline import available_tickers, available_dates, ingest_and_process
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager
-from display.gui.spillover_gui import launch_spillover
+from display.gui.spillover_gui import launch_spillover, SpilloverFrame
 
 
 
@@ -90,7 +90,7 @@ class BrowserApp(tk.Tk):
         self.plot_mgr.attach_canvas(self.canvas)
 
         # ---- Spillover tab ----
-        self.tab_spillover = SpilloverPanel(self.notebook)
+        self.tab_spillover = SpilloverFrame(self.notebook)
         self.notebook.add(self.tab_spillover, text="Spillover")
 
         # Status bar for user feedback
