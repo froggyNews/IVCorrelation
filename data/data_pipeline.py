@@ -45,7 +45,6 @@ def enrich_quotes(
 
     # Compute Greeks in bulk (adds: price, delta, gamma, vega, theta, rho, d1, d2)
     # Uses ticker-specific rates if available, falls back to provided r
-    df = df.rename(columns={"call_put": "call_put"})
     df = compute_all_greeks_df(df, r=r, q=q, use_ticker_rates=True)
     
     # Store the rates that were actually used in the calculation

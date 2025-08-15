@@ -180,8 +180,6 @@ def load_atm(conn=None) -> pd.DataFrame:
             # Rename columns to match expected interface
             if 'ttm_years' in df.columns and 'T' not in df.columns:
                 df = df.rename(columns={'ttm_years': 'T'})
-            if 'asof_date' in df.columns and 'asof_date' not in df.columns:
-                df = df.rename(columns={'asof_date': 'asof_date'})
         
         return df
     finally:
