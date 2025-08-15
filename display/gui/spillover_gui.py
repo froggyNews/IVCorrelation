@@ -12,13 +12,12 @@ if str(ROOT) not in sys.path:
 from analysis.spillover.vol_spillover import run_spillover
 
 
-class SpilloverApp(tk.Tk):
-    """Simple GUI to run spillover analysis and visualise results."""
+class SpilloverFrame(ttk.Frame):
+    """Frame providing a simple interface for spillover analysis."""
 
-    def __init__(self):
-        super().__init__()
-        self.title("IV Spillover Explorer")
-        self.geometry("900x700")
+    def __init__(self, master):
+        super().__init__(master)
+        self.pack(fill=tk.BOTH, expand=True)
 
         ctrl = ttk.Frame(self)
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
@@ -48,21 +47,25 @@ class SpilloverApp(tk.Tk):
         self.ent_horizons.grid(row=0, column=5, sticky=tk.W)
 
         self.var_raw = tk.BooleanVar(value=False)
-        ttk.Checkbutton(ctrl, text="Use raw IV", variable=self.var_raw).grid(row=1, column=4, columnspan=2, sticky=tk.W)
+        ttk.Checkbutton(ctrl, text="Use raw IV", variable=self.var_raw).grid(
+            row=1, column=4, columnspan=2, sticky=tk.W
+        )
 
         btn = ttk.Button(ctrl, text="Run", command=self.run)
         btn.grid(row=0, column=6, rowspan=2, padx=4)
 
         # Event table
-        self.tree = ttk.Treeview(self, columns=("date", "ticker", "chg"), show="headings", height=8)
+        self.tree = ttk.Treeview(
+            self, columns=("date", "ticker", "chg"), show="headings", height=8
+        )
         self.tree.heading("date", text="Date")
         self.tree.heading("ticker", text="Ticker")
         self.tree.heading("chg", text="Rel Change")
         self.tree.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
         # Plot
-        self.fig = plt.Figure(figsize=(6,4))
-        self.ax = self.fig.add_subplot(1,1,1)
+        self.fig = plt.Figure(figsize=(6, 4))
+        self.ax = self.fig.add_subplot(1, 1, 1)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
@@ -100,9 +103,15 @@ class SpilloverApp(tk.Tk):
     def _populate_events(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
-        events = self.results["events"].sort_values("date", ascending=False).head(20)
+        events = (
+            self.results["events"].sort_values("date", ascending=False).head(20)
+        )
         for _, row in events.iterrows():
-            self.tree.insert("", tk.END, values=(row["date"].date(), row["ticker"], f"{row['rel_change']:.2%}"))
+            self.tree.insert(
+                "",
+                tk.END,
+                values=(row["date"].date(), row["ticker"], f"{row['rel_change']:.2%}"),
+            )
 
     def _plot_response(self):
         self.ax.clear()
@@ -120,6 +129,15 @@ class SpilloverApp(tk.Tk):
         self.canvas.draw()
 
 
+def launch_spillover(master=None):
+    """Launch spillover window as a child of ``master``."""
+    win = tk.Toplevel(master) if master else tk.Tk()
+    win.title("IV Spillover Explorer")
+    win.geometry("900x700")
+    SpilloverFrame(win)
+    return win
+
+
 if __name__ == "__main__":
-    app = SpilloverApp()
+    app = launch_spillover()
     app.mainloop()
