@@ -1,4 +1,4 @@
-import tkinter
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -77,21 +77,33 @@ def animate_smile_over_time(
     ax.set_ylim(lo, hi)
 
     def update(i: int):
-        line_synth.set_ydata(iv_tk[i])
-        updated = [line_synth]
-        if line_raw is not None:
-            line_raw.set_ydata(iv_raw_tk[i])
-            updated.append(line_raw)
-        if band is not None:
-            verts = np.column_stack(
-                [np.r_[k, k[::-1]], np.r_[ci_hi_tk[i], ci_lo_tk[i][::-1]]]
-            )
-            band.get_paths()[0].vertices[:] = verts
-            updated.append(band)
-        ax.set_title(str(dates[i]))
-        return updated
+        try:
+            line_synth.set_ydata(iv_tk[i])
+            updated = [line_synth]
+            if line_raw is not None and iv_raw_tk is not None:
+                line_raw.set_ydata(iv_raw_tk[i])
+                updated.append(line_raw)
+            if band is not None:
+                verts = np.column_stack(
+                    [np.r_[k, k[::-1]], np.r_[ci_hi_tk[i], ci_lo_tk[i][::-1]]]
+                )
+                # Safely update band vertices
+                if len(band.get_paths()) > 0:
+                    band.get_paths()[0].vertices[:] = verts
+                    updated.append(band)
+            ax.set_title(str(dates[i]))
+            return updated
+        except Exception:
+            # If blitting fails, return empty list to prevent crash
+            return []
 
-    ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    # Use safer animation settings to prevent blitting issues
+    try:
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    except Exception:
+        # Fallback to non-blitted animation if blitting fails
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=False)
+    
     return fig, ani, artists
 
 
@@ -128,11 +140,21 @@ def animate_surface_timesweep(
     artists = {"Surface": [im]}
 
     def update(i: int):
-        im.set_array(iv_tktau[i])
-        ax.set_title(str(dates[i]))
-        return [im]
+        try:
+            im.set_array(iv_tktau[i])
+            ax.set_title(str(dates[i]))
+            return [im]
+        except Exception:
+            # If blitting fails, return empty list to prevent crash
+            return []
 
-    ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    # Use safer animation settings to prevent blitting issues
+    try:
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    except Exception:
+        # Fallback to non-blitted animation if blitting fails
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=False)
+    
     return fig, ani, artists
 
 
@@ -164,17 +186,27 @@ def animate_spillover(
     artists = {"Peers": [scat]}
 
     def update(i: int):
-        resp = mags[:, i]
-        sizes = base_sizes * (1.0 + np.abs(resp) / max_mag)
-        alpha = np.clip(np.abs(resp) / max_mag, 0.0, 1.0)
-        fc = scat.get_facecolors()
-        fc[:, 3] = alpha
-        scat.set_sizes(sizes)
-        scat.set_facecolors(fc)
-        ax.set_title(str(times[i]))
-        return [scat]
+        try:
+            resp = mags[:, i]
+            sizes = base_sizes * (1.0 + np.abs(resp) / max_mag)
+            alpha = np.clip(np.abs(resp) / max_mag, 0.0, 1.0)
+            fc = scat.get_facecolors()
+            fc[:, 3] = alpha
+            scat.set_sizes(sizes)
+            scat.set_facecolors(fc)
+            ax.set_title(str(times[i]))
+            return [scat]
+        except Exception:
+            # If blitting fails, return empty list to prevent crash
+            return []
 
-    ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    # Use safer animation settings to prevent blitting issues
+    try:
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=True)
+    except Exception:
+        # Fallback to non-blitted animation if blitting fails
+        ani = FuncAnimation(fig, update, frames=T, interval=interval_ms, blit=False)
+    
     state = {"labels": labels, "xs": xs, "ys": ys}
     return fig, ani, artists, state
 
@@ -223,31 +255,37 @@ def add_keyboard_toggles(
 
 
 def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) -> Legend:
-    """Make legend entries clickable to toggle series with improved visual feedback."""
+    """Make legend entries clickable to toggle series with improved visual feedback.
+
+    Previously each invocation added a new ``pick_event`` handler and instruction
+    text, which accumulated in the GUI and slowed interactions considerably.  We
+    now remove any existing handler/text before registering the new ones so that
+    only a single callback remains active per axes.
+    """
 
     leg = ax.legend()
     fig = ax.figure
     handles = leg.legend_handles if hasattr(leg, "legend_handles") else leg.legendHandles
     texts = leg.get_texts()
-    
+
     # Make handles clickable
     for handle in handles:
         handle.set_picker(True)
         # Only set pickradius if the method exists
-        if hasattr(handle, 'set_pickradius'):
+        if hasattr(handle, "set_pickradius"):
             handle.set_pickradius(15)  # Increase click area
-    
-    # Also make text labels clickable  
+
+    # Also make text labels clickable
     for text in texts:
         text.set_picker(True)
-        if hasattr(text, 'set_pickradius'):
+        if hasattr(text, "set_pickradius"):
             text.set_pickradius(15)
 
     def on_pick(event):
         artist = event.artist
-        
+
         # Determine which legend entry was clicked
-        if hasattr(artist, 'get_label'):
+        if hasattr(artist, "get_label"):
             # Clicked on a handle
             label_text = artist.get_label()
         else:
@@ -257,7 +295,7 @@ def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) ->
                 label_text = texts[text_index].get_text()
             except (ValueError, IndexError):
                 return
-        
+
         # Find matching series in series_map
         # Try exact match first, then partial match
         matched_key = None
@@ -265,7 +303,7 @@ def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) ->
             if key == label_text or label_text in key or key in label_text:
                 matched_key = key
                 break
-        
+
         if not matched_key:
             # Fallback: try to match based on common words or special cases
             label_words = label_text.lower().split()
@@ -276,53 +314,90 @@ def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) ->
                     matched_key = key
                     break
                 # Special case: CI/Confidence Interval matching
-                if ('ci' in label_text.lower() or '%' in label_text) and 'confidence' in key.lower():
+                if ("ci" in label_text.lower() or "%" in label_text) and "confidence" in key.lower():
                     matched_key = key
                     break
                 # Special case: fit matching
-                if 'fit' in label_text.lower() and 'fit' in key.lower():
+                if "fit" in label_text.lower() and "fit" in key.lower():
                     matched_key = key
                     break
-        
+
         if not matched_key:
             print(f"Warning: Could not find series for legend label '{label_text}'")
             print(f"Available series: {list(series_map.keys())}")
             return
-            
+
         arts = series_map[matched_key]
         if not arts:
             return
-            
+
         # Toggle visibility
         current_visible = arts[0].get_visible()
         new_visible = not current_visible
-        
+
         for art in arts:
             art.set_visible(new_visible)
-        
+
         # Update legend visual feedback
         # Find the corresponding handle and text
         for i, handle in enumerate(handles):
-            if (hasattr(handle, 'get_label') and handle.get_label() == label_text) or \
-               (i < len(texts) and texts[i].get_text() == label_text):
+            if (hasattr(handle, "get_label") and handle.get_label() == label_text) or (
+                i < len(texts) and texts[i].get_text() == label_text
+            ):
                 # Update handle appearance
                 handle.set_alpha(1.0 if new_visible else 0.3)
-                # Update text appearance  
+                # Update text appearance
                 if i < len(texts):
                     texts[i].set_alpha(1.0 if new_visible else 0.5)
-                    texts[i].set_weight('normal' if new_visible else 'normal')
-                    texts[i].set_style('normal' if new_visible else 'italic')
+                    texts[i].set_weight("normal" if new_visible else "normal")
+                    texts[i].set_style("normal" if new_visible else "italic")
                 break
-        
+
         fig.canvas.draw_idle()
 
-    fig.canvas.mpl_connect("pick_event", on_pick)
-    
-    # Add instruction text
-    ax.text(0.02, 0.98, "Click legend entries to toggle visibility", 
-            transform=ax.transAxes, fontsize=8, alpha=0.7,
-            verticalalignment='top', bbox=dict(boxstyle="round,pad=0.3", alpha=0.1))
-    
+    # Disconnect any previous legend toggle handler for this axes
+    if hasattr(ax, "_legend_toggle_cid"):
+        fig.canvas.mpl_disconnect(ax._legend_toggle_cid)
+
+    ax._legend_toggle_cid = fig.canvas.mpl_connect("pick_event", on_pick)
+
+    # Remove previous instruction text if it exists
+    if hasattr(ax, "_legend_toggle_text"):
+
+        text = ax._legend_toggle_text
+        # Text may already be detached (e.g. if the axes was cleared) which
+        # leaves it without a valid remove method. Guard against this to avoid
+        # exceptions bubbling up in user code.
+        #
+        # A previously created text artist can have either its ``figure`` or
+        # ``axes`` reference cleared independently, depending on how the axes
+        # was reset.  Attempting to call ``remove`` in this state results in an
+        # exception from Matplotlib.  Only attempt the removal if both
+        # references are still intact and silently swallow any errors so that
+        # stale toggle text never interrupts the caller.
+        if (
+            getattr(text, "figure", None) is not None
+            and getattr(text, "axes", None) is not None
+        ):
+            try:
+                text.remove()
+            except (ValueError, NotImplementedError, RuntimeError):
+                # ``RuntimeError`` is raised instead of ``NotImplementedError``
+                # in some Matplotlib versions when an artist is detached.
+                pass
+
+
+    ax._legend_toggle_text = ax.text(
+        0.02,
+        0.98,
+        "Click legend entries to toggle visibility",
+        transform=ax.transAxes,
+        fontsize=8,
+        alpha=0.7,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round,pad=0.3", alpha=0.1),
+    )
+
     return leg
 
 
@@ -520,3 +595,50 @@ def run_spillover(
     persist_events(events, events_path)
     persist_summary(summary, summary_path)
     return {"events": events, "responses": responses, "summary": summary}
+
+def create_safe_animation(fig, update_func, frames, interval_ms=120, repeat=True):
+    """
+    Create a matplotlib animation with graceful fallback for blitting issues.
+    
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        Figure to animate
+    update_func : callable
+        Animation update function
+    frames : int or iterable
+        Number of frames or iterable of frame data
+    interval_ms : int
+        Interval between frames in milliseconds
+    repeat : bool
+        Whether animation should repeat
+        
+    Returns
+    -------
+    matplotlib.animation.FuncAnimation
+        The created animation
+    """
+    import matplotlib
+    backend = matplotlib.get_backend()
+    
+    # For problematic backends (especially TkAgg), disable blitting by default
+    use_blit = backend not in ['TkAgg', 'Qt4Agg', 'Qt5Agg'] 
+    
+    try:
+        if use_blit:
+            ani = FuncAnimation(
+                fig, update_func, frames=frames, 
+                interval=interval_ms, blit=True, repeat=repeat
+            )
+        else:
+            ani = FuncAnimation(
+                fig, update_func, frames=frames, 
+                interval=interval_ms, blit=False, repeat=repeat
+            )
+        return ani
+    except Exception:
+        # Final fallback - always use non-blitted animation
+        return FuncAnimation(
+            fig, update_func, frames=frames, 
+            interval=interval_ms, blit=False, repeat=repeat
+        )

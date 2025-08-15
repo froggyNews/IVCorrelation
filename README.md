@@ -151,7 +151,7 @@ SQLite-based storage with tables for:
 - **Correlation UL Vol (`corr_ul_vol`)**: Correlation weights on realized vol series
 - **Cosine Surface Vector (`cosine_surface_vector`)** and **Correlation Surface Vector (`corr_surface_vector`)**: similarity using flattened smile grids
 
-- **PCA ATM (`pca_atm`)**: Principal component analysis of ATM vectors
+
 
 ```python
 # Build synthetic surface from correlation/PCA-derived weights

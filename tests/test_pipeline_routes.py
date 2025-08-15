@@ -27,7 +27,6 @@ def test_compute_peer_weights_dispatch(monkeypatch):
         "analysis.analysis_pipeline.build_vol_betas", fake_build_vol_betas
     )
 
-
     res = compute_peer_weights(
         target="SPY", peers=["QQQ"], weight_mode=("cosine", "ul_vol")
     )

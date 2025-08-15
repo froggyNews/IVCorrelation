@@ -5,7 +5,6 @@ import pandas as pd
 from analysis.beta_builder import cosine_similarity_weights, build_peer_weights
 
 
-
 def test_cosine_ul_weights(monkeypatch):
     def fake_returns(conn_fn):
         return pd.DataFrame({
