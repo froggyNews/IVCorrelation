@@ -10,6 +10,7 @@ from analysis.correlation_utils import corr_weights
 from analysis.beta_builder import pca_weights, pca_weights_from_atm_matrix
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
+from analysis.model_params_logger import append_params, load_model_params
 
 # surfaces & synth
 from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
@@ -114,6 +115,10 @@ class PlotManager:
 
         ax.clear()
 
+        if plot_type.startswith("Model Params"):
+            self._plot_model_params(ax, target, model, asof)
+            return
+
         # --- Smile: click-through path (NO df_all needed here) ---
         if plot_type.startswith("Smile"):
             # load all expiries so we can click through them
@@ -126,6 +131,7 @@ class PlotManager:
             K_arr = pd.to_numeric(chain_df["K"], errors="coerce").to_numpy(float)
             sigma_arr = pd.to_numeric(chain_df["sigma"], errors="coerce").to_numpy(float)
             S_arr = pd.to_numeric(chain_df["S"], errors="coerce").to_numpy(float)
+            expiry_arr = pd.to_datetime(chain_df.get("expiry"), errors="coerce").to_numpy()
 
             Ts = np.sort(np.unique(T_arr[np.isfinite(T_arr)]))
             if Ts.size == 0:
@@ -188,6 +194,7 @@ class PlotManager:
                 "tgt_surface": tgt_surface,
                 "syn_surface": syn_surface,
                 "peer_slices": peer_slices,
+                "expiry_arr": expiry_arr,
             }
             self._render_smile_at_index()
             return
@@ -330,6 +337,22 @@ class PlotManager:
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
 
+        # log the parameters so they can be viewed later
+        try:
+            expiry_dt = None
+            if "expiry" in dfe.columns and not dfe["expiry"].empty:
+                expiry_dt = dfe["expiry"].iloc[0]
+            append_params(
+                asof_date=asof,
+                ticker=target,
+                expiry=str(expiry_dt) if expiry_dt is not None else None,
+                model=model,
+                params=info.get("params", {}),
+                meta={"rmse": info.get("rmse")}
+            )
+        except Exception:
+            pass
+
 
         if overlay_synth and peers:
             try:
@@ -369,6 +392,30 @@ class PlotManager:
                 pass
 
         ax.set_title(title)
+    def _plot_model_params(self, ax, target, model, asof=None):
+        """Plot time-series of fitted model parameters."""
+        df = load_model_params()
+        df = df[(df["ticker"] == target) & (df["model"] == model.lower())]
+        if df.empty:
+            ax.text(0.5, 0.5, f"No parameter data for {target} ({model})", ha="center", va="center")
+            ax.set_title("Model Parameters")
+            return
+        df = df.sort_values("asof_date")
+        if asof:
+            try:
+                cutoff = pd.to_datetime(asof)
+                df = df[df["asof_date"] <= cutoff]
+            except Exception:
+                pass
+        for param_name in df["param"].unique():
+            sub = df[df["param"] == param_name]
+            ax.plot(sub["asof_date"], sub["value"], label=param_name)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Parameter value")
+        ax.set_title(f"{target} {model.upper()} parameter trends")
+        ax.legend(loc="best", fontsize=8)
+        ax.tick_params(axis="x", rotation=45)
+
     def _plot_synth_surface(self, ax, target, peers, asof, T_days, weight_mode):
         peers = [p for p in peers if p]
         if not peers:
@@ -468,6 +515,27 @@ class PlotManager:
             label=f"{target} {model.upper()}",
             enable_svi_toggles=(model == "svi")  # Enable toggles for SVI model
         )
+
+        try:
+            expiry_dt = None
+            expiry_arr = self._smile_ctx.get("expiry_arr")
+            if expiry_arr is not None:
+                try:
+                    exp_sel = expiry_arr[mask]
+                    if getattr(exp_sel, "size", 0) > 0:
+                        expiry_dt = exp_sel[0]
+                except Exception:
+                    pass
+            append_params(
+                asof_date=asof,
+                ticker=target,
+                expiry=str(expiry_dt) if expiry_dt is not None else None,
+                model=model,
+                params=info.get("params", {}),
+                meta={"rmse": info.get("rmse")}
+            )
+        except Exception:
+            pass
 
         # overlay: synthetic smile (corr-matrix) at this T
         syn_surface = self._smile_ctx.get("syn_surface")
