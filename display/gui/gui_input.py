@@ -50,13 +50,16 @@ class InputPanel(ttk.Frame):
     ----------
     master : tk.Widget
         Parent widget.
-    overlay : bool, optional
+    overlay_synth : bool, optional
         Initial state for the synthetic overlay checkbox.
+    overlay_peers : bool, optional
+        Initial state for the peer overlay checkbox.
     ci_percent : float, optional
         Confidence interval expressed in percentage (e.g. 68 for 68%).
     """
 
-    def __init__(self, master, *, overlay: bool = True, ci_percent: float = 68.0):
+    def __init__(self, master, *, overlay_synth: bool = True, overlay_peers: bool = True,
+                 ci_percent: float = 68.0):
         super().__init__(master)
         self.pack(side=tk.TOP, fill=tk.X, padx=8, pady=6)
         
@@ -148,20 +151,15 @@ class InputPanel(ttk.Frame):
         self.cmb_model.set(DEFAULT_MODEL)
         self.cmb_model.grid(row=0, column=5, padx=6)
 
-        ttk.Label(row2, text="Overlay").grid(row=0, column=6, sticky="w")
-        self.var_overlay = tk.BooleanVar(value=True)
-        self.chk_overlay = ttk.Checkbutton(row2, variable=self.var_overlay, onvalue=True, offvalue=False)
-        self.chk_overlay.grid(row=0, column=7, padx=6)
-
-        ttk.Label(row2, text="Target T (days)").grid(row=0, column=8, sticky="w")
+        ttk.Label(row2, text="Target T (days)").grid(row=0, column=6, sticky="w")
         self.ent_days = ttk.Entry(row2, width=6)
         self.ent_days.insert(0, "30")
-        self.ent_days.grid(row=0, column=9, padx=6)
+        self.ent_days.grid(row=0, column=7, padx=6)
 
-        ttk.Label(row2, text="CI (%)").grid(row=0, column=10, sticky="w")
+        ttk.Label(row2, text="CI (%)").grid(row=0, column=8, sticky="w")
         self.ent_ci = ttk.Entry(row2, width=6)
         self.ent_ci.insert(0, f"{ci_percent:.0f}")
-        self.ent_ci.grid(row=0, column=11, padx=6)
+        self.ent_ci.grid(row=0, column=9, padx=6)
 
         ttk.Label(row2, text="X units").grid(row=0, column=10, sticky="w")
         self.cmb_xunits = ttk.Combobox(row2, values=["years", "days"], width=8, state="readonly")
@@ -178,7 +176,7 @@ class InputPanel(ttk.Frame):
         ttk.Label(row3, text="Weight mode").grid(row=0, column=2, sticky="w")
         self.cmb_weight_mode = ttk.Combobox(row3, values=[
             "iv_atm", "ul", "surface", "surface_grid",
-            "pca_atm_market", "pca_atm_regress", 
+            "pca_atm_market", "pca_atm_regress",
             "pca_surface_market", "pca_surface_regress"
         ], width=18, state="readonly")
         self.cmb_weight_mode.set("iv_atm")
@@ -189,12 +187,16 @@ class InputPanel(ttk.Frame):
         self.ent_pillars.insert(0, "7,30,60,90,180,365")
         self.ent_pillars.grid(row=0, column=1, padx=6)
 
-        self.var_overlay = tk.BooleanVar(value=bool(overlay))
-        self.chk_overlay = ttk.Checkbutton(row3, text="Overlay synthetic & peers", variable=self.var_overlay)
-        self.chk_overlay.grid(row=0, column=4, padx=8, sticky="w")
+        self.var_overlay_synth = tk.BooleanVar(value=bool(overlay_synth))
+        self.chk_overlay_synth = ttk.Checkbutton(row3, text="Overlay synth", variable=self.var_overlay_synth)
+        self.chk_overlay_synth.grid(row=0, column=4, padx=8, sticky="w")
+
+        self.var_overlay_peers = tk.BooleanVar(value=bool(overlay_peers))
+        self.chk_overlay_peers = ttk.Checkbutton(row3, text="Overlay peers", variable=self.var_overlay_peers)
+        self.chk_overlay_peers.grid(row=0, column=5, padx=4, sticky="w")
 
         self.btn_plot = ttk.Button(row3, text="Plot")
-        self.btn_plot.grid(row=0, column=5, padx=8)
+        self.btn_plot.grid(row=0, column=6, padx=8)
 
 
     # ---------- bindings ----------
@@ -244,9 +246,16 @@ class InputPanel(ttk.Frame):
         if not txt:
             return []
         return [p.strip().upper() for p in txt.split(",") if p.strip()]
-    
+
+    def get_overlay_synth(self) -> bool:
+        return bool(self.var_overlay_synth.get())
+
+    def get_overlay_peers(self) -> bool:
+        return bool(self.var_overlay_peers.get())
+
     def get_overlay(self) -> bool:
-        return bool(self.var_overlay.get())
+        """Backward-compatible synthetic overlay getter."""
+        return self.get_overlay_synth()
 
     def get_max_exp(self) -> int:
         try:
