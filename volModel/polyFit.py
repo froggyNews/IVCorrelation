@@ -1,36 +1,193 @@
-# def _local_poly_fit_atm(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None,
-#                         band: float = 0.25) -> Dict[str, float]:
-#     """Quadratic in k around ATM (k=0). Returns f(0), f'(0), f''(0) and rmse."""
-#     # focus near-ATM
-#     mask = np.abs(k) <= band
-#     if mask.sum() < 3:
-#         # widen if too sparse
-#         mask = np.argsort(np.abs(k))[:max(3, min(7, k.size))]
-#     x = k[mask]; y = iv[mask]
-#     if weights is not None:
-#         w = weights[mask]
-#         W = np.diag(w)
-#         X = np.column_stack([np.ones_like(x), x, x**2])
-#         beta = np.linalg.lstsq(W @ X, W @ y, rcond=None)[0]
-#     else:
-#         X = np.column_stack([np.ones_like(x), x, x**2])
-#         beta = np.linalg.lstsq(X, y, rcond=None)[0]
-#     # f(k) = a + b k + c k^2
-#     a, b, c = beta
-#     yhat = a + b*x + c*x**2
-#     rmse = float(np.sqrt(np.mean((yhat - y)**2)))
-#     return {"atm_vol": float(a), "skew": float(b), "curv": float(2*c), "rmse": rmse}
+"""
+Polynomial and Thin Plate Spline fitting for implied volatility surfaces.
 
-# def _predict_with_svi(params: Tuple[float, float, float, float, float], k: np.ndarray, T: float) -> np.ndarray:
-#     # raw-SVI total variance: w(k) = a + b( rho*(k-m) + sqrt((k-m)^2 + sigma^2) )
-#     a, b, rho, m, sigma = params
-#     w = a + b * (rho*(k-m) + np.sqrt((k-m)**2 + sigma**2))
-#     w = np.clip(w, 1e-10, None)
-#     return np.sqrt(w / max(T, 1e-12))
+This module provides two fitting approaches:
+1. Simple polynomial fitting (quadratic)
+2. Thin Plate Spline (TPS) fitting using RBF interpolation
+"""
 
-# def _finite_diff(f, x0: float, h: float = 1e-3) -> Tuple[float, float]:
-#     # return f'(x0) and f''(x0)
-#     f_p = f(x0 + h); f_m = f(x0 - h); f0 = f(x0)
-#     first = (f_p - f_m) / (2*h)
-#     second = (f_p - 2*f0 + f_m) / (h*h)
-#     return float(first), float(second)
+from __future__ import annotations
+from typing import Optional, Dict, Tuple, Callable
+import numpy as np
+import math
+
+try:
+    from scipy.interpolate import RBFInterpolator
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+
+
+def fit_simple_poly(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None,
+                   band: float = 0.25) -> Dict[str, float]:
+    """
+    Simple quadratic polynomial fit around ATM (k=0).
+    
+    Returns f(0), f'(0), f''(0) and rmse where f(k) = a + b*k + c*k^2
+    
+    Parameters:
+    -----------
+    k : np.ndarray
+        Log-moneyness values
+    iv : np.ndarray  
+        Implied volatility values
+    weights : Optional[np.ndarray]
+        Optional weights for fitting
+    band : float
+        Band around ATM for focusing the fit
+        
+    Returns:
+    --------
+    Dict with atm_vol, skew, curv, rmse, model
+    """
+    # Focus near-ATM
+    mask = np.abs(k) <= band
+    if mask.sum() < 3:
+        # Widen if too sparse
+        mask = np.argsort(np.abs(k))[:max(3, min(7, k.size))]
+    
+    x = k[mask]
+    y = iv[mask]
+    
+    # Set up design matrix
+    X = np.column_stack([np.ones_like(x), x, x**2])
+    
+    if weights is not None:
+        w = weights[mask]
+        W = np.diag(w)
+        beta = np.linalg.lstsq(W @ X, W @ y, rcond=None)[0]
+    else:
+        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+    
+    # f(k) = a + b*k + c*k^2
+    a, b, c = beta
+    yhat = a + b*x + c*x**2
+    rmse = float(np.sqrt(np.mean((yhat - y)**2)))
+    
+    return {
+        "atm_vol": float(a), 
+        "skew": float(b), 
+        "curv": float(2*c), 
+        "rmse": rmse,
+        "model": "simple_poly"
+    }
+
+
+def fit_tps(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None,
+           smoothing: float = 0.0) -> Dict[str, float]:
+    """
+    Thin Plate Spline (TPS) fit using RBF interpolation.
+    
+    Parameters:
+    -----------
+    k : np.ndarray
+        Log-moneyness values
+    iv : np.ndarray
+        Implied volatility values  
+    weights : Optional[np.ndarray]
+        Optional weights (used as inverse variances for smoothing)
+    smoothing : float
+        Smoothing parameter for TPS
+        
+    Returns:
+    --------
+    Dict with atm_vol, skew, curv, rmse, model and interpolator function
+    """
+    if not _HAS_SCIPY:
+        # Fallback to simple polynomial if scipy not available
+        return fit_simple_poly(k, iv, weights)
+    
+    k = np.asarray(k, dtype=float)
+    iv = np.asarray(iv, dtype=float)
+    
+    # Handle weights by converting to smoothing parameter per point
+    if weights is not None:
+        # Convert weights to smoothing - higher weight = lower smoothing
+        weights = np.asarray(weights, dtype=float)
+        # Inverse of weights as smoothing (low weight = high smoothing)
+        point_smoothing = smoothing + (1.0 / np.clip(weights, 1e-8, None))
+    else:
+        point_smoothing = smoothing
+    
+    try:
+        # Create TPS interpolator  
+        rbf = RBFInterpolator(
+            y=k.reshape(-1, 1),
+            d=iv,
+            kernel='thin_plate_spline',
+            smoothing=point_smoothing
+        )
+        
+        # Create prediction function
+        def predict_iv(k_new):
+            k_new = np.asarray(k_new, dtype=float)
+            if k_new.ndim == 0:
+                k_new = k_new.reshape(1)
+            return rbf(k_new.reshape(-1, 1))
+        
+        # Get ATM values using finite differences
+        atm_vol = float(predict_iv(np.array([0.0]))[0])
+        skew, curv = _finite_diff(lambda x: float(predict_iv(np.array([x]))[0]), 0.0)
+        
+        # Compute RMSE on original points
+        iv_pred = predict_iv(k)
+        rmse = float(np.sqrt(np.mean((iv_pred - iv)**2)))
+        
+        return {
+            "atm_vol": atm_vol,
+            "skew": skew, 
+            "curv": curv,
+            "rmse": rmse,
+            "model": "tps",
+            "interpolator": predict_iv
+        }
+        
+    except Exception:
+        # Fallback to simple polynomial on any error
+        return fit_simple_poly(k, iv, weights)
+
+
+def fit_poly(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None,
+            method: str = "simple", **kwargs) -> Dict[str, float]:
+    """
+    Main polynomial fitting function that dispatches to simple or TPS method.
+    
+    Parameters:
+    -----------
+    k : np.ndarray
+        Log-moneyness values
+    iv : np.ndarray
+        Implied volatility values
+    weights : Optional[np.ndarray]
+        Optional weights for fitting
+    method : str
+        Either "simple" for quadratic polynomial or "tps" for thin plate spline
+    **kwargs : 
+        Additional arguments passed to specific fitting methods
+        
+    Returns:
+    --------
+    Dict with fitting results
+    """
+    if method.lower() == "tps":
+        return fit_tps(k, iv, weights, **kwargs)
+    else:
+        return fit_simple_poly(k, iv, weights, **kwargs)
+
+
+def _finite_diff(f: Callable[[float], float], x0: float, h: float = 1e-3) -> Tuple[float, float]:
+    """
+    Compute first and second derivatives using finite differences.
+    
+    Returns f'(x0) and f''(x0)
+    """
+    f_p = f(x0 + h)
+    f_m = f(x0 - h) 
+    f0 = f(x0)
+    first = (f_p - f_m) / (2*h)
+    second = (f_p - 2*f0 + f_m) / (h*h)
+    return float(first), float(second)
+
+
+# Backward compatibility aliases
+_local_poly_fit_atm = fit_simple_poly
