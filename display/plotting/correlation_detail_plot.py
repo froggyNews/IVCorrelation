@@ -7,7 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from analysis.pillars import DEFAULT_PILLARS_DAYS, detect_available_pillars
-from analysis.correlation_utils import compute_atm_corr, corr_weights
+from analysis.correlation_utils import compute_atm_corr, compute_atm_corr_optimized, compute_atm_corr_restricted, corr_weights
 
 # optional: fallback weights from persisted correlations (if you keep that path)
 try:

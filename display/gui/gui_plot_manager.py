@@ -88,18 +88,19 @@ class PlotManager:
 
     # ---- main entry ----
     def plot(self, ax: plt.Axes, settings: dict):
-        plot_type  = settings["plot_type"]
-        target     = settings["target"]
-        asof       = settings["asof"]
-        model      = settings["model"]
-        T_days     = settings["T_days"]
-        ci         = settings["ci"]
-        x_units    = settings["x_units"]
-        weight_mode= settings["weight_mode"]
-        overlay    = settings["overlay"]
-        peers      = settings["peers"]
-        pillars    = settings["pillars"]
-        max_expiries = settings.get("max_expiries", 6)
+        plot_type     = settings["plot_type"]
+        target        = settings["target"]
+        asof          = settings["asof"]
+        model         = settings["model"]
+        T_days        = settings["T_days"]
+        ci            = settings["ci"]
+        x_units       = settings["x_units"]
+        weight_mode   = settings["weight_mode"]
+        overlay_synth = settings.get("overlay_synth", False)
+        overlay_peers = settings.get("overlay_peers", False)
+        peers         = settings["peers"]
+        pillars       = settings["pillars"]
+        max_expiries  = settings.get("max_expiries", 6)
 
         # remember current plot type for the click handler
         self._current_plot_type = plot_type
@@ -135,6 +136,7 @@ class PlotManager:
             tgt_surface = None
             syn_surface = None
             peer_slices: dict[str, dict] = {}
+
             if overlay and peers:
                 weights = self._weights_from_ui_or_matrix(
                     target, peers, weight_mode, asof=asof,
@@ -194,7 +196,7 @@ class PlotManager:
             df_all = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
             if df_all is None or df_all.empty:
                 ax.set_title("No data"); return
-            self._plot_term(ax, df_all, target, asof, x_units, ci, overlay, peers, weight_mode)
+            self._plot_term(ax, df_all, target, asof, x_units, ci, overlay_synth, peers, weight_mode)
             return
 
         # --- Corr Matrix: doesn't need df_all ---
@@ -303,10 +305,12 @@ class PlotManager:
 
 
 
-    def _plot_smile(self, ax, df, target, asof, model, T_days, ci, overlay, peers, weight_mode):
+    def _plot_smile(self, ax, df, target, asof, model, T_days, ci,
+                    overlay_synth, peers, weight_mode):
         """
-        Draw target smile; if overlay is ON, draw a horizontal line at the corr-matrix
-        synthetic ATM for the nearest tenor to T_days (no recomputation of correlations).
+        Draw target smile; if synthetic overlay is ON, draw a horizontal line at the
+        corr-matrix synthetic ATM for the nearest tenor to T_days (no recomputation of
+        correlations).
         """
         import numpy as np
         import pandas as pd
@@ -326,10 +330,10 @@ class PlotManager:
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
 
 
-        # inside _plot_smile(...), replace the horizontal line section with:
-        if overlay and peers:
+        if overlay_synth and peers:
             try:
-                w = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
+                w = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof,
+                                                   pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
 
                 # build target + peers surfaces, combine peers using matrix weights
                 tickers = list({target, *peers})
@@ -537,7 +541,8 @@ class PlotManager:
         self._smile_ctx["idx"] = max(self._smile_ctx["idx"] - 1, 0)
         self._render_smile_at_index()
 
-    def _plot_term(self, ax, df, target, asof, x_units, ci, overlay, peers, weight_mode):
+    def _plot_term(self, ax, df, target, asof, x_units, ci,
+                    overlay_synth, peers, weight_mode):
         """
         Plot target ATM term structure; optionally overlay corr-matrix synthetic ATM curve
         built from peers on the SAME date (using cached matrix weights when available).
@@ -569,7 +574,7 @@ class PlotManager:
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_target)})"
 
-        if overlay and peers:
+        if overlay_synth and peers:
             try:
                 w = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None)
                 synth_curve = self._corr_weighted_synth_atm_curve(
