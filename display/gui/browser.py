@@ -17,6 +17,8 @@ if str(ROOT) not in sys.path:
 from analysis.analysis_pipeline import available_tickers, available_dates, ingest_and_process
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager
+from display.gui.spillover_gui import launch_spillover
+
 
 
 class BrowserApp(tk.Tk):
@@ -27,8 +29,16 @@ class BrowserApp(tk.Tk):
         self.geometry("1200x820")
         self.minsize(800, 600)
 
+        # Notebook with tabs
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        # ---- Model params tab ----
+        self.tab_browser = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_browser, text="Model Params")
+
         # Inputs
-        self.inputs = InputPanel(self, overlay_synth=overlay_synth,
+        self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
                                  overlay_peers=overlay_peers,
                                  ci_percent=ci_percent)
         self.inputs.bind_download(self._on_download)
@@ -36,44 +46,52 @@ class BrowserApp(tk.Tk):
         self.inputs.bind_target_change(self._on_target_change)
 
         # Expiry navigation and animation controls
-        nav = ttk.Frame(self); nav.pack(side=tk.TOP, fill=tk.X, pady=(0,4))
-        
+        nav = ttk.Frame(self.tab_browser); nav.pack(side=tk.TOP, fill=tk.X, pady=(0,4))
+
         # Expiry navigation (existing)
         self.btn_prev = ttk.Button(nav, text="Prev Expiry", command=self._prev_expiry)
         self.btn_prev.pack(side=tk.LEFT, padx=4)
         self.btn_next = ttk.Button(nav, text="Next Expiry", command=self._next_expiry)
         self.btn_next.pack(side=tk.LEFT, padx=4)
-        
+
         # Animation controls (new)
         ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        
+
         self.var_animated = tk.BooleanVar(value=False)
         self.chk_animated = ttk.Checkbutton(nav, text="Animate", variable=self.var_animated,
                                            command=self._toggle_animation_mode)
         self.chk_animated.pack(side=tk.LEFT, padx=4)
-        
+
         self.btn_play_pause = ttk.Button(nav, text="Play", command=self._toggle_animation)
         self.btn_play_pause.pack(side=tk.LEFT, padx=2)
-        
+
         self.btn_stop = ttk.Button(nav, text="Stop", command=self._stop_animation)
         self.btn_stop.pack(side=tk.LEFT, padx=2)
-        
+
         ttk.Label(nav, text="Speed:").pack(side=tk.LEFT, padx=(8,2))
         self.speed_var = tk.IntVar(value=500)  # Default speed
-        self.speed_scale = ttk.Scale(nav, from_=100, to=2000, variable=self.speed_var, 
+        self.speed_scale = ttk.Scale(nav, from_=100, to=2000, variable=self.speed_var,
                                     orient=tk.HORIZONTAL, length=100,
                                     command=self._on_speed_change)
         self.speed_scale.pack(side=tk.LEFT, padx=2)
 
+        ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        self.btn_spill = ttk.Button(nav, text="Spillover", command=self._open_spillover)
+        self.btn_spill.pack(side=tk.LEFT, padx=4)
+
         # Canvas
         self.fig = plt.Figure(figsize=(11.2, 6.6))
         self.ax = self.fig.add_subplot(1,1,1)
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.tab_browser)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         self.plot_mgr = PlotManager()
         self.plot_mgr.attach_canvas(self.canvas)
+
+        # ---- Spillover tab ----
+        self.tab_spillover = SpilloverPanel(self.notebook)
+        self.notebook.add(self.tab_spillover, text="Spillover")
 
         # Status bar for user feedback
         self.status = ttk.Label(self, text="Ready", anchor="w")
@@ -87,6 +105,8 @@ class BrowserApp(tk.Tk):
 
         self._update_nav_buttons()
         self._update_animation_buttons()
+
+        self.spill_win = None
 
     # ---------- events ----------
     def _on_target_change(self, *_):
@@ -236,6 +256,13 @@ class BrowserApp(tk.Tk):
             self.plot_mgr.set_animation_speed(speed_ms)
         except Exception:
             pass
+
+    def _open_spillover(self):
+        """Open spillover analysis window."""
+        if self.spill_win is None or not self.spill_win.winfo_exists():
+            self.spill_win = launch_spillover(self)
+        else:
+            self.spill_win.lift()
 
     def _load_tickers(self):
         try:

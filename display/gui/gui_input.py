@@ -36,6 +36,7 @@ PLOT_TYPES = (
     "Corr Matrix (ATM)",
     "Synthetic Surface (Smile)",
     "ETF Weights",
+    "Model Params (Time Series)",
 )
 
 class InputPanel(ttk.Frame):
@@ -147,7 +148,7 @@ class InputPanel(ttk.Frame):
         self.cmb_plot.grid(row=0, column=3, padx=6)
 
         ttk.Label(row2, text="Model").grid(row=0, column=4, sticky="w")
-        self.cmb_model = ttk.Combobox(row2, values=["svi", "sabr"], width=8, state="readonly")
+        self.cmb_model = ttk.Combobox(row2, values=["svi", "sabr", "tps"], width=8, state="readonly")
         self.cmb_model.set(DEFAULT_MODEL)
         self.cmb_model.grid(row=0, column=5, padx=6)
 
