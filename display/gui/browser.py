@@ -179,6 +179,8 @@ class BrowserApp(tk.Tk):
                 def done():
                     messagebox.showinfo("Download complete", f"Ingested rows: {inserted}\nTickers: {', '.join(universe)}")
                     self.status.config(text=f"Downloaded data for {', '.join(universe)}")
+                    # In-memory caches may still hold old date lists
+                    available_dates.cache_clear()
                     # Refresh available dates now that new data may be present
                     self._on_target_change()
                     self.inputs.btn_download.config(state=tk.NORMAL)
