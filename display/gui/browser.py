@@ -140,21 +140,7 @@ class BrowserApp(tk.Tk):
             self.status.config(text="Download failed")
 
     def _refresh_plot(self):
-        settings = dict(
-            plot_type   = self.inputs.get_plot_type(),
-            target      = self.inputs.get_target(),
-            asof        = self.inputs.get_asof(),
-            model       = self.inputs.get_model(),
-            T_days      = self.inputs.get_T_days(),
-            ci          = self.inputs.get_ci(),
-            x_units     = self.inputs.get_x_units(),
-            weight_mode = self.inputs.get_weight_mode(),
-            overlay_synth = self.inputs.get_overlay_synth(),
-            overlay_peers = self.inputs.get_overlay_peers(),
-            peers       = self.inputs.get_peers(),
-            pillars     = self.inputs.get_pillars(),
-            max_expiries = self.inputs.get_max_exp(),
-        )
+        settings = self.inputs.get_settings()
         if not settings["target"] or not settings["asof"]:
             self.status.config(text="Enter target and date to plot")
             return
