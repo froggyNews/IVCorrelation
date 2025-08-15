@@ -133,33 +133,46 @@ class PlotManager:
             idx0 = int(np.argmin(np.abs(Ts - target_T)))
 
             weights = None
-            synth_curve = None
+            tgt_surface = None
+            syn_surface = None
             peer_slices: dict[str, dict] = {}
-            if peers:
-                if overlay_synth:
-                    weights = self._weights_from_ui_or_matrix(
-                        target, peers, weight_mode, asof=asof,
-                        pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
+
+            if overlay and peers:
+                weights = self._weights_from_ui_or_matrix(
+                    target, peers, weight_mode, asof=asof,
+                    pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
+                )
+                try:
+                    tickers = list({target, *peers})
+                    surfaces = build_surface_grids(
+                        tickers=tickers,
+                        tenors=None,
+                        mny_bins=None,
+                        use_atm_only=False,
+                        max_expiries=max_expiries,
                     )
-                    synth_curve = self._corr_weighted_synth_atm_curve(
-                        asof=asof, peers=peers, weights=weights,
-                        atm_band=ATM_BAND, t_tolerance_days=10.0,
-                    )
-                if overlay_peers:
-                    for p in peers:
-                        df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
-                        if df_p is None or df_p.empty:
-                            continue
-                        T_p = pd.to_numeric(df_p["T"], errors="coerce").to_numpy(float)
-                        K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float)
-                        sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float)
-                        S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float)
-                        peer_slices[p.upper()] = {
-                            "T_arr": T_p,
-                            "K_arr": K_p,
-                            "sigma_arr": sigma_p,
-                            "S_arr": S_p,
-                        }
+                    if target in surfaces and asof in surfaces[target]:
+                        tgt_surface = surfaces[target][asof]
+                    peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces}
+                    synth_by_date = combine_surfaces(peer_surfaces, weights.to_dict())
+                    syn_surface = synth_by_date.get(asof)
+                except Exception:
+                    tgt_surface = None
+                    syn_surface = None
+                for p in peers:
+                    df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
+                    if df_p is None or df_p.empty:
+                        continue
+                    T_p = pd.to_numeric(df_p["T"], errors="coerce").to_numpy(float)
+                    K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float)
+                    sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float)
+                    S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float)
+                    peer_slices[p.upper()] = {
+                        "T_arr": T_p,
+                        "K_arr": K_p,
+                        "sigma_arr": sigma_p,
+                        "S_arr": S_p,
+                    }
 
             self._smile_ctx = {
                 "ax": ax,
@@ -171,7 +184,8 @@ class PlotManager:
                 "idx": idx0,
                 "settings": settings,
                 "weights": weights,
-                "synth_curve": synth_curve,
+                "tgt_surface": tgt_surface,
+                "syn_surface": syn_surface,
                 "peer_slices": peer_slices,
             }
             self._render_smile_at_index()
@@ -453,14 +467,22 @@ class PlotManager:
             label=f"{target} {model.upper()}"
         )
 
-        # overlay: horizontal synthetic ATM (from cached curve) at this T
-        synth_curve = self._smile_ctx.get("synth_curve")
-        if synth_curve is not None and not synth_curve.empty:
-            x_days = synth_curve["T"].to_numpy(float) * 365.25
-            y = synth_curve["atm_vol"].to_numpy(float)
-            jx = int(np.argmin(np.abs(x_days - T0 * 365.25)))
-            iv_synth = float(y[jx])
-            ax.axhline(iv_synth, linestyle="--", linewidth=1.5, alpha=0.9, label="Synthetic ATM (corr-matrix)")
+        # overlay: synthetic smile (corr-matrix) at this T
+        syn_surface = self._smile_ctx.get("syn_surface")
+        tgt_surface = self._smile_ctx.get("tgt_surface")
+        if syn_surface is not None:
+            syn_cols_days = _cols_to_days(syn_surface.columns)
+            jx = _nearest_tenor_idx(syn_cols_days, T0 * 365.25)
+            col_syn = syn_surface.columns[jx]
+            x_mny = _mny_from_index_labels(syn_surface.index)
+            y_syn = syn_surface[col_syn].astype(float).to_numpy()
+            if tgt_surface is not None and not tgt_surface.index.equals(syn_surface.index):
+                common = tgt_surface.index.intersection(syn_surface.index)
+                if len(common) >= 3:
+                    x_mny = _mny_from_index_labels(common)
+                    y_syn = syn_surface.loc[common, col_syn].astype(float).to_numpy()
+            ax.plot(x_mny, y_syn, linestyle="--", linewidth=1.5, alpha=0.9,
+                    label="Synthetic smile (corr-matrix)")
 
         peer_slices = self._smile_ctx.get("peer_slices") or {}
         if peer_slices:
