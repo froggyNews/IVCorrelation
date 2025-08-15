@@ -100,27 +100,22 @@ class SyntheticETFBuilder:
         self,
         custom_weights: Optional[Dict[str, float]] = None,
     ) -> pd.Series:
-        if self.cfg.weight_mode == "custom":
+        def _custom() -> pd.Series:
             if not custom_weights:
                 raise ValueError("custom weight_mode selected but no custom_weights supplied")
             w = pd.Series(custom_weights, dtype=float)
-            w = w / w.sum()
-            self._weights = w
-            return w
+            return w / w.sum()
 
-        if self.cfg.weight_mode == "equal":
+        def _equal() -> pd.Series:
             peers_list = list(self.cfg.peers)
-            w = pd.Series(
+            return pd.Series(
                 1.0 / len(peers_list),
                 index=peers_list,
                 dtype=float,
                 name="weight",
             )
-            self._weights = w
-            return w
 
-        if self.cfg.weight_mode == "pca":
-            # PCA weights from ATM vol matrix
+        def _pca() -> pd.Series:
             w = pca_weights_from_atm_matrix(
                 target=self.cfg.target,
                 peers=self.cfg.peers,
@@ -129,11 +124,9 @@ class SyntheticETFBuilder:
             )
             if w.empty:
                 raise ValueError("PCA weight computation returned empty series")
-            self._weights = w
             return w
 
-        if self.cfg.weight_mode == "cosine":
-            # Cosine similarity weights from ATM vol matrix
+        def _cosine() -> pd.Series:
             w = cosine_weights_from_atm_matrix(
                 target=self.cfg.target,
                 peers=self.cfg.peers,
@@ -142,22 +135,33 @@ class SyntheticETFBuilder:
             )
             if w.empty:
                 raise ValueError("Cosine similarity weight computation returned empty series")
-            self._weights = w
             return w
 
-        # Default: correlation-based
-        w = peer_weights_from_correlations(
-            benchmark=self.cfg.target,
-            peers=self.cfg.peers,
-            mode="iv_atm",
-            pillar_days=self.cfg.pillar_days,
-            tenor_days=self.cfg.tenors,
-            mny_bins=self.cfg.mny_bins,
-            clip_negative=self.cfg.clip_negative,
-            power=self.cfg.weight_power,
-        )
-        if w.empty:
-            raise ValueError("Correlation weights came back empty (insufficient data?)")
+        def _corr() -> pd.Series:
+            w = peer_weights_from_correlations(
+                benchmark=self.cfg.target,
+                peers=self.cfg.peers,
+                mode="iv_atm",
+                pillar_days=self.cfg.pillar_days,
+                tenor_days=self.cfg.tenors,
+                mny_bins=self.cfg.mny_bins,
+                clip_negative=self.cfg.clip_negative,
+                power=self.cfg.weight_power,
+            )
+            if w.empty:
+                raise ValueError("Correlation weights came back empty (insufficient data?)")
+            return w
+
+        dispatch = {
+            "custom": _custom,
+            "equal": _equal,
+            "pca": _pca,
+            "cosine": _cosine,
+            "corr": _corr,
+        }
+
+        func = dispatch.get(self.cfg.weight_mode, _corr)
+        w = func()
         self._weights = w
         return w
 
@@ -189,8 +193,7 @@ class SyntheticETFBuilder:
         synthetic = combine_surfaces(peer_surfaces, self._weights.to_dict())
 
         # Optionally restrict dates to intersection across all peer surfaces
-        # DISABLED: Never apply strict date intersection filtering
-        if False:  # self.cfg.strict_date_intersection:
+        if self.cfg.strict_date_intersection:
             date_sets = [set(dates_dict.keys()) for dates_dict in peer_surfaces.values()]
             if date_sets:
                 common = set.intersection(*date_sets)
