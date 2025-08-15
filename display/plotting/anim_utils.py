@@ -368,7 +368,17 @@ def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) ->
         # Text may already be detached (e.g. if the axes was cleared) which
         # leaves it without a valid remove method. Guard against this to avoid
         # ``NotImplementedError`` bubbling up in user code.
-        if getattr(text, "figure", None) is not None or getattr(text, "axes", None) is not None:
+        #
+        # A previously created text artist can have either its ``figure`` or
+        # ``axes`` reference cleared independently, depending on how the axes
+        # was reset.  Attempting to call ``remove`` in this state results in a
+        # ``NotImplementedError`` from Matplotlib.  Only attempt the removal if
+        # both references are still intact and silently swallow any errors so
+        # that stale toggle text never interrupts the caller.
+        if (
+            getattr(text, "figure", None) is not None
+            and getattr(text, "axes", None) is not None
+        ):
             try:
                 text.remove()
             except (ValueError, NotImplementedError):
