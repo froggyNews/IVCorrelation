@@ -17,7 +17,8 @@ if str(ROOT) not in sys.path:
 from analysis.analysis_pipeline import available_tickers, available_dates, ingest_and_process
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager
-from display.gui.spillover_gui import SpilloverPanel
+from display.gui.spillover_gui import launch_spillover
+
 
 
 class BrowserApp(tk.Tk):
@@ -74,6 +75,10 @@ class BrowserApp(tk.Tk):
                                     command=self._on_speed_change)
         self.speed_scale.pack(side=tk.LEFT, padx=2)
 
+        ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        self.btn_spill = ttk.Button(nav, text="Spillover", command=self._open_spillover)
+        self.btn_spill.pack(side=tk.LEFT, padx=4)
+
         # Canvas
         self.fig = plt.Figure(figsize=(11.2, 6.6))
         self.ax = self.fig.add_subplot(1,1,1)
@@ -100,6 +105,8 @@ class BrowserApp(tk.Tk):
 
         self._update_nav_buttons()
         self._update_animation_buttons()
+
+        self.spill_win = None
 
     # ---------- events ----------
     def _on_target_change(self, *_):
@@ -249,6 +256,13 @@ class BrowserApp(tk.Tk):
             self.plot_mgr.set_animation_speed(speed_ms)
         except Exception:
             pass
+
+    def _open_spillover(self):
+        """Open spillover analysis window."""
+        if self.spill_win is None or not self.spill_win.winfo_exists():
+            self.spill_win = launch_spillover(self)
+        else:
+            self.spill_win.lift()
 
     def _load_tickers(self):
         try:
