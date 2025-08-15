@@ -13,8 +13,9 @@ except Exception:
 
 from .sviFit import fit_svi_slice, svi_smile_iv
 from .sabrFit import fit_sabr_slice, sabr_smile_iv
+from .polyFit import fit_poly
 
-ModelName = Literal["svi", "sabr"]
+ModelName = Literal["svi", "sabr", "poly"]
 
 @dataclass
 class SliceParams:
@@ -26,13 +27,14 @@ class SliceParams:
 class VolModel:
     """
     Fit a per-day, per-ticker volatility smile model across expiries.
-    - fit(model='svi'|'sabr'): calibrates each expiry slice independently
+    - fit(model='svi'|'sabr'|'poly'): calibrates each expiry slice independently
     - predict_iv(K, T): get IV at a (K, T)
     - smile(Ks, T): full smile at a given expiry
     - plot(T): quick visualization (if matplotlib available)
     """
-    def __init__(self, model: ModelName = "svi"):
+    def __init__(self, model: ModelName = "svi", poly_method: str = "tps"):
         self.model: ModelName = model
+        self.poly_method: str = poly_method  # for polynomial fit: 'simple' or 'tps'
         self.S: Optional[float] = None
         self.slices: Dict[float, SliceParams] = {}  # keyed by T (years)
         self.beta_fixed: float = 0.5  # for SABR if used
@@ -70,13 +72,28 @@ class VolModel:
                 continue
             if self.model == "svi":
                 out = fit_svi_slice(S, K_slice, float(T), iv_slice)
-            else:
+            elif self.model == "sabr":
                 out = fit_sabr_slice(S, K_slice, float(T), iv_slice, beta=self.beta_fixed)
+            else:  # polynomial fit
+                k_slice = np.log(np.clip(K_slice, 1e-12, None) / self.S)
+                W_slice = W[m] if W is not None else None
+                out = fit_poly(k_slice, iv_slice, weights=W_slice, method=self.poly_method)
             self.slices[float(T)] = SliceParams(T=float(T), n=int(out.get("n", len(K_slice))), rmse=float(out.get("rmse", np.nan)), params=out)
         return self
 
     def available_expiries(self):
         return sorted(self.slices.keys())
+
+    def _poly_iv(self, Ks: np.ndarray, params: Dict[str, float]) -> np.ndarray:
+        """Evaluate polynomial/TPS slice."""
+        Ks = np.asarray(Ks, dtype=float)
+        k = np.log(np.clip(Ks, 1e-12, None) / float(self.S))
+        if params.get("model") == "tps" and "interpolator" in params:
+            return np.asarray(params["interpolator"](k), dtype=float)
+        a = params.get("atm_vol", np.nan)
+        b = params.get("skew", 0.0)
+        c2 = params.get("curv", 0.0) / 2.0
+        return a + b * k + c2 * k * k
 
     def predict_iv(self, K: float, T: float) -> float:
         """Evaluate IV at (K, T) using nearest fitted slice in T if exact T not present."""
@@ -89,7 +106,9 @@ class VolModel:
         p = self.slices[Tn].params
         if self.model == "svi":
             return float(svi_smile_iv(self.S, np.array([K]), Tn, p)[0])
-        return float(sabr_smile_iv(self.S, np.array([K]), Tn, p)[0])
+        if self.model == "sabr":
+            return float(sabr_smile_iv(self.S, np.array([K]), Tn, p)[0])
+        return float(self._poly_iv(np.array([K], dtype=float), p)[0])
 
     def smile(self, Ks: np.ndarray, T: float) -> np.ndarray:
         """Vectorized IV smile at nearest fitted expiry."""
@@ -101,7 +120,9 @@ class VolModel:
         p = self.slices[Tn].params
         if self.model == "svi":
             return svi_smile_iv(self.S, np.asarray(Ks, dtype=float), Tn, p)
-        return sabr_smile_iv(self.S, np.asarray(Ks, dtype=float), Tn, p)
+        if self.model == "sabr":
+            return sabr_smile_iv(self.S, np.asarray(Ks, dtype=float), Tn, p)
+        return self._poly_iv(np.asarray(Ks, dtype=float), p)
 
     def plot(self, T: float, Ks: Optional[np.ndarray] = None) -> None:
         """Quick plot of the fitted smile at expiry nearest to T."""
