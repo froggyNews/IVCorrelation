@@ -363,6 +363,7 @@ def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) ->
 
     # Remove previous instruction text if it exists
     if hasattr(ax, "_legend_toggle_text"):
+
         text = ax._legend_toggle_text
         # Text may already be detached (e.g. if the axes was cleared) which
         # leaves it without a valid remove method. Guard against this to avoid
@@ -372,6 +373,7 @@ def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) ->
                 text.remove()
             except (ValueError, NotImplementedError):
                 pass
+
 
     ax._legend_toggle_text = ax.text(
         0.02,
