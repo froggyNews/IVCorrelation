@@ -10,7 +10,7 @@ from analysis.correlation_utils import corr_weights
 from analysis.beta_builder import pca_weights, pca_weights_from_atm_matrix
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
-from analysis.model_params_logger import append_params, load_model_params
+from analysis.model_params_logger import append_params
 
 # surfaces & synth
 from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
@@ -114,10 +114,6 @@ class PlotManager:
         self.get_smile_slice = bounded_get_smile_slice
 
         ax.clear()
-
-        if plot_type.startswith("Model Params"):
-            self._plot_model_params(ax, target, model, asof)
-            return
 
         # --- Smile: click-through path (NO df_all needed here) ---
         if plot_type.startswith("Smile"):
@@ -392,30 +388,6 @@ class PlotManager:
                 pass
 
         ax.set_title(title)
-    def _plot_model_params(self, ax, target, model, asof=None):
-        """Plot time-series of fitted model parameters."""
-        df = load_model_params()
-        df = df[(df["ticker"] == target) & (df["model"] == model.lower())]
-        if df.empty:
-            ax.text(0.5, 0.5, f"No parameter data for {target} ({model})", ha="center", va="center")
-            ax.set_title("Model Parameters")
-            return
-        df = df.sort_values("asof_date")
-        if asof:
-            try:
-                cutoff = pd.to_datetime(asof)
-                df = df[df["asof_date"] <= cutoff]
-            except Exception:
-                pass
-        for param_name in df["param"].unique():
-            sub = df[df["param"] == param_name]
-            ax.plot(sub["asof_date"], sub["value"], label=param_name)
-        ax.set_xlabel("Date")
-        ax.set_ylabel("Parameter value")
-        ax.set_title(f"{target} {model.upper()} parameter trends")
-        ax.legend(loc="best", fontsize=8)
-        ax.tick_params(axis="x", rotation=45)
-
     def _plot_synth_surface(self, ax, target, peers, asof, T_days, weight_mode):
         peers = [p for p in peers if p]
         if not peers:

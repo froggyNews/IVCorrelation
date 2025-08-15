@@ -25,6 +25,8 @@ from analysis.analysis_pipeline import available_tickers, available_dates, inges
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager
 from display.gui.spillover_gui import launch_spillover, SpilloverFrame
+from display.gui.model_params_gui import ModelParamsFrame
+
 
 
 class BrowserApp(tk.Tk):
@@ -39,9 +41,9 @@ class BrowserApp(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # ---- Model params tab ----
+        # ---- Main browser tab ----
         self.tab_browser = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_browser, text="Model Params")
+        self.notebook.add(self.tab_browser, text="Browser")
 
         # Inputs
         self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
@@ -100,6 +102,10 @@ class BrowserApp(tk.Tk):
         # ---- Spillover tab ----
         self.tab_spillover = SpilloverFrame(self.notebook)
         self.notebook.add(self.tab_spillover, text="Spillover")
+
+        # ---- Model Params tab ----
+        self.tab_modelparams = ModelParamsFrame(self.notebook)
+        self.notebook.add(self.tab_modelparams, text="Model Params")
 
         # Status bar for user feedback
         self.status = ttk.Label(self, text="Ready", anchor="w")
@@ -187,6 +193,7 @@ class BrowserApp(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _refresh_plot(self):
+        settings = self.inputs.get_settings()
         settings = dict(
             plot_type=self.inputs.get_plot_type(),
             target=self.inputs.get_target(),

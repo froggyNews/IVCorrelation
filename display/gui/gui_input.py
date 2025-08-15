@@ -21,6 +21,7 @@ from data.interest_rates import (
     get_interest_rate_names, create_default_interest_rates, STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 )
 from data.db_utils import get_conn, ensure_initialized
+from display.gui.input_manager import InputManager
 
 
 DEFAULT_MODEL = "svi"
@@ -36,7 +37,6 @@ PLOT_TYPES = (
     "Corr Matrix (ATM)",
     "Synthetic Surface (Smile)",
     "ETF Weights",
-    "Model Params (Time Series)",
 )
 
 class InputPanel(ttk.Frame):
@@ -63,6 +63,9 @@ class InputPanel(ttk.Frame):
                  ci_percent: float = 68.0):
         super().__init__(master)
         self.pack(side=tk.TOP, fill=tk.X, padx=8, pady=6)
+
+        # Central store for current settings
+        self.manager = InputManager()
         
         # Initialize database and create default groups if needed
         self._init_ticker_groups()
@@ -100,24 +103,29 @@ class InputPanel(ttk.Frame):
         ttk.Label(row1, text="Target").grid(row=0, column=0, sticky="w")
         self.ent_target = ttk.Entry(row1, width=12)
         self.ent_target.grid(row=0, column=1, padx=(4,10))
+        self.ent_target.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row1, text="Peers (comma)").grid(row=0, column=2, sticky="w")
         self.ent_peers = ttk.Entry(row1, width=40)
         self.ent_peers.grid(row=0, column=3, padx=(4,10))
+        self.ent_peers.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row1, text="Max expiries").grid(row=0, column=4, sticky="w")
         self.ent_maxexp = ttk.Entry(row1, width=6)
         self.ent_maxexp.insert(0, "6")
         self.ent_maxexp.grid(row=0, column=5, padx=(4,10))
+        self.ent_maxexp.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row1, text="r").grid(row=0, column=6, sticky="w")
         self.ent_r = ttk.Entry(row1, width=8)
         self.ent_r.grid(row=0, column=7, padx=(4,4))
+        self.ent_r.bind("<KeyRelease>", self._sync_settings)
         
         # Interest rate dropdown and management
         self.cmb_r_presets = ttk.Combobox(row1, values=[], width=12, state="readonly")
         self.cmb_r_presets.grid(row=0, column=8, padx=(2,2))
         self.cmb_r_presets.bind("<<ComboboxSelected>>", self._on_rate_preset_selected)
+        self.cmb_r_presets.bind("<<ComboboxSelected>>", self._sync_settings)
         
         self.btn_save_rate = ttk.Button(row1, text="Save R", command=self._save_interest_rate, width=6)
         self.btn_save_rate.grid(row=0, column=9, padx=2)
@@ -126,6 +134,7 @@ class InputPanel(ttk.Frame):
         self.ent_q = ttk.Entry(row1, width=6)
         self.ent_q.insert(0, "0.0")
         self.ent_q.grid(row=0, column=11, padx=(4,10))
+        self.ent_q.bind("<KeyRelease>", self._sync_settings)
 
         self.btn_download = ttk.Button(row1, text="Download / Ingest")
         self.btn_download.grid(row=0, column=12, padx=8)
@@ -141,36 +150,43 @@ class InputPanel(ttk.Frame):
         ttk.Label(row2, text="Date").grid(row=0, column=0, sticky="w")
         self.cmb_date = ttk.Combobox(row2, values=[], width=12, state="readonly")
         self.cmb_date.grid(row=0, column=1, padx=6)
+        self.cmb_date.bind("<<ComboboxSelected>>", self._sync_settings)
 
         ttk.Label(row2, text="Plot").grid(row=0, column=2, sticky="w")
         self.cmb_plot = ttk.Combobox(row2, values=PLOT_TYPES, width=21, state="readonly")
         self.cmb_plot.set(PLOT_TYPES[0])
         self.cmb_plot.grid(row=0, column=3, padx=6)
+        self.cmb_plot.bind("<<ComboboxSelected>>", self._sync_settings)
 
         ttk.Label(row2, text="Model").grid(row=0, column=4, sticky="w")
         self.cmb_model = ttk.Combobox(row2, values=["svi", "sabr", "tps"], width=8, state="readonly")
         self.cmb_model.set(DEFAULT_MODEL)
         self.cmb_model.grid(row=0, column=5, padx=6)
+        self.cmb_model.bind("<<ComboboxSelected>>", self._sync_settings)
 
         ttk.Label(row2, text="Target T (days)").grid(row=0, column=6, sticky="w")
         self.ent_days = ttk.Entry(row2, width=6)
         self.ent_days.insert(0, "30")
         self.ent_days.grid(row=0, column=7, padx=6)
+        self.ent_days.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row2, text="CI (%)").grid(row=0, column=8, sticky="w")
         self.ent_ci = ttk.Entry(row2, width=6)
         self.ent_ci.insert(0, f"{ci_percent:.0f}")
         self.ent_ci.grid(row=0, column=9, padx=6)
+        self.ent_ci.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row2, text="X units").grid(row=0, column=10, sticky="w")
         self.cmb_xunits = ttk.Combobox(row2, values=["years", "days"], width=8, state="readonly")
         self.cmb_xunits.set("years")
         self.cmb_xunits.grid(row=0, column=11, padx=6)
+        self.cmb_xunits.bind("<<ComboboxSelected>>", self._sync_settings)
 
         ttk.Label(row2, text="Mode").grid(row=0, column=12, sticky="w")
         self.cmb_mode = ttk.Combobox(row2, values=["atm", "term", "surface"], width=10, state="readonly")
         self.cmb_mode.set("atm")
         self.cmb_mode.grid(row=0, column=13, padx=6)
+        self.cmb_mode.bind("<<ComboboxSelected>>", self._sync_settings)
         
         row3 = ttk.Frame(self); row3.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
 
@@ -182,22 +198,29 @@ class InputPanel(ttk.Frame):
         ], width=18, state="readonly")
         self.cmb_weight_mode.set("iv_atm")
         self.cmb_weight_mode.grid(row=0, column=3, padx=6)
+        self.cmb_weight_mode.bind("<<ComboboxSelected>>", self._sync_settings)
 
         ttk.Label(row3, text="Pillars (days)").grid(row=0, column=0, sticky="w")
         self.ent_pillars = ttk.Entry(row3, width=18)
         self.ent_pillars.insert(0, "7,30,60,90,180,365")
         self.ent_pillars.grid(row=0, column=1, padx=6)
+        self.ent_pillars.bind("<KeyRelease>", self._sync_settings)
 
         self.var_overlay_synth = tk.BooleanVar(value=bool(overlay_synth))
         self.chk_overlay_synth = ttk.Checkbutton(row3, text="Overlay synth", variable=self.var_overlay_synth)
         self.chk_overlay_synth.grid(row=0, column=4, padx=8, sticky="w")
+        self.var_overlay_synth.trace_add("write", lambda *args: self._sync_settings())
 
         self.var_overlay_peers = tk.BooleanVar(value=bool(overlay_peers))
         self.chk_overlay_peers = ttk.Checkbutton(row3, text="Overlay peers", variable=self.var_overlay_peers)
         self.chk_overlay_peers.grid(row=0, column=5, padx=4, sticky="w")
+        self.var_overlay_peers.trace_add("write", lambda *args: self._sync_settings())
 
         self.btn_plot = ttk.Button(row3, text="Plot")
         self.btn_plot.grid(row=0, column=6, padx=8)
+
+        # initial sync of settings
+        self._sync_settings()
 
 
     # ---------- bindings ----------
@@ -217,6 +240,7 @@ class InputPanel(ttk.Frame):
         self.cmb_date["values"] = dates or []
         if dates:
             self.cmb_date.current(len(dates) - 1)
+        self._sync_settings()
 
     def set_rates(self, r: float = STANDARD_RISK_FREE_RATE, q: float = STANDARD_DIVIDEND_YIELD) -> None:
         """Set the risk-free and dividend rates displayed in the UI."""
@@ -224,6 +248,7 @@ class InputPanel(ttk.Frame):
         self.ent_r.insert(0, f"{r:.4f}")
         self.ent_q.delete(0, tk.END)
         self.ent_q.insert(0, f"{q:.4f}")
+        self._sync_settings()
 
     def _parse_rate(self, text: str, default: float) -> float:
         """Parse user-entered rate; accepts percents or decimals."""
@@ -332,6 +357,34 @@ class InputPanel(ttk.Frame):
             return [int(p.strip()) for p in txt.split(",") if p.strip().isdigit()]
         except Exception:
             return list(DEFAULT_PILLARS)
+
+    def get_settings(self) -> dict:
+        """Return a snapshot of all current settings."""
+        self._sync_settings()
+        return self.manager.as_dict()
+
+    def _sync_settings(self, *_):
+        """Synchronize widgets to the central InputManager."""
+        try:
+            self.manager.update(
+                target=self.get_target(),
+                peers=self.get_peers(),
+                plot_type=self.get_plot_type(),
+                asof=self.get_asof(),
+                model=self.get_model(),
+                T_days=self.get_T_days(),
+                ci=self.get_ci(),
+                x_units=self.get_x_units(),
+                weight_mode=self.get_weight_mode(),
+                overlay_synth=self.get_overlay_synth(),
+                overlay_peers=self.get_overlay_peers(),
+                pillars=self.get_pillars(),
+                max_expiries=self.get_max_exp(),
+                mode=self.cmb_mode.get() or "atm",
+            )
+        except Exception:
+            # Avoid raising UI errors from sync process
+            pass
     
     # ---------- preset management ----------
     def _init_ticker_groups(self):
@@ -378,18 +431,20 @@ class InputPanel(ttk.Frame):
                 messagebox.showerror("Error", f"Preset '{selected}' not found!")
                 self._refresh_presets()
                 return
-            
+
             # Update the GUI fields
             self.ent_target.delete(0, tk.END)
             self.ent_target.insert(0, group["target_ticker"])
-            
+
             self.ent_peers.delete(0, tk.END)
             self.ent_peers.insert(0, ", ".join(group["peer_tickers"]))
-            
+
             # Show description if available
             if group.get("description"):
                 print(f"Loaded preset: {selected} - {group['description']}")
-            
+
+            self._sync_settings()
+
         except Exception as e:
             print(f"Error loading preset: {e}")
             messagebox.showerror("Error", f"Failed to load preset: {e}")
@@ -518,7 +573,8 @@ class InputPanel(ttk.Frame):
                 rate_value, description, is_default = rate_data
                 self.ent_r.delete(0, tk.END)
                 self.ent_r.insert(0, f"{rate_value:.4f}")
-                
+                self._sync_settings()
+
         except Exception as e:
             print(f"Error loading interest rate: {e}")
             messagebox.showerror("Error", f"Failed to load interest rate: {e}")
