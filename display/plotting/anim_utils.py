@@ -1,18 +1,3 @@
-"""
-Animation utilities for IV correlation analysis with robust error handling.
-
-This module provides functions for creating animated plots of implied volatility data,
-including smile evolution over time, surface animations, and spillover visualizations.
-
-Key improvements for robustness:
-- Graceful handling of matplotlib blitting failures
-- Automatic fallback from blitted to non-blitted animations
-- Backend-aware animation creation to prevent crashes
-- Exception handling in update functions to prevent animation crashes
-
-The functions are designed to work reliably across different matplotlib backends,
-especially TkAgg which can be problematic for blitted animations.
-"""
 
 import numpy as np
 import matplotlib.pyplot as plt
