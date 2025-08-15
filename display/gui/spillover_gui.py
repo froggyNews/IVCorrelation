@@ -12,13 +12,11 @@ if str(ROOT) not in sys.path:
 from analysis.spillover.vol_spillover import run_spillover
 
 
-class SpilloverApp(tk.Tk):
-    """Simple GUI to run spillover analysis and visualise results."""
+class SpilloverPanel(ttk.Frame):
+    """Panel containing spillover analysis controls and plots."""
 
-    def __init__(self):
-        super().__init__()
-        self.title("IV Spillover Explorer")
-        self.geometry("900x700")
+    def __init__(self, master: tk.Widget):
+        super().__init__(master)
 
         ctrl = ttk.Frame(self)
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
@@ -118,6 +116,17 @@ class SpilloverApp(tk.Tk):
         self.ax.axhline(0, color="black", linewidth=0.5)
         self.ax.legend()
         self.canvas.draw()
+
+
+class SpilloverApp(tk.Tk):
+    """Standalone application wrapper for :class:`SpilloverPanel`."""
+
+    def __init__(self):
+        super().__init__()
+        self.title("IV Spillover Explorer")
+        self.geometry("900x700")
+        panel = SpilloverPanel(self)
+        panel.pack(fill=tk.BOTH, expand=True)
 
 
 if __name__ == "__main__":
