@@ -1,3 +1,4 @@
+
 """
 Correlation plotting without pillars, with configurable weighting modes.
 
@@ -340,3 +341,4 @@ def scatter_corr_matrix(
             pass
 
     return corr_df
+

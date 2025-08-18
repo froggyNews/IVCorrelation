@@ -209,7 +209,6 @@ def compute_peer_weights(
     :func:`analysis.unified_weights.compute_unified_weights`.
     """
 
-    # Explicit dispatch to legacy builder functions when requested
     if isinstance(weight_mode, tuple):
         method, feature = weight_mode
         return build_peer_weights(
@@ -231,6 +230,7 @@ def compute_peer_weights(
             pillar_days=pillar_days,
             mny_bins=mny_bins,
         ).iloc[0]
+
 
     try:
         from analysis.unified_weights import compute_unified_weights

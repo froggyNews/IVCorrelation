@@ -926,7 +926,7 @@ class PlotManager:
     
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if a plot type supports animation."""
-        # Support animations for both smile and synthetic surface plots
+
         return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
     
     def is_animation_active(self) -> bool:
