@@ -74,8 +74,8 @@ def atm_feature_matrix(
     tickers: Iterable[str],
     asof: str,
     pillars_days: Iterable[int],
-    atm_band: float = 0.05,
-    tol_days: float = 7.0,
+    atm_band: float = 0.08,
+    tol_days: float = 10.0,
     standardize: bool = True,
 ) -> Tuple[pd.DataFrame, np.ndarray, List[str]]:
     """Rows=tickers, cols=pillars. Delegates to unified_weights."""

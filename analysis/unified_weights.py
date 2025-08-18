@@ -68,6 +68,8 @@ class WeightConfig:
     clip_negative: bool = True
     power: float = 1.0
     asof: Optional[str] = None
+    atm_band: float = 0.08
+    atm_tol_days: float = 10.0
 
     @classmethod
     def from_legacy_mode(cls, mode: str, **kwargs) -> "WeightConfig":
@@ -116,10 +118,6 @@ class WeightConfig:
 def _impute_col_median(X: np.ndarray) -> np.ndarray:
     X = np.asarray(X, float).copy()
     med = np.nanmedian(X, axis=0, keepdims=True)
-    mask = ~np.isfinite
-def _impute_col_median(X: np.ndarray) -> np.ndarray:
-    X = np.asarray(X, float).copy()
-    med = np.nanmedian(X, axis=0, keepdims=True)
     mask = ~np.isfinite(X)
     if mask.any():
         X[mask] = np.broadcast_to(med, X.shape)[mask]
@@ -137,8 +135,8 @@ def atm_feature_matrix(
     asof: str,
     pillars_days: Iterable[int],
     *,
-    atm_band: float = 0.05,
-    tol_days: float = 7.0,
+    atm_band: float = 0.08,
+    tol_days: float = 10.0,
     standardize: bool = True,
 ) -> Tuple[pd.DataFrame, np.ndarray, List[str]]:
     """Rows=tickers, cols=pillars (days). Values=ATM IVs for a single as-of date."""
@@ -336,30 +334,54 @@ class UnifiedWeightComputer:
         """Robust as-of for options features; UL ignores."""
         if config.asof:
             return config.asof
-        if config.feature_set in (FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
-            from analysis.syntheticETFBuilder import build_surface_grids  # Delayed import
-            
+        if config.feature_set in (FeatureSet.ATM, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+            from data.db_utils import get_conn
             tickers = [target] + peers
-            grids = build_surface_grids(tickers=tickers)
-            counts: dict[pd.Timestamp, int] = {}
-            for _, date_map in grids.items():
-                for d in date_map.keys():
-                    counts[d] = counts.get(d, 0) + 1
-            if counts:
-                best_date = sorted(counts.items(), key=lambda kv: (kv[1], kv[0]))[-1][0]
-                return pd.Timestamp(best_date).strftime("%Y-%m-%d")
-            # fallback: global most recent options date
-            from analysis.analysis_pipeline import get_most_recent_date_global
+            conn = get_conn()
+            q = (
+                "SELECT asof_date, COUNT(DISTINCT ticker) AS n FROM options_quotes "
+                f"WHERE ticker IN ({','.join('?' * len(tickers))}) GROUP BY asof_date"
+            )
+            df = pd.read_sql_query(q, conn, params=[t.upper() for t in tickers])
+            if not df.empty:
+                df["asof_date"] = pd.to_datetime(df["asof_date"])
+                df = df.sort_values(["n", "asof_date"])  # ascending, tie -> latest
+                best_row = df.iloc[-1]
+                best_date = pd.Timestamp(best_row["asof_date"])
+                logger.debug(
+                    "_choose_asof picked %s with %d/%d ticker coverage",
+                    best_date,
+                    int(best_row["n"]),
+                    len(tickers),
+                )
+                return best_date.strftime("%Y-%m-%d")
+            from analysis.analysis_pipeline import get_most_recent_date_global, available_dates
             d = get_most_recent_date_global()
             if d:
                 return d
-        # ATM path: most recent for target
-        if config.feature_set == FeatureSet.ATM:
-            from analysis.analysis_pipeline import available_dates
             dates = available_dates(ticker=target, most_recent_only=True)
             if dates:
                 return dates[0]
         return None  # UL or if nothing found
+
+    def _log_option_counts(self, tickers: list[str], asof: Optional[str], atm_df: Optional[pd.DataFrame]) -> None:
+        if asof is None:
+            return
+        from data.db_utils import get_conn
+
+        conn = get_conn()
+        q = (
+            "SELECT ticker, COUNT(*) AS n FROM options_quotes WHERE asof_date = ? "
+            f"AND ticker IN ({','.join('?' * len(tickers))}) GROUP BY ticker"
+        )
+        df = pd.read_sql_query(q, conn, params=[asof] + [t.upper() for t in tickers])
+        counts = {row["ticker"].upper(): int(row["n"]) for _, row in df.iterrows()}
+        for t in tickers:
+            total = counts.get(t.upper(), 0)
+            atm_rows = 0
+            if atm_df is not None and t.upper() in atm_df.index:
+                atm_rows = int(atm_df.loc[t.upper()].count())
+            logger.debug("asof %s %s: quotes=%d, atm_rows=%d", asof, t.upper(), total, atm_rows)
 
     # ---- public API ----
     def compute_weights(
@@ -392,34 +414,55 @@ class UnifiedWeightComputer:
         # Build features
         feature_df = self._build_feature_matrix(target, peers_list, asof, config)
         if feature_df is None or feature_df.empty:
-            raise ValueError("Feature matrix is empty; cannot compute portfolio weights")
+            if config.feature_set != FeatureSet.UNDERLYING_PX:
+                logger.warning(
+                    "Feature matrix for %s empty; falling back to underlying returns",
+                    config.feature_set,
+                )
+                ul_cfg = WeightConfig(
+                    method=config.method,
+                    feature_set=FeatureSet.UNDERLYING_PX,
+                    clip_negative=config.clip_negative,
+                    power=config.power,
+                )
+                feature_df = self._build_feature_matrix(target, peers_list, None, ul_cfg)
+                if feature_df is None or feature_df.empty:
+                    logger.warning("Underlying returns also unavailable; using equal weights")
+                    return self._fallback_equal(peers_list)
+                config = ul_cfg
+            else:
+                logger.warning("Underlying return features empty; using equal weights")
+                return self._fallback_equal(peers_list)
 
         # Dispatch by method
-        if config.method == WeightMethod.CORRELATION:
-            return corr_weights_from_matrix(
-                feature_df, target, peers_list,
-                clip_negative=config.clip_negative,
-                power=config.power,
-            )
-        if config.method == WeightMethod.COSINE:
-            return cosine_similarity_weights_from_matrix(
-                feature_df, target, peers_list,
-                clip_negative=config.clip_negative,
-                power=config.power,
-            )
-        if config.method == WeightMethod.PCA:
-            # PCA regression of target on peers
-            y = _impute_col_median(feature_df.loc[[target]].to_numpy(float)).ravel()
-            Xp = feature_df.loc[[p for p in peers_list if p in feature_df.index]].to_numpy(float)
-            if Xp.size == 0:
-                raise ValueError("No peer data available for PCA weighting")
-            w = pca_regress_weights(Xp, y, k=None, nonneg=True)
-            ser = pd.Series(w, index=[p for p in peers_list if p in feature_df.index]).clip(lower=0.0)
-            ssum = float(ser.sum())
-            ser = ser / ssum if ssum > 0 else ser
-            return ser.reindex(peers_list).fillna(0.0)
-
-        raise ValueError(f"Unsupported method: {config.method}")
+        try:
+            if config.method == WeightMethod.CORRELATION:
+                return corr_weights_from_matrix(
+                    feature_df, target, peers_list,
+                    clip_negative=config.clip_negative,
+                    power=config.power,
+                )
+            if config.method == WeightMethod.COSINE:
+                return cosine_similarity_weights_from_matrix(
+                    feature_df, target, peers_list,
+                    clip_negative=config.clip_negative,
+                    power=config.power,
+                )
+            if config.method == WeightMethod.PCA:
+                # PCA regression of target on peers
+                y = _impute_col_median(feature_df.loc[[target]].to_numpy(float)).ravel()
+                Xp = feature_df.loc[[p for p in peers_list if p in feature_df.index]].to_numpy(float)
+                if Xp.size == 0:
+                    raise ValueError("No peer data available for PCA weighting")
+                w = pca_regress_weights(Xp, y, k=None, nonneg=True)
+                ser = pd.Series(w, index=[p for p in peers_list if p in feature_df.index]).clip(lower=0.0)
+                ssum = float(ser.sum())
+                ser = ser / ssum if ssum > 0 else ser
+                return ser.reindex(peers_list).fillna(0.0)
+            raise ValueError(f"Unsupported method: {config.method}")
+        except Exception as e:
+            logger.warning("Weight computation failed (%s); using equal weights", e)
+            return self._fallback_equal(peers_list)
 
     # ---- feature assembly ----
     def _build_feature_matrix(
@@ -431,10 +474,23 @@ class UnifiedWeightComputer:
     ) -> Optional[pd.DataFrame]:
         tickers = [target] + peers_list
         if config.feature_set == FeatureSet.ATM:
-            atm_df, _, _ = atm_feature_matrix(tickers, asof, config.pillars_days)
+            atm_df, _, _ = atm_feature_matrix(
+                tickers,
+                asof,
+                config.pillars_days,
+                atm_band=config.atm_band,
+                tol_days=config.atm_tol_days,
+            )
+            self._log_option_counts(tickers, asof, atm_df)
             return atm_df
         if config.feature_set in (FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
-            grids, X, names = surface_feature_matrix(tickers, asof, tenors=config.tenors, mny_bins=config.mny_bins)
+            grids, X, names = surface_feature_matrix(
+                tickers,
+                asof,
+                tenors=config.tenors,
+                mny_bins=config.mny_bins,
+            )
+            self._log_option_counts(tickers, asof, None)
             return pd.DataFrame(X, index=list(grids.keys()), columns=names)
         if config.feature_set == FeatureSet.UNDERLYING_PX:
             df = underlying_returns_matrix(tickers)
