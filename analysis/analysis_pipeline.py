@@ -515,7 +515,8 @@ def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: 
             return r
         g["pct_rank"] = g["spread"].rolling(lookback, min_periods=roll).apply(_pct_rank, raw=False)
         return g
-    return df.groupby("pillar_days", group_keys=False).apply(per_pillar).reset_index(drop=True)
+    return df.groupby("pillar_days", group_keys=False).apply(per_pillar, include_groups=False)
+
 
 
 def relative_value_atm_report_corrweighted(

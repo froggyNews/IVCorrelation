@@ -294,6 +294,24 @@ class PlotManager:
         else:
             ax.text(0.5, 0.5, f"Unknown plot: {plot_type}", ha="center", va="center")
 
+    def plot_animated(self, ax: plt.Axes, settings: dict) -> bool:
+        """Try to create an animated plot. Returns True if successful, False otherwise."""
+        plot_type = settings["plot_type"]
+        
+        # Stop any existing animation first
+        self.stop_animation()
+        
+        try:
+            if plot_type == "smile":
+                return self._create_animated_smile(ax, settings)
+            elif plot_type == "surface":
+                return self._create_animated_surface(ax, settings)
+            else:
+                return False  # Animation not supported for this plot type
+        except Exception as e:
+            print(f"Warning: Animation creation failed: {e}")
+            return False
+
     # -------------------- event handlers --------------------
     def _on_click(self, event):
         if not self.is_smile_active() or event.inaxes is None:
@@ -1096,10 +1114,52 @@ class PlotManager:
 
     # -------------------- animation control --------------------
     def has_animation_support(self, plot_type: str) -> bool:
-        return False
+        """Check if animation is supported for the given plot type."""
+        return plot_type in ["smile", "surface"]
 
     def is_animation_active(self) -> bool:
-        return False
+        """Check if an animation is currently active."""
+        return self._animation is not None
+
+    def stop_animation(self) -> None:
+        """Stop any currently running animation."""
+        if self._animation is not None:
+            try:
+                self._animation.event_source.stop()
+                self._animation = None
+                self._animation_paused = False
+            except Exception as e:
+                print(f"Warning: Error stopping animation: {e}")
+                self._animation = None
+                self._animation_paused = False
+
+    def start_animation(self) -> None:
+        """Start or resume animation."""
+        if self._animation is not None:
+            if self._animation_paused:
+                try:
+                    self._animation.resume()
+                    self._animation_paused = False
+                except Exception as e:
+                    print(f"Warning: Error resuming animation: {e}")
+
+    def pause_animation(self) -> None:
+        """Pause animation."""
+        if self._animation is not None and not self._animation_paused:
+            try:
+                self._animation.pause()
+                self._animation_paused = True
+            except Exception as e:
+                print(f"Warning: Error pausing animation: {e}")
+
+    def set_animation_speed(self, speed_ms: int) -> None:
+        """Set animation speed in milliseconds between frames."""
+        self._animation_speed = max(50, min(2000, speed_ms))  # Clamp between 50ms and 2000ms
+        if self._animation is not None:
+            try:
+                self._animation.event_source.interval = self._animation_speed
+            except Exception as e:
+                print(f"Warning: Error setting animation speed: {e}")
 
     def _create_animated_smile(self, ax: plt.Axes, settings: dict) -> bool:
         target = settings["target"]

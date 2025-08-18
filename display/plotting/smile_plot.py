@@ -13,7 +13,7 @@ from .confidence_bands import (
     synthetic_etf_confidence_bands,
     Bands,
 )
-from display.plotting.anim_utils import add_keyboard_toggles, add_legend_toggles
+from display.plotting.anim_utils import  add_legend_toggles
 
 ModelName = Literal["svi", "sabr"]
 
@@ -137,11 +137,6 @@ def fit_and_plot_smile(
     # ---- legend-first toggle system (primary), keyboard helpers
     if enable_svi_toggles and model == "svi" and series_map and ax.figure is not None:
         add_legend_toggles(ax, series_map)  # your improved legend system
-        add_keyboard_toggles(ax.figure, series_map, keymap={
-            "o": "Observed Points",
-            "f": "SVI Fit",
-            "c": "SVI Confidence Interval",
-        })
         # checkboxes are optional; keep off unless explicitly asked
         if use_checkboxes:
             from display.plotting.anim_utils import add_checkboxes

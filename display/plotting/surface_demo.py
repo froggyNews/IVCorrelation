@@ -1,10 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from src.viz.anim_utils import (
+from display.plotting.anim_utils import (
     animate_surface_timesweep,
     add_checkboxes,
-    add_keyboard_toggles,
     add_legend_toggles,
 )
 
@@ -20,7 +19,6 @@ def main():
     fig, ani, series_map = animate_surface_timesweep(k, tau, iv_tktau, dates)
 
     add_checkboxes(fig, series_map)
-    add_keyboard_toggles(fig, series_map, keymap={"u": "Surface"})
     ax = fig.axes[0]
     add_legend_toggles(ax, series_map)
 
