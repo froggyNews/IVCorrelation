@@ -327,34 +327,42 @@ class PlotManager:
         except Exception:
             pass
 
-        # Use unified weight computation system
+        # Try using cached correlation matrix if weight mode hasn't changed
+        if (
+            isinstance(self.last_corr_df, pd.DataFrame)
+            and not self.last_corr_df.empty
+            and self.last_corr_meta.get("weight_mode") == weight_mode
+        ):
+            try:
+                w = corr_weights(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
+                if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
+                    return (w / w.sum()).reindex(peers).fillna(0.0).astype(float)
+            except Exception:
+                pass
+
+        # Delegate to pipeline weight computation
         try:
             from analysis.unified_weights import compute_unified_weights
 
             w = compute_unified_weights(
+
                 target=target,
                 peers=peers,
-                mode=weight_mode,
-                power=settings.get('weight_power', 1.0),
-                clip_negative=settings.get('clip_negative', True),
-                pillars_days=pillars or [7, 30, 60, 90, 180, 365],
+                weight_mode=weight_mode,
                 asof=asof,
+                pillar_days=pillars or [7, 30, 60, 90, 180, 365],
             )
 
             if w is not None and not w.empty:
-                # Apply importance-based filtering (based on weight values, not correlations)
                 finite_weights = w.dropna()
                 if not finite_weights.empty:
-                    # Only keep weights above a minimum threshold for importance
-                    min_importance = 0.01  # 1% minimum weight to be considered important
+                    min_importance = 0.01
                     important_weights = finite_weights[finite_weights >= min_importance]
 
                     if not important_weights.empty:
-                        # Renormalize important weights
                         normalized = important_weights / important_weights.sum()
                         return normalized.reindex(peers).fillna(0.0).astype(float)
                     else:
-                        # All weights too small, use equal weighting
                         equal_weight = 1.0 / max(len(peers), 1)
                         return pd.Series(equal_weight, index=peers, dtype=float)
 
@@ -979,7 +987,7 @@ class PlotManager:
     
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if a plot type supports animation."""
-        # Support animation for smile plots and synthetic surfaces
+
         return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
     
     def is_animation_active(self) -> bool:
