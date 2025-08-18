@@ -289,3 +289,39 @@ def corr_weights(
     if not np.isfinite(total) or total <= 0:
         return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
     return (s / total).fillna(0.0)
+
+
+def shift_target(
+    target: str,
+    tickers: Iterable[str],
+    shift: int = 1,
+) -> tuple[str, list[str]]:
+    """Rotate the ticker universe so a different ticker becomes the target.
+
+    Parameters
+    ----------
+    target : str
+        Currently selected target ticker.
+    tickers : Iterable[str]
+        Universe of tickers containing ``target``.
+    shift : int, default 1
+        Number of positions to rotate forward (negative values rotate
+        backward).
+
+    Returns
+    -------
+    tuple[str, list[str]]
+        A tuple of ``(new_target, peers)`` where ``peers`` are the remaining
+        tickers excluding ``new_target`` while preserving their original
+        order.
+    """
+
+    t_list = [t.upper() for t in tickers]
+    if target.upper() not in t_list:
+        raise ValueError("target must be present in tickers")
+
+    idx = t_list.index(target.upper())
+    new_idx = (idx + int(shift)) % len(t_list)
+    new_target = t_list[new_idx]
+    peers = [t for i, t in enumerate(t_list) if i != new_idx]
+    return new_target, peers
