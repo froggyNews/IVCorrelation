@@ -240,20 +240,24 @@ def plot_correlation_details(
         )
 
     im = ax.imshow(data, vmin=-1.0, vmax=1.0, cmap="coolwarm", interpolation="nearest")
-    
-    # Remove any existing colorbar to prevent accumulation
+
+    if not hasattr(ax.figure, '_orig_position'):
+        ax.figure._orig_position = ax.get_position().bounds
+        sp = ax.figure.subplotpars
+        ax.figure._orig_subplotpars = (sp.left, sp.right, sp.bottom, sp.top)
+
+    # Add or update correlation-specific colorbar
     if hasattr(ax.figure, '_correlation_colorbar'):
         try:
-            ax.figure._correlation_colorbar.remove()
-        except:
+            ax.figure._correlation_colorbar.update_normal(im)
+        except Exception:
             pass
-    
-    # Add correlation-specific colorbar only for correlation matrices
-    try:
-        cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        ax.figure._correlation_colorbar = cbar
-    except Exception:
-        pass
+    else:
+        try:
+            cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            ax.figure._correlation_colorbar = cbar
+        except Exception:
+            pass
 
     ax.set_xticks(range(len(corr_df.columns)))
     ax.set_yticks(range(len(corr_df.index)))

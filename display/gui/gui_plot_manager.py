@@ -100,7 +100,12 @@ class PlotManager:
             if hasattr(ax.figure, '_correlation_colorbar'):
                 ax.figure._correlation_colorbar.remove()
                 delattr(ax.figure, '_correlation_colorbar')
-        except:
+                if hasattr(ax.figure, '_orig_position'):
+                    ax.set_position(ax.figure._orig_position)
+                if hasattr(ax.figure, '_orig_subplotpars'):
+                    l, r, b, t = ax.figure._orig_subplotpars
+                    ax.figure.subplots_adjust(left=l, right=r, bottom=b, top=t)
+        except Exception:
             pass
 
     # ---- main entry ----
