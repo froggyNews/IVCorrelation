@@ -1,6 +1,10 @@
 from __future__ import annotations
+
 import sqlite3
 from typing import Iterable, Optional
+
+import pandas as pd
+
 from .db_schema import init_db
 
 DB_PATH = __file__.replace("db_utils.py", "iv_data.db")
@@ -121,3 +125,83 @@ def fetch_quotes(
     
     sql += " ORDER BY ticker, asof_date, expiry, strike, call_put"
     return conn.execute(sql, params).fetchall()
+
+
+def fetch_vol_shifts(
+    conn: sqlite3.Connection,
+    tickers: Optional[Iterable[str]] = None,
+    threshold: float = 0.0,
+):
+    """Return implied volatility changes between the two most recent dates.
+
+    Parameters
+    ----------
+    conn : sqlite3.Connection
+        Database connection.
+    tickers : Optional[Iterable[str]]
+        Specific tickers to examine. If ``None`` all distinct tickers in the
+        database are considered.
+    threshold : float
+        Minimum absolute change in implied volatility required for a row to be
+        included in the result.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns
+        ``[ticker, asof_date_new, asof_date_old, expiry, strike, call_put,
+        iv_new, iv_old, iv_shift]``. The DataFrame will be empty if fewer than
+        two distinct dates exist for a ticker or if no shifts exceed the
+        threshold.
+    """
+
+    if tickers is None:
+        tickers = [row[0] for row in conn.execute("SELECT DISTINCT ticker FROM options_quotes")]  # type: ignore[assignment]
+
+    results: list[pd.DataFrame] = []
+    for t in tickers:
+        rows = conn.execute(
+            "SELECT DISTINCT asof_date FROM options_quotes WHERE ticker = ? ORDER BY asof_date DESC LIMIT 2",
+            (t,),
+        ).fetchall()
+        if len(rows) < 2:
+            continue
+
+        date_new, date_old = rows[0][0], rows[1][0]
+        df_new = pd.read_sql_query(
+            "SELECT expiry, strike, call_put, iv FROM options_quotes WHERE ticker = ? AND asof_date = ?",
+            conn,
+            params=(t, date_new),
+        )
+        df_old = pd.read_sql_query(
+            "SELECT expiry, strike, call_put, iv FROM options_quotes WHERE ticker = ? AND asof_date = ?",
+            conn,
+            params=(t, date_old),
+        )
+        merged = df_new.merge(df_old, on=["expiry", "strike", "call_put"], suffixes=("_new", "_old"))
+        if merged.empty:
+            continue
+        merged["iv_shift"] = merged["iv_new"] - merged["iv_old"]
+        shifted = merged.loc[merged["iv_shift"].abs() > threshold].copy()
+        if shifted.empty:
+            continue
+        shifted.insert(0, "ticker", t)
+        shifted.insert(1, "asof_date_new", date_new)
+        shifted.insert(2, "asof_date_old", date_old)
+        results.append(shifted)
+
+    if results:
+        return pd.concat(results, ignore_index=True)
+    return pd.DataFrame(
+        columns=[
+            "ticker",
+            "asof_date_new",
+            "asof_date_old",
+            "expiry",
+            "strike",
+            "call_put",
+            "iv_new",
+            "iv_old",
+            "iv_shift",
+        ]
+    )
