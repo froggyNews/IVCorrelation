@@ -25,7 +25,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-
+import os
 from data.historical_saver import save_for_tickers
 from data.db_utils import get_conn
 from data.interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
@@ -583,16 +583,38 @@ def latest_relative_snapshot_corrweighted(
     tolerance_days: float = 7.0,
     **kwargs,
 ) -> tuple[pd.DataFrame, pd.Series]:
-    """Convenience: last date per pillar with RV metrics and the weights used."""
+    """
+    Convenience: last date per pillar with RV metrics and the weights used.
+    """
     rv, w = relative_value_atm_report_corrweighted(
         target=target, peers=peers, mode=mode, pillar_days=pillar_days,
         lookback=lookback, tolerance_days=tolerance_days, **kwargs
     )
+    # If nothing came back, just return early
     if rv.empty:
         return rv, w
-    last = rv.sort_values("asof_date").groupby("pillar_days").tail(1)
-    cols = ["asof_date", "pillar_days", "iv_target", "iv_synth", "spread", "z", "pct_rank"]
-    return last[cols].sort_values("pillar_days"), w
+
+    # Ensure required columns exist even if upstream fallback omitted them
+    # - pillar_days: create a placeholder if missing (single bucket)
+    # - asof_date: ensure it exists and is sortable
+    if "pillar_days" not in rv.columns:
+        # treat whole snapshot as a single synthetic pillar bucket (e.g., 0)
+        rv = rv.copy()
+        rv["pillar_days"] = 0
+    if "asof_date" not in rv.columns:
+        # cannot manufacture real dates; create a constant so sort/group don't explode
+        rv = rv.copy()
+        rv["asof_date"] = pd.Timestamp("1970-01-01")
+
+    # Keep only columns we know how to present; tolerate missing metric columns
+    base_cols = ["asof_date", "pillar_days", "iv_target", "iv_synth", "spread", "z", "pct_rank"]
+    present_cols = [c for c in base_cols if c in rv.columns]
+
+    # Group safely by pillar and take the latest per pillar
+    last = rv.sort_values("asof_date").groupby("pillar_days", dropna=False).tail(1)
+    # Guarantee pillar_days in the projected set
+    proj_cols = sorted(set(["pillar_days", "asof_date"] + present_cols))
+    return last[proj_cols].sort_values("pillar_days"), w
 
 # -----------------------------------------------------------------------------
 # Basic DB helpers + caches
