@@ -284,6 +284,48 @@ class PlotManager:
 
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
+        settings = getattr(self, 'last_settings', {})
+
+        # First, try using a cached correlation matrix if weight_mode matches
+        if (
+            isinstance(getattr(self, 'last_corr_df', None), pd.DataFrame)
+            and not getattr(self, 'last_corr_df').empty
+            and self.last_corr_meta.get("weight_mode") == weight_mode
+        ):
+            try:
+                w = corr_weights(
+                    self.last_corr_df,
+                    target,
+                    peers,
+                    clip_negative=settings.get('clip_negative', True),
+                    power=settings.get('weight_power', 1.0),
+                )
+                if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
+                    w = w.dropna().astype(float)
+                    w = w[w.index.isin(peers)]
+                    if not w.empty and np.isfinite(w.sum()):
+                        return (w / w.sum()).astype(float)
+            except Exception:
+                pass
+
+        # Attempt legacy peer-weight computation
+        try:
+            from analysis.analysis_pipeline import compute_peer_weights
+
+            w = compute_peer_weights(
+                target=target,
+                peers=peers,
+                weight_mode=weight_mode,
+                asof=asof,
+                pillar_days=pillars or [7, 30, 60, 90, 180, 365],
+            )
+            if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
+                w = w.dropna().astype(float)
+                w = w[w.index.isin(peers)]
+                if not w.empty and np.isfinite(w.sum()):
+                    return (w / w.sum()).astype(float)
+        except Exception:
+            pass
 
         # Try using cached correlation matrix if weight mode hasn't changed
         if (
@@ -300,9 +342,10 @@ class PlotManager:
 
         # Delegate to pipeline weight computation
         try:
-            from analysis.analysis_pipeline import compute_peer_weights
+            from analysis.unified_weights import compute_unified_weights
 
-            w = compute_peer_weights(
+            w = compute_unified_weights(
+
                 target=target,
                 peers=peers,
                 weight_mode=weight_mode,
@@ -333,7 +376,9 @@ class PlotManager:
         """Legacy weight computation methods as fallback."""
         import numpy as np
         import pandas as pd
-        
+
+        settings = getattr(self, 'last_settings', {})
+
         # 1) Use cached correlation matrix if available and weight_mode matches
         if (
             isinstance(self.last_corr_df, pd.DataFrame)
@@ -341,7 +386,13 @@ class PlotManager:
             and self.last_corr_meta.get("weight_mode") == weight_mode
         ):
             try:
-                w = corr_weights(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
+                w = corr_weights(
+                    self.last_corr_df,
+                    target,
+                    peers,
+                    clip_negative=settings.get('clip_negative', True),
+                    power=settings.get('weight_power', 1.0),
+                )
                 if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
                     w = w.dropna().astype(float)
                     w = w[w.index.isin(peers)]
@@ -809,6 +860,10 @@ class PlotManager:
             ax.set_title("No tickers")
             return
 
+        settings = getattr(self, "last_settings", {})
+        weight_power = settings.get("weight_power", 1.0)
+        clip_negative = settings.get("clip_negative", True)
+
         try:
             # Use new expiry-rank correlation logic without pillar detection
             atm_df, corr_df, weights = compute_and_plot_correlation(
@@ -823,6 +878,8 @@ class PlotManager:
                 corr_method=corr_method,
                 demean_rows=demean_rows,
                 show_values=True,
+                clip_negative=clip_negative,
+                power=weight_power,
                 target=target,
                 peers=peers,
                 auto_detect_pillars=False,  # Disable pillar auto-detection as requested
@@ -845,6 +902,8 @@ class PlotManager:
                 corr_method=corr_method,
                 demean_rows=demean_rows,
                 show_values=True,
+                clip_negative=clip_negative,
+                power=weight_power,
                 auto_detect_pillars=False,  # Disable pillar auto-detection
                 max_expiries=self._current_max_expiries or 6,
                 weight_mode=weight_mode,  # Pass weight_mode argument
@@ -860,6 +919,8 @@ class PlotManager:
             "corr_method": corr_method,
             "demean_rows": bool(demean_rows),
             "weight_mode": weight_mode,
+            "weight_power": weight_power,
+            "clip_negative": clip_negative,
         }
 
     def _corr_weighted_synth_atm_curve(
