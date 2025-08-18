@@ -127,6 +127,9 @@ class PlotManager:
         # remember current plot type for the click handler
         self._current_plot_type = plot_type
         self._current_max_expiries = max_expiries
+        
+        # Store settings for weight computation
+        self.last_settings = settings
 
         # create a bounded get_smile_slice function with current max_expiries
         def bounded_get_smile_slice(ticker, asof_date=None, T_target_years=None, call_put=None, nearest_by="T"):
@@ -271,8 +274,8 @@ class PlotManager:
 
     def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
         """
-        Compute weights using the selected mode (including PCA).
-        Priority: PCA modes > cached correlation matrix > legacy correlation methods
+        Compute weights using the selected mode with unified weight system.
+        Much more lax with weight modes - determines importance based on weight values.
         """
         import numpy as np
         import pandas as pd
@@ -280,48 +283,53 @@ class PlotManager:
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
 
-        # 0) PCA modes: compute directly and return
-        if isinstance(weight_mode, str) and weight_mode.startswith("pca"):
-            try:
-                # Use cached ATM matrix if available and from a correlation matrix plot
-                if (hasattr(self, 'last_atm_df') and 
-                    isinstance(self.last_atm_df, pd.DataFrame) and 
-                    not self.last_atm_df.empty and
-                    weight_mode.startswith("pca_atm")):
-                    w = pca_weights_from_atm_matrix(self.last_atm_df, target, peers)
-                else:
-                    # Fallback to computing fresh ATM matrix
-                    w = pca_weights(
-                        get_smile_slice=self.get_smile_slice,
-                        mode=weight_mode,
-                        target=target,
-                        peers=peers,
-                        asof=asof,
-                        pillars_days=pillars or [7,30,60,90,180,365],
-                        # you can pass tenors/mny_bins if you've customized them
-                        k=None, nonneg=True, standardize=True,
-                    )
-                if not w.empty and np.isfinite(w.to_numpy(float)).any():
-                    return (w / w.sum()).astype(float)
-            except Exception as e:
-                print(f"PCA weights failed: {e}")
-                pass  # fall through to corr/legacy
-
-        # 0b) surface_grid mode: return the full grid of betas (dict of Series)
-        if weight_mode == "surface_grid":
-            try:
-                from analysis.analysis_pipeline import compute_peer_weights
-                grid_betas = compute_peer_weights(
-                    target=target,
-                    peers=peers,
-                    weight_mode="surface_grid",
-                )
-                return grid_betas  # dict: key=grid cell, value=Series of betas
-            except Exception as e:
-                print(f"surface_grid weights failed: {e}")
-                return None
-
-        # 1) Use cached Corr Matrix from the Corr Matrix plot (only if weight_mode unchanged)
+        # Use unified weight computation system
+        try:
+            from analysis.unified_weights import compute_unified_weights, WeightConfig
+            
+            # Create weight config with GUI settings (if available)
+            settings = getattr(self, 'last_settings', {})
+            
+            # Use the unified weight computation system
+            w = compute_unified_weights(
+                target=target,
+                peers=peers,
+                mode=weight_mode,
+                power=settings.get('weight_power', 1.0),
+                clip_negative=settings.get('clip_negative', True),
+                pillars_days=pillars or [7, 30, 60, 90, 180, 365],
+                asof=asof,
+            )
+            
+            if w is not None and not w.empty:
+                # Apply importance-based filtering (based on weight values, not correlations)
+                finite_weights = w.dropna()
+                if not finite_weights.empty:
+                    # Only keep weights above a minimum threshold for importance
+                    min_importance = 0.01  # 1% minimum weight to be considered important
+                    important_weights = finite_weights[finite_weights >= min_importance]
+                    
+                    if not important_weights.empty:
+                        # Renormalize important weights
+                        normalized = important_weights / important_weights.sum()
+                        return normalized.reindex(peers).fillna(0.0).astype(float)
+                    else:
+                        # All weights too small, use equal weighting
+                        equal_weight = 1.0 / max(len(peers), 1)
+                        return pd.Series(equal_weight, index=peers, dtype=float)
+                        
+        except Exception as e:
+            print(f"Unified weight computation failed: {e}")
+            
+        # Fallback to legacy methods for backward compatibility
+        return self._weights_from_legacy_methods(target, peers, weight_mode, asof, pillars)
+    
+    def _weights_from_legacy_methods(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
+        """Legacy weight computation methods as fallback."""
+        import numpy as np
+        import pandas as pd
+        
+        # 1) Use cached correlation matrix if available and weight_mode matches
         if (
             isinstance(self.last_corr_df, pd.DataFrame)
             and not self.last_corr_df.empty
@@ -330,7 +338,6 @@ class PlotManager:
             try:
                 w = corr_weights(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
                 if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
-                    # Normalize and keep only peers that had a column in the matrix
                     w = w.dropna().astype(float)
                     w = w[w.index.isin(peers)]
                     if not w.empty and np.isfinite(w.sum()):
@@ -338,7 +345,7 @@ class PlotManager:
             except Exception:
                 pass
 
-        # 2) Fallback: compute weights directly using the requested mode
+        # 2) Fallback to compute_peer_weights
         try:
             from analysis.analysis_pipeline import compute_peer_weights
 
@@ -355,8 +362,12 @@ class PlotManager:
                 if not w.empty and np.isfinite(w.sum()):
                     return (w / w.sum()).astype(float)
         except Exception as e:
-            print(f"compute_peer_weights failed: {e}")
-            return None
+            print(f"Legacy weight computation failed: {e}")
+            
+        # 3) Final fallback: equal weights
+        print(f"Using equal weights fallback for {target} vs {peers}")
+        equal_weight = 1.0 / max(len(peers), 1)
+        return pd.Series(equal_weight, index=peers, dtype=float)
 
     def _plot_smile(self, ax, df, target, asof, model, T_days, ci,
                     overlay_synth, peers, weight_mode):
