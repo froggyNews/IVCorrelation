@@ -2,7 +2,8 @@
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
-from typing import Callable, List
+from typing import Callable, List, Any, Dict
+from dataclasses import dataclass, field
 import sys
 from pathlib import Path
 
@@ -10,6 +11,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+@dataclass
+class InputManager:
+    """Lightweight store for GUI settings.
+
+    The GUI updates this manager whenever a control changes so that callers
+    can grab a coherent snapshot of the current configuration without polling
+    each widget individually. This reduces the delay between editing a field
+    and using the new values for plotting or data ingestion."""
+
+    settings: Dict[str, Any] = field(default_factory=dict)
+
+    def update(self, **kwargs: Any) -> None:
+        """Merge provided key/value pairs into the settings store."""
+        self.settings.update(kwargs)
+
+    def as_dict(self) -> Dict[str, Any]:
+        """Return a shallow copy of all current settings."""
+        return dict(self.settings)
 
 from data.ticker_groups import (
     save_ticker_group, load_ticker_group, list_ticker_groups,
@@ -21,7 +41,6 @@ from data.interest_rates import (
     get_interest_rate_names, create_default_interest_rates, STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 )
 from data.db_utils import get_conn, ensure_initialized
-from display.gui.input_manager import InputManager
 
 
 DEFAULT_MODEL = "svi"
