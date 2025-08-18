@@ -634,11 +634,15 @@ def save_correlations(
         for pillar, ser in res.items():
             filename = f"betas_{mode}_{int(pillar)}d_vs_{benchmark}.parquet"
             p = os.path.join(base_path, filename)
-            ser.sort_index().to_frame(name="beta").to_parquet(p)
+            # Convert Series to DataFrame for parquet compatibility
+            df = ser.sort_index().to_frame(name="beta").reset_index().rename(columns={"index": "ticker"})
+            df.to_parquet(p, index=False)
             paths.append(p)
     else:
         filename = f"betas_{mode}_vs_{benchmark}.parquet"
         p = os.path.join(base_path, filename)
-        res.sort_index().to_frame(name="beta").to_parquet(p)
+        # Convert Series to DataFrame for parquet compatibility
+        df = res.sort_index().to_frame(name="beta").reset_index().rename(columns={"index": "ticker"})
+        df.to_parquet(p, index=False)
         paths.append(p)
     return paths

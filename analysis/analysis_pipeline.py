@@ -494,12 +494,13 @@ def save_betas(
             mode=mode, benchmark=benchmark,
             tenor_days=cfg.tenors, mny_bins=cfg.mny_bins
         )
-        filename = base / f"betas_{mode}_vs_{benchmark}.parquet"
-        res.sort_index().to_frame(name="beta").to_parquet(filename)
-        return [str(filename)]
-    return save_correlations(mode=mode, benchmark=benchmark, base_path=str(base))
-
-# -----------------------------------------------------------------------------
+        filename = f"betas_{mode}_vs_{benchmark}.parquet"
+        p = os.path.join(base_path, filename)
+        df = res.sort_index().to_frame(name="beta").reset_index().rename(columns={"index": "ticker"})
+        df.to_parquet(p, index=False)
+        return [p]
+    return save_correlations(mode=mode, benchmark=benchmark, base_path=base_path)
+# =========================
 # Relative value (target vs synthetic peers by corr)
 # -----------------------------------------------------------------------------
 def _fetch_target_atm(
