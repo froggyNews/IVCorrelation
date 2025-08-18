@@ -816,42 +816,25 @@ def save_correlations(
     mode: str,
     benchmark: str,
     base_path: str = "data",
-    use_parquet: bool = True,
     **kwargs,
 ) -> list[str]:
-    """Persist beta/correlation metrics to files (Parquet by default, CSV optional).
-    
-    Parameters
-    ----------
-    use_parquet : bool, default True
-        If True, save as Parquet files for better performance and compression.
-        If False, save as CSV files for compatibility.
-    """
+    """Persist beta/correlation metrics to Parquet files."""
     res = build_vol_betas(mode=mode, benchmark=benchmark, **kwargs)
     os.makedirs(base_path, exist_ok=True)
     paths: list[str] = []
-    
-    file_ext = "parquet" if use_parquet else "csv"
-
     if isinstance(res, dict):
         for pillar, ser in res.items():
-            filename = f"betas_{mode}_{int(pillar)}d_vs_{benchmark}.{file_ext}"
+            filename = f"betas_{mode}_{int(pillar)}d_vs_{benchmark}.parquet"
             p = os.path.join(base_path, filename)
-            if use_parquet:
-                # Convert Series to DataFrame for parquet compatibility
-                df = ser.sort_index().to_frame(name="beta")
-                df.to_parquet(p)
-            else:
-                ser.sort_index().to_csv(p, header=True)
+            # Convert Series to DataFrame for parquet compatibility
+            df = ser.sort_index().to_frame(name="beta")
+            df.to_parquet(p)
             paths.append(p)
     else:
-        filename = f"betas_{mode}_vs_{benchmark}.{file_ext}"
+        filename = f"betas_{mode}_vs_{benchmark}.parquet"
         p = os.path.join(base_path, filename)
-        if use_parquet:
-            # Convert Series to DataFrame for parquet compatibility
-            df = res.sort_index().to_frame(name="beta")
-            df.to_parquet(p)
-        else:
-            res.sort_index().to_csv(p, header=True)
+        # Convert Series to DataFrame for parquet compatibility
+        df = res.sort_index().to_frame(name="beta")
+        df.to_parquet(p)
         paths.append(p)
     return paths

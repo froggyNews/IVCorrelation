@@ -450,26 +450,20 @@ def save_betas(
     benchmark: str,
     base_path: str = "data",
     cfg: PipelineConfig = PipelineConfig(),
-    use_parquet: bool = True,
 ) -> list[str]:
-    """Persist betas to files (Parquet by default for better performance)."""
+    """Persist betas to Parquet files."""
     if mode == "surface":
         # plumb through config to keep in sync with GUI filters
         res = build_vol_betas(
             mode=mode, benchmark=benchmark,
             tenor_days=cfg.tenors, mny_bins=cfg.mny_bins
         )
-        file_ext = "parquet" if use_parquet else "csv"
-        filename = f"betas_{mode}_vs_{benchmark}.{file_ext}"
+        filename = f"betas_{mode}_vs_{benchmark}.parquet"
         p = os.path.join(base_path, filename)
-        
-        if use_parquet:
-            df = res.sort_index().to_frame(name="beta")
-            df.to_parquet(p)
-        else:
-            res.sort_index().to_csv(p, header=True)
+        df = res.sort_index().to_frame(name="beta")
+        df.to_parquet(p)
         return [p]
-    return save_correlations(mode=mode, benchmark=benchmark, base_path=base_path, use_parquet=use_parquet)
+    return save_correlations(mode=mode, benchmark=benchmark, base_path=base_path)
 # =========================
 # Relative value (target vs synthetic peers by corr)
 # =========================
@@ -1041,10 +1035,6 @@ if __name__ == "__main__":
     try:
         paths = save_betas(mode="iv_atm", benchmark="SPY", base_path="data", cfg=cfg)
         print(f"Betas saved to: {[os.path.basename(p) for p in paths]} (Parquet format)")
-        
-        # Also save in CSV format for compatibility demonstration
-        csv_paths = save_betas(mode="iv_atm", benchmark="SPY", base_path="data", cfg=cfg, use_parquet=False)
-        print(f"CSV format also available: {[os.path.basename(p) for p in csv_paths]}")
     except Exception as e:
         print(f"Beta computation skipped: {e}")
 
@@ -1072,9 +1062,8 @@ if __name__ == "__main__":
     print()
     print("=== Enhanced Caching Features ===")
     print("✓ Parquet format for 35%+ size reduction and better performance")
-    print("✓ Configuration-aware cache validation") 
+    print("✓ Configuration-aware cache validation")
     print("✓ Cache management utilities (get_cache_info, clear_all_caches)")
-    print("✓ Backwards compatibility with CSV format")
     print("✓ Smart invalidation when settings change")
         
     # Optional: Demonstrate fitting and sampling 

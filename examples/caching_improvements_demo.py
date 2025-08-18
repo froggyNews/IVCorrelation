@@ -24,7 +24,6 @@ from analysis.analysis_pipeline import (
     is_cache_valid,
     load_surface_from_cache_if_valid,
     load_surface_from_cache,
-    save_betas,
     clear_all_caches,
     clear_config_dependent_caches,
     cleanup_disk_cache
@@ -98,28 +97,21 @@ def demo_parquet_benefits():
                 name="beta"
             )
             bb.build_vol_betas = lambda **kwargs: sample_betas
-            
+
             try:
-                # Test both formats
+                # Test Parquet output
                 start_time = time.time()
                 parquet_paths = save_correlations(
-                    mode="demo", benchmark="SPY", 
-                    base_path=tmp_dir, use_parquet=True
+                    mode="demo", benchmark="SPY",
+                    base_path=tmp_dir
                 )
                 parquet_time = time.time() - start_time
-                
-                start_time = time.time()
-                csv_paths = save_correlations(
-                    mode="demo", benchmark="SPY",
-                    base_path=tmp_dir, use_parquet=False
-                )
-                csv_time = time.time() - start_time
-                
                 parquet_size = os.path.getsize(parquet_paths[0])
-                csv_size = os.path.getsize(csv_paths[0])
-                
-                print(f"  save_correlations() - Size reduction: {(1 - parquet_size/csv_size)*100:.1f}%")
-                print(f"  save_correlations() - Write time: Parquet {parquet_time*1000:.1f}ms vs CSV {csv_time*1000:.1f}ms")
+
+                print(
+                    f"  save_correlations() - Parquet write time: {parquet_time*1000:.1f}ms, "
+                    f"size: {parquet_size:,} bytes"
+                )
                 
             finally:
                 if original_func:
@@ -501,11 +493,6 @@ def main():
         print("   ✅ Selective cache clearing (all vs config-dependent)")
         print("   ✅ Automatic cleanup of old cache files")
         print("   ✅ Memory usage tracking and optimization")
-        print()
-        print("🔄 BACKWARDS COMPATIBILITY:")
-        print("   ✅ CSV format still available when needed")
-        print("   ✅ Gradual migration path for existing code")
-        print("   ✅ No breaking changes to existing APIs")
         print()
         print("💡 KEY BENEFITS:")
         print("   • Faster application startup with cached data")
