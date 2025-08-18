@@ -45,6 +45,15 @@ def ensure_initialized(conn: sqlite3.Connection) -> None:
     ensure_indexes(conn)
 
 
+def check_db_health(conn: sqlite3.Connection) -> None:
+    """Run a quick integrity check and raise if the database is corrupt."""
+    status = conn.execute("PRAGMA quick_check").fetchone()
+    if not status or status[0] != "ok":
+        raise sqlite3.DatabaseError(
+            f"Database health check failed: {status[0] if status else 'unknown'}"
+        )
+
+
 def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
     rows = []
     for q in quotes:
@@ -79,6 +88,7 @@ def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
             """,
             rows,
         )
+    check_db_health(conn)
     return len(rows)
 
 

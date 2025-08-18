@@ -7,7 +7,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
-from .db_utils import get_conn
+from .db_utils import get_conn, check_db_health
 
 def save_ticker_group(
     group_name: str, 
@@ -45,13 +45,14 @@ def save_ticker_group(
         
         with conn:
             conn.execute("""
-                INSERT OR REPLACE INTO ticker_groups 
+                INSERT OR REPLACE INTO ticker_groups
                 (group_name, target_ticker, peer_tickers, description, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 
+                VALUES (?, ?, ?, ?,
                         COALESCE((SELECT created_at FROM ticker_groups WHERE group_name = ?), ?),
                         ?)
-            """, (group_name, target_ticker, peer_tickers_json, description, 
+            """, (group_name, target_ticker, peer_tickers_json, description,
                   group_name, now, now))
+        check_db_health(conn)
         return True
         
     except Exception as e:
