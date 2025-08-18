@@ -5,6 +5,8 @@ This module provides a single, consistent interface for computing portfolio weig
 across all methods (correlation, PCA, cosine, equal) and all features (ATM, surface, underlying).
 
 Replaces the fragmented weight computation across multiple modules.
+Missing data now raises explicit exceptions instead of silently returning
+equal-weight fallbacks so callers can handle data issues upstream.
 """
 
 from __future__ import annotations
@@ -125,26 +127,25 @@ class UnifiedWeightComputer:
         if asof is None:
             dates = available_dates(ticker=target, most_recent_only=True)
             if not dates:
-                return self._fallback_weights(peers_list)
+                raise ValueError(
+                    f"No available data for target {target}; cannot compute weights"
+                )
             asof = dates[0]
         
         # Build feature matrix
-        try:
-            feature_df = self._build_feature_matrix(
-                target, peers_list, asof, config
+        feature_df = self._build_feature_matrix(
+            target, peers_list, asof, config
+        )
+
+        if feature_df is None or feature_df.empty:
+            raise ValueError(
+                "Feature matrix is empty; cannot compute portfolio weights"
             )
-            
-            if feature_df is None or feature_df.empty:
-                return self._fallback_weights(peers_list)
-            
-            # Compute weights using specified method
-            return self._compute_weights_from_features(
-                feature_df, target, peers_list, config
-            )
-            
-        except Exception as e:
-            print(f"Weight computation failed: {e}")
-            return self._fallback_weights(peers_list)
+
+        # Compute weights using specified method
+        return self._compute_weights_from_features(
+            feature_df, target, peers_list, config
+        )
     
     def _build_feature_matrix(
         self,
@@ -227,6 +228,12 @@ class UnifiedWeightComputer:
         config: WeightConfig,
     ) -> pd.Series:
         """Compute weights from feature matrix using specified method."""
+        if target not in feature_df.index:
+            raise ValueError(f"Target {target} missing from feature matrix")
+
+        if not any(p in feature_df.index for p in peers_list):
+            raise ValueError("No peer data available in feature matrix")
+
         if config.method == WeightMethod.CORRELATION:
             return self._correlation_weights(feature_df, target, peers_list, config)
         elif config.method == WeightMethod.PCA:
@@ -256,14 +263,14 @@ class UnifiedWeightComputer:
         import numpy as np
         
         if target not in feature_df.index:
-            return self._fallback_weights(peers_list)
-        
+            raise ValueError(f"Target {target} missing from feature matrix")
+
         y = _impute_col_median(feature_df.loc[[target]].to_numpy(float)).ravel()
         Xp = feature_df.loc[[p for p in peers_list if p in feature_df.index]].to_numpy(float)
-        
+
         if Xp.size == 0:
-            return self._fallback_weights(peers_list)
-        
+            raise ValueError("No peer data available for PCA weighting")
+
         w = pca_regress_weights(Xp, y, k=None, nonneg=True)
         ser = pd.Series(w, index=[p for p in peers_list if p in feature_df.index])
         ser = ser.clip(lower=0.0)
@@ -276,17 +283,12 @@ class UnifiedWeightComputer:
     ) -> pd.Series:
         """Compute cosine similarity weights."""
         from analysis.beta_builder import cosine_similarity_weights_from_matrix
-        
+
         return cosine_similarity_weights_from_matrix(
             feature_df, target, peers_list,
             clip_negative=config.clip_negative,
             power=config.power
         )
-    
-    def _fallback_weights(self, peers_list: list[str]) -> pd.Series:
-        """Return equal weights as fallback."""
-        weight = 1.0 / max(len(peers_list), 1)
-        return pd.Series(weight, index=peers_list, dtype=float)
 
 
 # Global instance
