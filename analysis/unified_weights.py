@@ -181,17 +181,15 @@ class UnifiedWeightComputer:
     def _build_atm_features(
         self, tickers: list[str], asof: str, config: WeightConfig
     ) -> Optional[pd.DataFrame]:
-        """Build ATM volatility feature matrix."""
-        from analysis.pillars import build_atm_matrix
+        """Build ATM volatility feature matrix using pillar-free approach."""
+        from analysis.correlation_utils import compute_atm_corr_pillar_free
         
-        atm_df, _ = build_atm_matrix(
+        atm_df, _ = compute_atm_corr_pillar_free(
             get_smile_slice=get_smile_slice,
             tickers=tickers,
             asof=asof,
-            pillars_days=config.pillars_days,
+            max_expiries=6,
             atm_band=0.05,
-            tol_days=7.0,
-            min_pillars=2,
         )
         return atm_df
     

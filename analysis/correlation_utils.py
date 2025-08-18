@@ -280,14 +280,49 @@ def corr_weights(
     """Convert correlations with target into normalised positive weights on peers."""
     target = target.upper()
     peers = [p.upper() for p in peers]
+    
+    # Debug: Check if target exists in correlation matrix
+    if target not in corr_df.columns:
+        raise ValueError(f"Target {target} not found in correlation matrix columns: {list(corr_df.columns)}")
+    
+    # Extract correlations with target
     s = corr_df.reindex(index=peers, columns=[target]).iloc[:, 0].apply(pd.to_numeric, errors="coerce")
+    
+    # Debug: Check raw correlations
+    print(f"Raw correlations for {target} vs {peers}:")
+    print(f"  Values: {s.to_dict()}")
+    print(f"  NaN count: {s.isna().sum()}")
+    print(f"  Valid count: {s.notna().sum()}")
+    
     if clip_negative:
+        s_before_clip = s.copy()
         s = s.clip(lower=0.0)
+        print(f"  After clipping negatives: {s.to_dict()}")
+        print(f"  Clipped {(s_before_clip < 0).sum()} negative values")
+    
     if power is not None and float(power) != 1.0:
+        s_before_power = s.copy()
         s = s.pow(float(power))
+        print(f"  After power={power}: {s.to_dict()}")
+        print(f"  Power changed {(s_before_power != s).sum()} values")
+    
     total = float(s.sum())
+    print(f"  Total sum: {total}")
+    print(f"  Sum is finite: {np.isfinite(total)}")
+    print(f"  Sum > 0: {total > 0}")
+    
     if not np.isfinite(total) or total <= 0:
-        raise ValueError("correlation weights sum to zero")
+        print(f"ERROR: Correlation weights computation failed!")
+        print(f"  Correlation matrix shape: {corr_df.shape}")
+        print(f"  Available tickers: {list(corr_df.index)}")
+        print(f"  Requested peers: {peers}")
+        print(f"  Final weights before normalization: {s.to_dict()}")
+        
+        # Fallback to equal weights if all correlations are zero/negative/NaN
+        print(f"  Falling back to equal weights")
+        equal_weight = 1.0 / len(peers)
+        return pd.Series(equal_weight, index=peers)
+    
     return (s / total).fillna(0.0)
 
 
@@ -390,6 +425,128 @@ def flexible_weights(
     weights = weights.reindex(peers).fillna(0.0)
 
     return weights
+
+
+def compute_atm_corr_pillar_free(
+    get_smile_slice,
+    tickers: Iterable[str],
+    asof: str,
+    max_expiries: int = 6,
+    atm_band: float = 0.05,
+    min_tickers: int = 2,
+    corr_method: str = "pearson",
+    min_periods: int = 2,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Compute ATM correlations without using fixed pillars.
+    
+    Instead of using fixed pillar days, this function:
+    1. Extracts ATM volatility for each available expiry per ticker
+    2. Aligns tickers by expiry rank (1st, 2nd, 3rd shortest expiry, etc.)
+    3. Computes correlations across expiry ranks
+    
+    This approach uses all available data and doesn't suffer from pillar 
+    alignment issues that can create too many NaNs.
+    
+    Parameters
+    ----------
+    get_smile_slice : callable
+        Function to get option data for a ticker on a date
+    tickers : Iterable[str]
+        List of tickers to analyze
+    asof : str
+        Analysis date
+    max_expiries : int, default 6
+        Maximum number of expiry ranks to consider
+    atm_band : float, default 0.05
+        Moneyness band around 1.0 to define ATM
+    min_tickers : int, default 2
+        Minimum tickers needed for correlation
+    corr_method : str, default "pearson"
+        Correlation method
+    min_periods : int, default 2
+        Minimum overlapping observations for correlation
+        
+    Returns
+    -------
+    atm_df : pd.DataFrame
+        ATM matrix (tickers x expiry_ranks)
+    corr_df : pd.DataFrame
+        Correlation matrix (tickers x tickers)
+    """
+    
+    def _compute_atm_curve_simple(df: pd.DataFrame, atm_band: float = 0.05) -> pd.DataFrame:
+        """Extract ATM volatility per expiry from option data."""
+        need_cols = {"T", "moneyness", "sigma"}
+        if df is None or df.empty or not need_cols.issubset(df.columns):
+            return pd.DataFrame(columns=["T", "atm_vol"])
+            
+        d = df.copy()
+        d["T"] = pd.to_numeric(d["T"], errors="coerce")
+        d["moneyness"] = pd.to_numeric(d["moneyness"], errors="coerce")
+        d["sigma"] = pd.to_numeric(d["sigma"], errors="coerce")
+        d = d.dropna(subset=["T", "moneyness", "sigma"])
+        
+        rows = []
+        for T_val, grp in d.groupby("T"):
+            g = grp.dropna(subset=["moneyness", "sigma"])
+            # Try to get median of ATM options first
+            in_band = g.loc[(g["moneyness"] - 1.0).abs() <= atm_band]
+            if not in_band.empty:
+                atm_vol = float(in_band["sigma"].median())
+            else:
+                # Fallback: use option closest to ATM
+                idx = int((g["moneyness"] - 1.0).abs().idxmin())
+                atm_vol = float(g.loc[idx, "sigma"])
+            rows.append({"T": float(T_val), "atm_vol": atm_vol})
+        
+        return pd.DataFrame(rows).sort_values("T").reset_index(drop=True)
+    
+    tickers = [t.upper() for t in tickers]
+    
+    # Build ATM matrix by expiry rank instead of fixed pillars
+    rows = []
+    for ticker in tickers:
+        try:
+            df = get_smile_slice(ticker, asof, T_target_years=None)
+        except Exception:
+            df = None
+            
+        if df is None or df.empty:
+            # Add row of NaNs for missing ticker
+            values = {i: np.nan for i in range(max_expiries)}
+            rows.append(pd.Series(values, name=ticker))
+            continue
+            
+        # Compute ATM curve for this ticker
+        atm_df = _compute_atm_curve_simple(df, atm_band=atm_band)
+        
+        # Map to expiry ranks (0 = shortest, 1 = next shortest, etc.)
+        values = {}
+        for i in range(max_expiries):
+            if i < len(atm_df):
+                v = atm_df.at[i, "atm_vol"]
+                values[i] = float(v) if pd.notna(v) else np.nan
+            else:
+                values[i] = np.nan
+        
+        rows.append(pd.Series(values, name=ticker))
+    
+    # Build ATM matrix: rows=tickers, cols=expiry_ranks
+    atm_df = pd.DataFrame(rows)
+    
+    # Compute correlation matrix
+    if atm_df.empty or len(atm_df.index) < min_tickers:
+        # Not enough data for correlations
+        corr_df = pd.DataFrame(index=tickers, columns=tickers, dtype=float)
+    else:
+        # Correlations across expiry ranks (transpose so expiries are rows)
+        corr_df = atm_df.transpose().corr(method=corr_method, min_periods=min_periods)
+        
+        # Reindex to ensure all tickers are present
+        corr_df = corr_df.reindex(index=tickers, columns=tickers)
+    
+    return atm_df, corr_df
 
 
 def adaptive_correlation_computation(

@@ -50,7 +50,7 @@ from .beta_builder import (
     corr_weights_from_matrix,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
-from .correlation_utils import compute_atm_corr, compute_atm_corr_optimized, compute_atm_corr_restricted, corr_weights
+from .correlation_utils import compute_atm_corr, compute_atm_corr_optimized, compute_atm_corr_restricted, compute_atm_corr_pillar_free, corr_weights
 
 
 # =========================
@@ -360,11 +360,12 @@ def _compute_peer_weights_legacy(
             asof = dates[0] if dates else None
         if asof is None:
             return pd.Series(dtype=float)
-        atm_df, corr_df = compute_atm_corr(
+        atm_df, corr_df = compute_atm_corr_pillar_free(
             get_smile_slice=get_smile_slice,
             tickers=[target] + peers,
             asof=asof,
-            pillars_days=pillar_days,
+            max_expiries=6,
+            atm_band=0.05,
         )
         return corr_weights(corr_df, target, peers)
 
