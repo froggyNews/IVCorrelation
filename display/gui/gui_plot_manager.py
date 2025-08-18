@@ -13,7 +13,6 @@ if str(ROOT) not in sys.path:
 from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
 )
-from analysis.correlation_utils import corr_weights
 from analysis.beta_builder import pca_weights, pca_weights_from_atm_matrix
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
@@ -285,6 +284,7 @@ class PlotManager:
 
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
+        settings = getattr(self, 'last_settings', {})
 
         # First attempt: legacy methods (cached corr matrix or compute_peer_weights)
         w = self._weights_from_legacy_methods(target, peers, weight_mode, asof, pillars)
@@ -296,48 +296,21 @@ class PlotManager:
             from analysis.unified_weights import compute_unified_weights
 
             settings = getattr(self, 'last_settings', {})
-            w = compute_unified_weights(
-                target=target,
-                peers=peers,
-                mode=weight_mode,
-                power=settings.get('weight_power', 1.0),
-                clip_negative=settings.get('clip_negative', True),
-                pillars_days=pillars or [7, 30, 60, 90, 180, 365],
-                asof=asof,
-            )
 
-            if w is not None and not w.empty:
-                finite_weights = w.dropna()
-                if not finite_weights.empty:
-                    min_importance = 0.01
-                    important_weights = finite_weights[finite_weights >= min_importance]
-                    if not important_weights.empty:
-                        normalized = important_weights / important_weights.sum()
-                        return normalized.reindex(peers).fillna(0.0).astype(float)
-                    else:
-                        equal_weight = 1.0 / max(len(peers), 1)
-                        return pd.Series(equal_weight, index=peers, dtype=float)
-
-        except Exception as e:
-            print(f"Unified weight computation failed: {e}")
-
-        # Final fallback: equal weights
-        equal_weight = 1.0 / max(len(peers), 1)
-        return pd.Series(equal_weight, index=peers, dtype=float)
-    
-    def _weights_from_legacy_methods(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
-        """Legacy weight computation methods as fallback."""
-        import numpy as np
-        import pandas as pd
-        
-        # 1) Use cached correlation matrix if available and weight_mode matches
+        # First, try using a cached correlation matrix if weight_mode matches
         if (
-            isinstance(self.last_corr_df, pd.DataFrame)
-            and not self.last_corr_df.empty
+            isinstance(getattr(self, 'last_corr_df', None), pd.DataFrame)
+            and not getattr(self, 'last_corr_df').empty
             and self.last_corr_meta.get("weight_mode") == weight_mode
         ):
             try:
-                w = corr_weights(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
+                w = corr_weights(
+                    self.last_corr_df,
+                    target,
+                    peers,
+                    clip_negative=settings.get('clip_negative', True),
+                    power=settings.get('weight_power', 1.0),
+                )
                 if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
                     w = w.dropna().astype(float)
                     w = w[w.index.isin(peers)]
@@ -346,7 +319,7 @@ class PlotManager:
             except Exception:
                 pass
 
-        # 2) Fallback to compute_peer_weights
+        # Attempt legacy peer-weight computation
         try:
             from analysis.analysis_pipeline import compute_peer_weights
 
@@ -362,11 +335,86 @@ class PlotManager:
                 w = w[w.index.isin(peers)]
                 if not w.empty and np.isfinite(w.sum()):
                     return (w / w.sum()).astype(float)
+        except Exception:
+            pass
+
+        # Try using cached correlation matrix if weight mode hasn't changed
+        if (
+            isinstance(self.last_corr_df, pd.DataFrame)
+            and not self.last_corr_df.empty
+            and self.last_corr_meta.get("weight_mode") == weight_mode
+        ):
+            try:
+                w = corr_weights(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
+                if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
+                    return (w / w.sum()).reindex(peers).fillna(0.0).astype(float)
+            except Exception:
+                pass
+
+        # Delegate to pipeline weight computation
+        try:
+            from analysis.unified_weights import compute_unified_weights
+
+            w = compute_unified_weights(
+
+                target=target,
+                peers=peers,
+                weight_mode=weight_mode,
+                asof=asof,
+                pillar_days=pillars or [7, 30, 60, 90, 180, 365],
+            )
+
+            if w is not None and not w.empty:
+                finite_weights = w.dropna()
+                if not finite_weights.empty:
+                    min_importance = 0.01
+                    important_weights = finite_weights[finite_weights >= min_importance]
+
+                    if not important_weights.empty:
+                        normalized = important_weights / important_weights.sum()
+                        return normalized.reindex(peers).fillna(0.0).astype(float)
+                    else:
+                        equal_weight = 1.0 / max(len(peers), 1)
+                        return pd.Series(equal_weight, index=peers, dtype=float)
+
         except Exception as e:
-            print(f"Legacy weight computation failed: {e}")
-            
-        # 3) Final fallback: equal weights
-        print(f"Using equal weights fallback for {target} vs {peers}")
+            print(f"Unified weight computation failed: {e}")
+
+        # Final fallback: equal weights
+        equal_weight = 1.0 / max(len(peers), 1)
+        return pd.Series(equal_weight, index=peers, dtype=float)
+
+    
+    def _weights_from_legacy_methods(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
+        """
+        Retained for backward compatibility. This now simply delegates to the
+        unified ``compute_unified_weights`` function and falls back to equal
+        weighting if the computation fails.
+        """
+        import pandas as pd
+
+
+        target = (target or "").upper()
+        peers = [p.upper() for p in (peers or [])]
+
+        try:
+            from analysis.unified_weights import compute_unified_weights
+
+            w = compute_unified_weights(
+                target=target,
+                peers=peers,
+                mode=weight_mode,
+                pillars_days=pillars or [7, 30, 60, 90, 180, 365],
+                asof=asof,
+            )
+            if w is not None and not w.empty:
+                w = w.dropna().astype(float)
+                if not w.empty and pd.notna(w.sum()) and w.sum() != 0:
+                    return (w / w.sum()).reindex(peers).fillna(0.0).astype(float)
+        except Exception as e:
+            print(f"Unified weight computation failed: {e}")
+
+        # Final fallback: equal weights
         equal_weight = 1.0 / max(len(peers), 1)
         return pd.Series(equal_weight, index=peers, dtype=float)
 
@@ -805,6 +853,10 @@ class PlotManager:
             ax.set_title("No tickers")
             return
 
+        settings = getattr(self, "last_settings", {})
+        weight_power = settings.get("weight_power", 1.0)
+        clip_negative = settings.get("clip_negative", True)
+
         try:
             # Use new expiry-rank correlation logic without pillar detection
             atm_df, corr_df, weights = compute_and_plot_correlation(
@@ -819,6 +871,8 @@ class PlotManager:
                 corr_method=corr_method,
                 demean_rows=demean_rows,
                 show_values=True,
+                clip_negative=clip_negative,
+                power=weight_power,
                 target=target,
                 peers=peers,
                 auto_detect_pillars=False,  # Disable pillar auto-detection as requested
@@ -841,6 +895,8 @@ class PlotManager:
                 corr_method=corr_method,
                 demean_rows=demean_rows,
                 show_values=True,
+                clip_negative=clip_negative,
+                power=weight_power,
                 auto_detect_pillars=False,  # Disable pillar auto-detection
                 max_expiries=self._current_max_expiries or 6,
                 weight_mode=weight_mode,  # Pass weight_mode argument
@@ -856,6 +912,8 @@ class PlotManager:
             "corr_method": corr_method,
             "demean_rows": bool(demean_rows),
             "weight_mode": weight_mode,
+            "weight_power": weight_power,
+            "clip_negative": clip_negative,
         }
 
     def _corr_weighted_synth_atm_curve(
@@ -922,7 +980,7 @@ class PlotManager:
     
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if a plot type supports animation."""
-        # Support animation for smile plots and synthetic surfaces
+
         return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
     
     def is_animation_active(self) -> bool:

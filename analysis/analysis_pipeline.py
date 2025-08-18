@@ -201,13 +201,14 @@ def compute_peer_weights(
     tenor_days: Iterable[int] = DEFAULT_TENORS,
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
 ) -> pd.Series:
+    """Compute portfolio weights.
+
+    For legacy tuple ``weight_mode`` inputs or the special ``"surface_grid"``
+    mode, this function dispatches to the classic helper functions so tests can
+    intercept those calls.  Otherwise it delegates to
+    :func:`analysis.unified_weights.compute_unified_weights`.
     """
-    Compute portfolio weights using unified weight computation system.
-    
-    This function now uses the unified weight computation engine for consistency
-    and better error handling across all weight modes and feature sets.
-    """
-    # Direct dispatch for legacy tuple modes
+
     if isinstance(weight_mode, tuple):
         method, feature = weight_mode
         return build_peer_weights(
@@ -215,32 +216,29 @@ def compute_peer_weights(
             feature,
             target,
             peers,
-            get_smile_slice=get_smile_slice,
             asof=asof,
-            pillars_days=pillar_days,
-            tenors=tenor_days,
-            mny_bins=mny_bins,
-        )
-
-    # Surface grid weights use vol beta builder
-    if weight_mode == "surface_grid":
-        return build_vol_betas(
-            mode=weight_mode,
-            benchmark=target,
             pillar_days=pillar_days,
             tenor_days=tenor_days,
             mny_bins=mny_bins,
         )
 
+    if weight_mode == "surface_grid":
+        return build_vol_betas(
+            mode=weight_mode,
+            benchmark=target,
+            tenor_days=tenor_days,
+            pillar_days=pillar_days,
+            mny_bins=mny_bins,
+        ).iloc[0]
+
+
     try:
         from analysis.unified_weights import compute_unified_weights
-
-        mode_str = weight_mode
 
         return compute_unified_weights(
             target=target,
             peers=peers,
-            mode=mode_str,
+            mode=weight_mode,
             asof=asof,
             pillars_days=pillar_days,
             tenors=tenor_days,
