@@ -38,16 +38,36 @@ def _as_float_index(idx) -> list[float]:
     return out
 
 
-def _extract_latest(artifacts: SyntheticETFArtifacts, target: str) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[str]]:
+def _extract_latest(
+    artifacts: SyntheticETFArtifacts, target: str
+) -> tuple[
+    Optional[pd.DataFrame],
+    Optional[pd.DataFrame],
+    Optional[str],
+    Optional[str],
+]:
+    """Return latest target and synthetic surfaces.
+
+    Attempts to find a common date between target and synthetic surfaces. If none
+    exists, falls back to the most recent date available for each side
+    independently so the viewer can still render something.
+    """
+
     if target not in artifacts.surfaces:
-        return None, None, None
-    target_dates = set(artifacts.surfaces[target].keys())
-    synth_dates = set(artifacts.synthetic_surfaces.keys())
-    common = sorted(target_dates.intersection(synth_dates))
-    if not common:
-        return None, None, None
-    d = common[-1]
-    return artifacts.surfaces[target][d], artifacts.synthetic_surfaces[d], d
+        return None, None, None, None
+
+    target_dates = sorted(artifacts.surfaces[target].keys())
+    synth_dates = sorted(artifacts.synthetic_surfaces.keys())
+    common = sorted(set(target_dates).intersection(synth_dates))
+    if common:
+        d = common[-1]
+        return artifacts.surfaces[target][d], artifacts.synthetic_surfaces[d], d, d
+
+    d_tgt = target_dates[-1] if target_dates else None
+    d_syn = synth_dates[-1] if synth_dates else None
+    tgt_df = artifacts.surfaces[target].get(d_tgt) if d_tgt else None
+    syn_df = artifacts.synthetic_surfaces.get(d_syn) if d_syn else None
+    return tgt_df, syn_df, d_tgt, d_syn
 
 
 def _plot_surface(ax, df: pd.DataFrame, title: str, cmap="viridis"):
@@ -76,17 +96,17 @@ def show_synthetic_etf(
     figsize=(14, 5),
 ):
     target = target or artifacts.meta.get("target")
-    tgt_df, syn_df, date = _extract_latest(artifacts, target)
+    tgt_df, syn_df, tgt_date, syn_date = _extract_latest(artifacts, target)
     if tgt_df is None or syn_df is None:
-        print("No overlapping date between target and synthetic surfaces.")
+        print("Missing surface data to plot synthetic ETF.")
         return
 
     fig, axes = plt.subplots(
         1, 3 if show_diff else 2, figsize=figsize, constrained_layout=True
     )
     ax0, ax1 = axes[0], axes[1]
-    im0 = _plot_surface(ax0, tgt_df, f"{target} Surface ({date})")
-    im1 = _plot_surface(ax1, syn_df, "Synthetic Surface")
+    im0 = _plot_surface(ax0, tgt_df, f"{target} Surface ({tgt_date})")
+    im1 = _plot_surface(ax1, syn_df, f"Synthetic Surface ({syn_date})")
 
     fig.colorbar(im0, ax=ax0, fraction=0.046)
     fig.colorbar(im1, ax=ax1, fraction=0.046)
@@ -112,7 +132,15 @@ def show_synthetic_etf(
         fig.colorbar(im2, ax=ax2, fraction=0.046)
 
     # Add RV metrics table as inset
-    rv_tail = artifacts.rv_metrics.sort_values("asof_date").groupby("pillar_days").tail(1)
+    rv_df = artifacts.rv_metrics
+    if (
+        not rv_df.empty
+        and "asof_date" in rv_df.columns
+        and "pillar_days" in rv_df.columns
+    ):
+        rv_tail = rv_df.sort_values("asof_date").groupby("pillar_days").tail(1)
+    else:
+        rv_tail = pd.DataFrame()
     if not rv_tail.empty:
         cols = ["pillar_days", "iv_target", "iv_synth", "spread", "z", "pct_rank"]
         rv_show = rv_tail[cols].copy()
@@ -126,6 +154,16 @@ def show_synthetic_etf(
             fontsize=8,
             va="bottom",
             ha="left",
+        )
+
+    if tgt_date != syn_date:
+        fig.text(
+            0.5,
+            0.01,
+            f"Note: target asof {tgt_date} vs synthetic {syn_date}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
         )
 
     if save_path:
