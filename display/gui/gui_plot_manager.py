@@ -288,7 +288,7 @@ class PlotManager:
                     isinstance(self.last_atm_df, pd.DataFrame) and 
                     not self.last_atm_df.empty and
                     weight_mode.startswith("pca_atm")):
-                    w = pca_weights_from_atm_matrix(self.last_atm_df, target, peers, verbose=False)
+                    w = pca_weights_from_atm_matrix(self.last_atm_df, target, peers)
                 else:
                     # Fallback to computing fresh ATM matrix
                     w = pca_weights(
@@ -887,7 +887,8 @@ class PlotManager:
     
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if a plot type supports animation."""
-        return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
+        # Smile animations are disabled, only synthetic surface animations are supported
+        return plot_type.startswith("Synthetic Surface")
     
     def is_animation_active(self) -> bool:
         """Check if an animation is currently active."""

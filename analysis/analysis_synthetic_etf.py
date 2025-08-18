@@ -41,9 +41,10 @@ from analysis.analysis_pipeline import (
     relative_value_atm_report_corrweighted,
     available_dates,
     sample_smile_curve,
+    get_smile_slice,
 )
 from analysis.beta_builder import peer_weights_from_correlations
-from analysis.beta_builder import pca_weights_from_atm_matrix
+from analysis.beta_builder import pca_weights, pca_weights_from_atm_matrix
 from analysis.beta_builder import cosine_similarity_weights_from_atm_matrix
 from analysis.analysis_pipeline import ingest_and_process, available_tickers
 from analysis.analysis_pipeline import get_most_recent_date_global
@@ -116,11 +117,19 @@ class SyntheticETFBuilder:
             )
 
         def _pca() -> pd.Series:
-            w = pca_weights_from_atm_matrix(
+            # Get the most recent date for PCA computation
+            dates = available_dates(ticker=self.cfg.target, most_recent_only=True)
+            if not dates:
+                raise ValueError(f"No dates available for target {self.cfg.target}")
+            asof = dates[0]
+            
+            w = pca_weights(
+                get_smile_slice=get_smile_slice,
+                mode="pca_atm_market",  # Use the market-based PCA mode
                 target=self.cfg.target,
                 peers=self.cfg.peers,
-                pillar_days=self.cfg.pillar_days,
-                tolerance_days=self.cfg.tolerance_days,
+                asof=asof,
+                pillars_days=self.cfg.pillar_days,
             )
             if w.empty:
                 raise ValueError("PCA weight computation returned empty series")
@@ -331,7 +340,7 @@ def cosine_weights_from_atm_matrix(
     """
     from data.db_utils import get_conn
     from analysis.pillars import build_atm_matrix
-    from data.data_pipeline import get_smile_slice
+    from analysis.analysis_pipeline import get_smile_slice
     
     # Get latest date for target
     dates = available_dates(ticker=target, most_recent_only=True)
