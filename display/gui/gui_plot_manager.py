@@ -147,6 +147,7 @@ class PlotManager:
         T_days = settings["T_days"]
         ci = settings["ci"]
         x_units = settings["x_units"]
+        atm_band = settings.get("atm_band", DEFAULT_ATM_BAND)
         weight_mode = settings["weight_mode"]
         overlay_synth = settings.get("overlay_synth", False)
         overlay_peers = settings.get("overlay_peers", False)
@@ -263,12 +264,12 @@ class PlotManager:
             if df_all is None or df_all.empty:
                 ax.set_title("No data")
                 return
-            self._plot_term(ax, df_all, target, asof, x_units, ci, overlay_synth, peers, weight_mode)
+            self._plot_term(ax, df_all, target, asof, x_units, ci, overlay_synth, peers, weight_mode, atm_band)
             return
 
         # --- Corr Matrix ---
         elif plot_type.startswith("Corr Matrix"):
-            self._plot_corr_matrix(ax, target, peers, asof, pillars, weight_mode)
+            self._plot_corr_matrix(ax, target, peers, asof, pillars, weight_mode, atm_band)
             return
 
         # --- Synthetic Surface ---
@@ -868,12 +869,13 @@ class PlotManager:
         self._render_smile_at_index()
 
     # -------------------- term structure --------------------
-    def _plot_term(self, ax, df, target, asof, x_units, ci, overlay_synth, peers, weight_mode):
+    def _plot_term(self, ax, df, target, asof, x_units, ci, overlay_synth, peers, weight_mode, atm_band):
         """Plot target ATM term structure; optionally overlay corr-matrix synthetic ATM curve."""
         # Keep GUI responsive; only bootstrap if user asked for CI
         min_boot = 64 if (ci and ci > 0) else 0
         atm_target = compute_atm_by_expiry(
             df,
+            atm_band=atm_band,
             method="fit",
             model="auto",
             vega_weighted=True,
@@ -898,7 +900,7 @@ class PlotManager:
                     target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
                 )
                 synth_curve = self._corr_weighted_synth_atm_curve(
-                    asof=asof, peers=peers, weights=w, atm_band=DEFAULT_ATM_BAND, t_tolerance_days=10.0
+                    asof=asof, peers=peers, weights=w, atm_band=atm_band, t_tolerance_days=10.0
                 )
                 if synth_curve is not None and not synth_curve.empty:
                     # Align expiries approximately to avoid visual mismatch
@@ -964,6 +966,7 @@ class PlotManager:
         asof,
         pillars,
         weight_mode,  # passed through to compute_and_plot_correlation
+        atm_band,
         corr_method: str = "pearson",
         demean_rows: bool = False,
     ):
@@ -983,7 +986,7 @@ class PlotManager:
                 tickers=tickers,
                 asof=asof,
                 pillars_days=pillars,
-                atm_band=DEFAULT_ATM_BAND,
+                atm_band=atm_band,
                 tol_days=7.0,
                 min_pillars=3,
                 corr_method=corr_method,
@@ -1007,7 +1010,7 @@ class PlotManager:
                 tickers=tickers,
                 asof=asof,
                 pillars_days=pillars,
-                atm_band=DEFAULT_ATM_BAND,
+                atm_band=atm_band,
                 tol_days=7.0,
                 min_pillars=3,
                 corr_method=corr_method,
@@ -1040,7 +1043,7 @@ class PlotManager:
         asof: str,
         peers: list[str],
         weights: pd.Series | None,
-        atm_band: float = 0.05,
+        atm_band: float = DEFAULT_ATM_BAND,
         t_tolerance_days: float = 10.0,
     ) -> pd.DataFrame:
         if weights is None or weights.empty:
