@@ -322,6 +322,7 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     # Get available dates and tickers
     conn = get_conn()
 
+
     # Get all unique dates and tickers from the database
     date_query = "SELECT DISTINCT asof_date FROM options_quotes ORDER BY asof_date DESC LIMIT 30"
     date_df = pd.read_sql_query(date_query, conn)
@@ -388,6 +389,7 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
         noise_factor = 1.0 + (pillar - 30) * 0.001  # Small variation by pillar
         pillar_correlations = mean_correlations * noise_factor
         out[int(pillar)] = pillar_correlations.rename(f"iv_atm_beta_{int(pillar)}d")
+
 
     return out
 

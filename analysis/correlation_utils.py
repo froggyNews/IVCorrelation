@@ -317,11 +317,7 @@ def corr_weights(
         print(f"  Available tickers: {list(corr_df.index)}")
         print(f"  Requested peers: {peers}")
         print(f"  Final weights before normalization: {s.to_dict()}")
-        
-        # Fallback to equal weights if all correlations are zero/negative/NaN
-        print(f"  Falling back to equal weights")
-        equal_weight = 1.0 / len(peers)
-        return pd.Series(equal_weight, index=peers)
+        raise ValueError("Correlation weights sum to zero or NaN")
     
     return (s / total).fillna(0.0)
 
