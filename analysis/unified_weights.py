@@ -55,14 +55,6 @@ class WeightConfig:
         mode = mode.lower().strip()
         
         # Handle compound modes like "corr_iv_atm", "pca_surface", etc.
-        if "_" in mode:
-            parts = mode.split("_")
-            method_str = parts[0]
-            feature_str = "_".join(parts[1:])
-        else:
-            method_str = mode
-            feature_str = "atm"  # default
-        
         # Map method strings
         method_map = {
             "corr": WeightMethod.CORRELATION,
@@ -74,7 +66,7 @@ class WeightConfig:
             "open_interest": WeightMethod.OPEN_INTEREST,
             "iv": WeightMethod.CORRELATION,  # Legacy fallback
         }
-        
+
         # Map feature strings
         feature_map = {
             "atm": FeatureSet.ATM,
@@ -89,10 +81,22 @@ class WeightConfig:
             "underlying_vol": FeatureSet.UNDERLYING_VOL,
             "ul_vol": FeatureSet.UNDERLYING_VOL,
         }
-        
+
+        # Allow specifying feature set directly (e.g., "ul", "ul_vol")
+        if mode in feature_map:
+            method_str = "corr"
+            feature_str = mode
+        elif "_" in mode:
+            parts = mode.split("_")
+            method_str = parts[0]
+            feature_str = "_".join(parts[1:])
+        else:
+            method_str = mode
+            feature_str = "atm"  # default
+
         method = method_map.get(method_str, WeightMethod.CORRELATION)
         feature_set = feature_map.get(feature_str, FeatureSet.ATM)
-        
+
         return cls(method=method, feature_set=feature_set, **kwargs)
 
 
