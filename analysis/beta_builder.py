@@ -390,7 +390,12 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
             out[int(pillar)] = pillar_correlations.rename(f"iv_atm_beta_{int(pillar)}d")
             
     finally:
-        conn.close()
+        try:
+            db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+        except Exception:
+            db_path = None
+        if db_path not in (":memory:", "", None):
+            conn.close()
     
     return out
 
