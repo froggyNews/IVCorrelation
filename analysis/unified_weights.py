@@ -25,6 +25,7 @@ class WeightMethod(Enum):
     PCA = "pca"
     COSINE = "cosine"
     EQUAL = "equal"
+    OPEN_INTEREST = "oi"
 
 
 class FeatureSet(Enum):
@@ -69,6 +70,8 @@ class WeightConfig:
             "pca": WeightMethod.PCA,
             "cosine": WeightMethod.COSINE,
             "equal": WeightMethod.EQUAL,
+            "oi": WeightMethod.OPEN_INTEREST,
+            "open_interest": WeightMethod.OPEN_INTEREST,
             "iv": WeightMethod.CORRELATION,  # Legacy fallback
         }
         
@@ -121,6 +124,9 @@ class UnifiedWeightComputer:
         if config.method == WeightMethod.EQUAL:
             weight = 1.0 / len(peers_list)
             return pd.Series(weight, index=peers_list, dtype=float)
+
+        if config.method == WeightMethod.OPEN_INTEREST:
+            return self._open_interest_weights(peers_list, config.asof)
         
         # Get as-of date
         asof = config.asof
@@ -219,6 +225,41 @@ class UnifiedWeightComputer:
         
         subset = vol[[c for c in tickers if c in vol.columns]]
         return subset.T if not subset.empty else None
+
+    def _open_interest_weights(self, peers_list: list[str], asof: Optional[str]) -> pd.Series:
+        """Compute weights proportional to total open interest for each peer."""
+        from data.db_utils import get_conn
+
+        if not peers_list:
+            return pd.Series(dtype=float)
+        conn = get_conn()
+        if asof is None:
+            # Fallback to most recent date available for each ticker
+            # but for simplicity we'll use MAX(asof_date) overall
+            asof_row = conn.execute(
+                "SELECT MAX(asof_date) FROM options_quotes WHERE ticker IN ({})".format(
+                    ",".join("?" * len(peers_list))
+                ),
+                peers_list,
+            ).fetchone()
+            asof = asof_row[0] if asof_row and asof_row[0] else None
+            if asof is None:
+                return self._fallback_weights(peers_list)
+
+        query = (
+            "SELECT ticker, SUM(open_interest) AS oi FROM options_quotes "
+            "WHERE asof_date = ? AND ticker IN ({}) GROUP BY ticker"
+        ).format(",".join("?" * len(peers_list)))
+        df = pd.read_sql_query(query, conn, params=[asof] + peers_list)
+        if df.empty:
+            return self._fallback_weights(peers_list)
+        series = pd.Series(df["oi"].values, index=df["ticker"].str.upper())
+        total = series.sum()
+        if total <= 0:
+            return self._fallback_weights(peers_list)
+        weights = series / total
+        # Ensure all peers present; missing ones get zero weight
+        return weights.reindex([p.upper() for p in peers_list]).fillna(0.0)
     
     def _compute_weights_from_features(
         self,
