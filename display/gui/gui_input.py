@@ -58,6 +58,27 @@ PLOT_TYPES = (
     "ETF Weights",
 )
 
+
+def _derive_feature_scope(plot_type: str, weight_mode: str) -> str:
+    """Infer feature scope from plot and weight mode.
+
+    Returns one of: 'smile', 'term', 'surface'."""
+    if plot_type.startswith("Smile"):
+        return "smile"
+    if plot_type.startswith("Term"):
+        return "term"
+    if plot_type.startswith("Synthetic Surface"):
+        return "surface"
+    if plot_type.startswith("Corr Matrix"):
+        if weight_mode in ("iv_atm", "ul"):
+            # decide later based on pillars count
+            return "term"
+        else:
+            return "surface"
+    if plot_type.startswith("ETF Weights"):
+        return "surface" if weight_mode in ("surface", "surface_grid") else "term"
+    return "term"
+
 class InputPanel(ttk.Frame):
     """
     Encapsulates all GUI inputs and exposes getters/setters + callbacks.
@@ -175,7 +196,7 @@ class InputPanel(ttk.Frame):
         self.cmb_plot = ttk.Combobox(row2, values=PLOT_TYPES, width=21, state="readonly")
         self.cmb_plot.set(PLOT_TYPES[0])
         self.cmb_plot.grid(row=0, column=3, padx=6)
-        self.cmb_plot.bind("<<ComboboxSelected>>", self._sync_settings)
+        self.cmb_plot.bind("<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility()))
 
         ttk.Label(row2, text="Model").grid(row=0, column=4, sticky="w")
         self.cmb_model = ttk.Combobox(row2, values=["svi", "sabr", "tps"], width=8, state="readonly")
@@ -200,12 +221,6 @@ class InputPanel(ttk.Frame):
         self.cmb_xunits.set("years")
         self.cmb_xunits.grid(row=0, column=11, padx=6)
         self.cmb_xunits.bind("<<ComboboxSelected>>", self._sync_settings)
-
-        ttk.Label(row2, text="Mode").grid(row=0, column=12, sticky="w")
-        self.cmb_mode = ttk.Combobox(row2, values=["atm", "term", "surface"], width=10, state="readonly")
-        self.cmb_mode.set("atm")
-        self.cmb_mode.grid(row=0, column=13, padx=6)
-        self.cmb_mode.bind("<<ComboboxSelected>>", self._sync_settings)
         
         row3 = ttk.Frame(self); row3.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
 
@@ -215,13 +230,13 @@ class InputPanel(ttk.Frame):
         ], width=18, state="readonly")
         self.cmb_weight_mode.set("iv_atm")
         self.cmb_weight_mode.grid(row=0, column=3, padx=6)
-        self.cmb_weight_mode.bind("<<ComboboxSelected>>", self._sync_settings)
+        self.cmb_weight_mode.bind("<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility()))
 
         ttk.Label(row3, text="Pillars (days)").grid(row=0, column=0, sticky="w")
         self.ent_pillars = ttk.Entry(row3, width=18)
         self.ent_pillars.insert(0, "7,30,60,90,180,365")
         self.ent_pillars.grid(row=0, column=1, padx=6)
-        self.ent_pillars.bind("<KeyRelease>", self._sync_settings)
+        self.ent_pillars.bind("<KeyRelease>", lambda e: (self._sync_settings(), self._refresh_visibility()))
 
         # Row 4: Weight power and clipping controls
         row4 = ttk.Frame(self); row4.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
@@ -254,6 +269,7 @@ class InputPanel(ttk.Frame):
 
         # initial sync of settings
         self._sync_settings()
+        self._refresh_visibility()
 
 
     # ---------- bindings ----------
@@ -402,30 +418,64 @@ class InputPanel(ttk.Frame):
         self._sync_settings()
         return self.manager.as_dict()
 
+    def export_settings_for_engine(self) -> dict:
+        st = self.get_settings()
+        legacy_mode = {"smile": "atm", "term": "term", "surface": "surface"}[st.get("feature_scope", "term")]
+        st["mode"] = legacy_mode
+        return st
+
     def _sync_settings(self, *_):
         """Synchronize widgets to the central InputManager."""
         try:
+            plot_type = self.get_plot_type()
+            weight_mode = self.get_weight_mode()
+            pillars = self.get_pillars()
+
+            feature_scope = _derive_feature_scope(plot_type, weight_mode)
+            if plot_type.startswith("Corr Matrix") and weight_mode in ("iv_atm", "ul"):
+                feature_scope = "term" if len(pillars) >= 2 else "smile"
+
             self.manager.update(
                 target=self.get_target(),
                 peers=self.get_peers(),
-                plot_type=self.get_plot_type(),
+                plot_type=plot_type,
                 asof=self.get_asof(),
                 model=self.get_model(),
                 T_days=self.get_T_days(),
                 ci=self.get_ci(),
                 x_units=self.get_x_units(),
-                weight_mode=self.get_weight_mode(),
+                weight_mode=weight_mode,
                 weight_power=self.get_weight_power(),
                 clip_negative=self.get_clip_negative(),
                 overlay_synth=self.get_overlay_synth(),
                 overlay_peers=self.get_overlay_peers(),
-                pillars=self.get_pillars(),
+                pillars=pillars,
                 max_expiries=self.get_max_exp(),
-                mode=self.cmb_mode.get() or "atm",
+                feature_scope=feature_scope,
             )
         except Exception:
             # Avoid raising UI errors from sync process
             pass
+
+    def _refresh_visibility(self):
+        wm = self.get_weight_mode()
+        plot = self.get_plot_type()
+
+        show_T = plot.startswith("Smile")
+        show_pillars = plot.startswith("Term") or plot.startswith("Synthetic Surface") or \
+                       (plot.startswith("Corr Matrix") and wm in ("surface", "surface_grid"))
+
+        if plot.startswith("Corr Matrix") and wm in ("iv_atm", "ul"):
+            show_pillars = len(self.get_pillars()) >= 2
+            show_T = not show_pillars
+
+        show_model = (wm == "surface") and (plot.startswith("Smile") or plot.startswith("Synthetic Surface"))
+
+        self.ent_days.configure(state=("normal" if show_T else "disabled"))
+        self.ent_pillars.configure(state=("normal" if show_pillars else "disabled"))
+        self.cmb_model.configure(state=("readonly" if show_model else "disabled"))
+
+        self.cmb_xunits.configure(state=("readonly" if wm in ("surface", "surface_grid") else "disabled"))
     
     # ---------- preset management ----------
     def _init_ticker_groups(self):
