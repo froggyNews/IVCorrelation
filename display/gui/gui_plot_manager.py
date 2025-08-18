@@ -13,7 +13,6 @@ if str(ROOT) not in sys.path:
 from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
 )
-from analysis.correlation_utils import corr_weights
 from analysis.beta_builder import pca_weights, pca_weights_from_atm_matrix
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
@@ -327,47 +326,34 @@ class PlotManager:
         return self._weights_from_legacy_methods(target, peers, weight_mode, asof, pillars)
     
     def _weights_from_legacy_methods(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
-        """Legacy weight computation methods as fallback."""
-        import numpy as np
+        """
+        Retained for backward compatibility. This now simply delegates to the
+        unified ``compute_unified_weights`` function and falls back to equal
+        weighting if the computation fails.
+        """
         import pandas as pd
-        
-        # 1) Use cached correlation matrix if available and weight_mode matches
-        if (
-            isinstance(self.last_corr_df, pd.DataFrame)
-            and not self.last_corr_df.empty
-            and self.last_corr_meta.get("weight_mode") == weight_mode
-        ):
-            try:
-                w = corr_weights(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
-                if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
-                    w = w.dropna().astype(float)
-                    w = w[w.index.isin(peers)]
-                    if not w.empty and np.isfinite(w.sum()):
-                        return (w / w.sum()).astype(float)
-            except Exception:
-                pass
 
-        # 2) Fallback to compute_peer_weights
+        target = (target or "").upper()
+        peers = [p.upper() for p in (peers or [])]
+
         try:
-            from analysis.analysis_pipeline import compute_peer_weights
+            from analysis.unified_weights import compute_unified_weights
 
-            w = compute_peer_weights(
+            w = compute_unified_weights(
                 target=target,
                 peers=peers,
-                weight_mode=weight_mode,
+                mode=weight_mode,
+                pillars_days=pillars or [7, 30, 60, 90, 180, 365],
                 asof=asof,
-                pillar_days=pillars or [7, 30, 60, 90, 180, 365],
             )
-            if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
+            if w is not None and not w.empty:
                 w = w.dropna().astype(float)
-                w = w[w.index.isin(peers)]
-                if not w.empty and np.isfinite(w.sum()):
-                    return (w / w.sum()).astype(float)
+                if not w.empty and pd.notna(w.sum()) and w.sum() != 0:
+                    return (w / w.sum()).reindex(peers).fillna(0.0).astype(float)
         except Exception as e:
-            print(f"Legacy weight computation failed: {e}")
-            
-        # 3) Final fallback: equal weights
-        print(f"Using equal weights fallback for {target} vs {peers}")
+            print(f"Unified weight computation failed: {e}")
+
+        # Final fallback: equal weights
         equal_weight = 1.0 / max(len(peers), 1)
         return pd.Series(equal_weight, index=peers, dtype=float)
 
