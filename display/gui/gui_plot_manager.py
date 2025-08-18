@@ -275,9 +275,10 @@ class PlotManager:
             self.prev_expiry()
 
     def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
-        """
-        Compute weights using the selected mode with unified weight system.
-        Much more lax with weight modes - determines importance based on weight values.
+        """Compute weights using the selected mode.
+
+        Tries the cached correlation matrix first, then falls back to the
+        unified weight system and legacy implementations.
         """
         import numpy as np
         import pandas as pd
@@ -285,14 +286,16 @@ class PlotManager:
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
 
-        # Use unified weight computation system
+        # First attempt: legacy methods (cached corr matrix or compute_peer_weights)
+        w = self._weights_from_legacy_methods(target, peers, weight_mode, asof, pillars)
+        if w is not None and not w.empty:
+            return w
+
+        # Second attempt: unified weight computation system
         try:
-            from analysis.unified_weights import compute_unified_weights, WeightConfig
-            
-            # Create weight config with GUI settings (if available)
+            from analysis.unified_weights import compute_unified_weights
+
             settings = getattr(self, 'last_settings', {})
-            
-            # Use the unified weight computation system
             w = compute_unified_weights(
                 target=target,
                 peers=peers,
@@ -302,29 +305,25 @@ class PlotManager:
                 pillars_days=pillars or [7, 30, 60, 90, 180, 365],
                 asof=asof,
             )
-            
+
             if w is not None and not w.empty:
-                # Apply importance-based filtering (based on weight values, not correlations)
                 finite_weights = w.dropna()
                 if not finite_weights.empty:
-                    # Only keep weights above a minimum threshold for importance
-                    min_importance = 0.01  # 1% minimum weight to be considered important
+                    min_importance = 0.01
                     important_weights = finite_weights[finite_weights >= min_importance]
-                    
                     if not important_weights.empty:
-                        # Renormalize important weights
                         normalized = important_weights / important_weights.sum()
                         return normalized.reindex(peers).fillna(0.0).astype(float)
                     else:
-                        # All weights too small, use equal weighting
                         equal_weight = 1.0 / max(len(peers), 1)
                         return pd.Series(equal_weight, index=peers, dtype=float)
-                        
+
         except Exception as e:
             print(f"Unified weight computation failed: {e}")
-            
-        # Fallback to legacy methods for backward compatibility
-        return self._weights_from_legacy_methods(target, peers, weight_mode, asof, pillars)
+
+        # Final fallback: equal weights
+        equal_weight = 1.0 / max(len(peers), 1)
+        return pd.Series(equal_weight, index=peers, dtype=float)
     
     def _weights_from_legacy_methods(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
         """Legacy weight computation methods as fallback."""
