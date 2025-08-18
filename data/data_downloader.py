@@ -46,7 +46,7 @@ def download_raw_option_data(ticker: str, max_expiries: int = 8) -> pd.DataFrame
             if df is None or df.empty:
                 continue
             # keep only raw vendor columns we need
-            sub = df.loc[:, ["strike", "impliedVolatility", "bid", "ask", "lastPrice", "volume"]].copy()
+            sub = df.loc[:, ["strike", "impliedVolatility", "bid", "ask", "lastPrice", "volume", "openInterest"]].copy()
             for _, r in sub.iterrows():
                 rows.append(
                     {
@@ -60,6 +60,7 @@ def download_raw_option_data(ticker: str, max_expiries: int = 8) -> pd.DataFrame
                         "ask_raw": None if pd.isna(r["ask"]) else float(r["ask"]),
                         "last_raw": None if pd.isna(r["lastPrice"]) else float(r["lastPrice"]),
                         "volume_raw": None if pd.isna(r["volume"]) else float(r["volume"]),
+                        "open_interest_raw": None if pd.isna(r["openInterest"]) else float(r["openInterest"]),
                         "spot_raw": float(spot),
                         "vendor": "yfinance",
                     }
