@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 from display.plotting.anim_utils import (
     animate_spillover,
     add_checkboxes,
-    add_keyboard_toggles,
     add_legend_toggles,
     set_scatter_group_visibility,
 )
@@ -24,7 +23,6 @@ def main():
     fig, ani, series_map, state = animate_spillover(times, peers_xy, responses)
 
     add_checkboxes(fig, series_map)
-    add_keyboard_toggles(fig, series_map, keymap={"p": "Peers"})
     ax = fig.axes[0]
     add_legend_toggles(ax, series_map)
 
