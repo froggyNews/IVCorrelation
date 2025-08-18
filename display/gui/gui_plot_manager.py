@@ -281,6 +281,7 @@ class PlotManager:
         """
         import numpy as np
         import pandas as pd
+        from analysis.correlation_utils import corr_weights
 
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
@@ -295,7 +296,32 @@ class PlotManager:
         try:
             from analysis.unified_weights import compute_unified_weights
 
-            settings = getattr(self, 'last_settings', {})
+            w = compute_unified_weights(
+                target=target,
+                peers=peers,
+                weight_mode=weight_mode,
+                asof=asof,
+                pillar_days=pillars or [7, 30, 60, 90, 180, 365],
+            )
+
+            if w is not None and not w.empty:
+                finite_weights = w.dropna()
+                if not finite_weights.empty:
+                    min_importance = 0.01
+                    important_weights = finite_weights[finite_weights >= min_importance]
+
+                    if not important_weights.empty:
+                        normalized = important_weights / important_weights.sum()
+                        return normalized.reindex(peers).fillna(0.0).astype(float)
+                    else:
+                        equal_weight = 1.0 / max(len(peers), 1)
+                        return pd.Series(equal_weight, index=peers, dtype=float)
+
+        except Exception as e:
+            print(f"Unified weight computation failed: {e}")
+
+        # Third attempt: fallback to equal weights
+        settings = getattr(self, 'last_settings', {})
 
         # First, try using a cached correlation matrix if weight_mode matches
         if (

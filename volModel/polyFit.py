@@ -73,8 +73,13 @@ def fit_simple_poly(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray]
     }
 
 
-def fit_tps(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None,
-           smoothing: float = 0.0) -> Dict[str, float]:
+def fit_tps(
+    k: np.ndarray,
+    iv: np.ndarray,
+    weights: Optional[np.ndarray] = None,
+    smoothing: float = 1e-2,  # non-zero default prevents overfitting
+) -> Dict[str, float]:
+  
     """
     Thin Plate Spline (TPS) fit using RBF interpolation.
     
@@ -101,13 +106,13 @@ def fit_tps(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None,
     iv = np.asarray(iv, dtype=float)
     
     # Handle weights by converting to smoothing parameter per point
+    # Convert weights to per-point smoothing – higher weight → less smoothing
     if weights is not None:
-        # Convert weights to smoothing - higher weight = lower smoothing
         weights = np.asarray(weights, dtype=float)
-        # Inverse of weights as smoothing (low weight = high smoothing)
         point_smoothing = smoothing + (1.0 / np.clip(weights, 1e-8, None))
     else:
         point_smoothing = smoothing
+
     
     try:
         # Create TPS interpolator  
