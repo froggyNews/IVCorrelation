@@ -4,8 +4,8 @@ import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+import matplotlib.pyplot as plt
 
 # --- Ensure project root on path so local packages resolve first ---
 ROOT = Path(__file__).resolve().parents[2]
@@ -1093,67 +1093,11 @@ class PlotManager:
 
     # -------------------- animation control --------------------
     def has_animation_support(self, plot_type: str) -> bool:
-        return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
-
-    def is_animation_active(self) -> bool:
-        return self._animation is not None
-
-    def start_animation(self) -> bool:
-        """Start or resume animation (matplotlib uses event_source.start/stop)."""
-        if not self._animation:
-            return False
-        if self._animation_paused:
-            try:
-                self._animation.event_source.start()
-            except Exception:
-                pass
-            self._animation_paused = False
-        return True
-
-    def pause_animation(self) -> bool:
-        if not self._animation:
-            return False
-        if not self._animation_paused:
-            try:
-                self._animation.event_source.stop()
-            except Exception:
-                pass
-            self._animation_paused = True
-        return True
-
-    def stop_animation(self):
-        if self._animation:
-            try:
-                self._animation.event_source.stop()
-            except Exception:
-                pass
-            self._animation = None
-            self._animation_paused = False
-
-    def set_animation_speed(self, interval_ms: int):
-        self._animation_speed = max(50, min(2000, interval_ms))
-        if self._animation:
-            self._animation.event_source.interval = self._animation_speed
-
-    def get_animation_speed(self) -> int:
-        return self._animation_speed
-
-    def plot_animated(self, ax: plt.Axes, settings: dict) -> bool:
-        plot_type = settings["plot_type"]
-        if not self.has_animation_support(plot_type):
-            return False
-        self.stop_animation()
-        try:
-            if plot_type.startswith("Smile"):
-                return self._create_animated_smile(ax, settings)
-            elif plot_type.startswith("Synthetic Surface"):
-                return self._create_animated_surface(ax, settings)
-        except Exception as e:
-            print(f"Failed to create animation: {e}")
-            return False
         return False
 
-    # -------------------- animation builders --------------------
+    def is_animation_active(self) -> bool:
+        return False
+
     def _create_animated_smile(self, ax: plt.Axes, settings: dict) -> bool:
         target = settings["target"]
         try:
