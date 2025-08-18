@@ -1,7 +1,14 @@
 # display/gui/gui_plot_manager.py
 from __future__ import annotations
+import sys
+from pathlib import Path
 import numpy as np
 import pandas as pd
+
+# Add project root to sys.path to ensure our display package is found first
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
@@ -88,6 +95,15 @@ class PlotManager:
                 pass
         self._cid_click = self.canvas.mpl_connect("button_press_event", self._on_click)
 
+    def _clear_correlation_colorbar(self, ax):
+        """Remove any existing correlation colorbar to prevent it from appearing on non-correlation plots."""
+        try:
+            if hasattr(ax.figure, '_correlation_colorbar'):
+                ax.figure._correlation_colorbar.remove()
+                delattr(ax.figure, '_correlation_colorbar')
+        except:
+            pass
+
     # ---- main entry ----
     def plot(self, ax: plt.Axes, settings: dict):
         plot_type     = settings["plot_type"]
@@ -117,6 +133,8 @@ class PlotManager:
 
         # --- Smile: click-through path (NO df_all needed here) ---
         if plot_type.startswith("Smile"):
+            # Clear any correlation colorbar for non-correlation plots
+            self._clear_correlation_colorbar(ax)
             # load all expiries so we can click through them
             chain_df = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
             if chain_df is None or chain_df.empty:
@@ -197,6 +215,8 @@ class PlotManager:
 
         # --- Term: needs all expiries for this day ---
         elif plot_type.startswith("Term"):
+            # Clear any correlation colorbar for non-correlation plots
+            self._clear_correlation_colorbar(ax)
             df_all = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
             if df_all is None or df_all.empty:
                 ax.set_title("No data"); return
@@ -210,11 +230,15 @@ class PlotManager:
 
         # --- Synthetic Surface: doesn't need df_all here ---
         elif plot_type.startswith("Synthetic Surface"):
+            # Clear any correlation colorbar for non-correlation plots
+            self._clear_correlation_colorbar(ax)
             self._plot_synth_surface(ax, target, peers, asof, T_days, weight_mode)
             return
 
         # --- ETF Weights only ---
         elif plot_type.startswith("ETF Weights"):
+            # Clear any correlation colorbar for non-correlation plots
+            self._clear_correlation_colorbar(ax)
             if not peers:
                 ax.text(0.5, 0.5, "No peers", ha="center", va="center")
                 return
@@ -471,12 +495,14 @@ class PlotManager:
             mask = (T_arr >= T0 - tol) & (T_arr <= T0 + tol)
         if not np.any(mask):
             ax.clear()
+            self._clear_correlation_colorbar(ax)  # Clear correlation colorbar for smile plots
             ax.set_title("No data")
             if self.canvas is not None:
                 self.canvas.draw_idle()
             return
 
         ax.clear()
+        self._clear_correlation_colorbar(ax)  # Clear correlation colorbar for smile plots
         S = float(np.nanmedian(S_arr[mask]))
         K = K_arr[mask]
         IV = sigma_arr[mask]
@@ -610,7 +636,7 @@ class PlotManager:
             x_units=x_units,
             connect=True,
             smooth=True,
-            show_ci=True,
+            show_ci=False,  # Disable CI to avoid DPI errors when bootstrapping is disabled
             ci_level=ci,
             generate_ci=False,  # no auto-bootstrap
         )
@@ -676,7 +702,7 @@ class PlotManager:
                                 x_units=x_units,
                                 connect=True,
                                 smooth=True,
-                                show_ci=True,
+                                show_ci=False,  # Disable CI to avoid DPI errors
                                 ci_level=ci,
                                 generate_ci=False,
                             )
@@ -692,25 +718,26 @@ class PlotManager:
                             ax.scatter(x, y, s=18, alpha=0.8)
                             
                             # Add confidence bands for synthetic curve if enough points
-                            if len(x) >= 3:
-                                try:
-                                    from display.plotting.term_plot import generate_term_structure_confidence_bands
-                                    T_orig = synth_filtered["T"].to_numpy(float)
-                                    T_grid, ci_lo, ci_hi = generate_term_structure_confidence_bands(
-                                        T=T_orig,
-                                        atm_vol=y,
-                                        level=ci,
-                                        n_boot=0,
-                                    )
-                                    if len(T_grid) > 0:
-                                        if x_units == "days":
-                                            T_grid_plot = T_grid * 365.25
-                                        else:
-                                            T_grid_plot = T_grid
-                                        ax.fill_between(T_grid_plot, ci_lo, ci_hi, alpha=0.1, 
-                                                       color='orange', label=f"Synthetic CI ({ci:.0%})")
-                                except Exception:
-                                    pass
+                            # Disabled to avoid DPI errors in GUI
+                            # if len(x) >= 3:
+                            #     try:
+                            #         from display.plotting.term_plot import generate_term_structure_confidence_bands
+                            #         T_orig = synth_filtered["T"].to_numpy(float)
+                            #         T_grid, ci_lo, ci_hi = generate_term_structure_confidence_bands(
+                            #             T=T_orig,
+                            #             atm_vol=y,
+                            #             level=ci,
+                            #             n_boot=0,
+                            #         )
+                            #         if len(T_grid) > 0:
+                            #             if x_units == "days":
+                            #                 T_grid_plot = T_grid * 365.25
+                            #             else:
+                            #                 T_grid_plot = T_grid
+                            #             ax.fill_between(T_grid_plot, ci_lo, ci_hi, alpha=0.1, 
+                            #                            color='orange', label=f"Synthetic CI ({ci:.0%})")
+                            #     except Exception:
+                            #         pass
                             
                             # Update title to reflect filtered data
                             title = f"{target}  {asof}  ATM Term Structure  (N={len(raw_filtered)}) - Synthetic Overlay (N={len(synth_filtered)})"
@@ -741,8 +768,8 @@ class PlotManager:
             return
 
         try:
-            # if your compute_and_plot_correlation now returns (atm_df, corr_df, weights)
-            atm_df, corr_df, _ = compute_and_plot_correlation(
+            # Use new expiry-rank correlation logic without pillar detection
+            atm_df, corr_df, weights = compute_and_plot_correlation(
                 ax=ax,
                 get_smile_slice=self.get_smile_slice,
                 tickers=tickers,
@@ -754,14 +781,16 @@ class PlotManager:
                 corr_method=corr_method,
                 demean_rows=demean_rows,
                 show_values=True,
-                target=target,       # ok if ignored by the 2-return version
+                target=target,
                 peers=peers,
-                auto_detect_pillars=True,  # Use ETF builder style pillar detection
-                min_tickers_per_pillar=3,  # ETF builder style: need 3+ tickers per pillar
-                min_pillars_per_ticker=2,  # ETF builder style: need 2+ pillars per ticker
+                auto_detect_pillars=False,  # Disable pillar auto-detection as requested
+                min_tickers_per_pillar=3,
+                min_pillars_per_ticker=2,
+                max_expiries=self._current_max_expiries or 6,
+                weight_mode=weight_mode,  # Pass weight_mode argument
             )
         except TypeError:
-            # older 2-return version
+            # Fallback - also use new expiry-rank logic
             atm_df, corr_df = compute_and_plot_correlation(
                 ax=ax,
                 get_smile_slice=self.get_smile_slice,
@@ -774,9 +803,9 @@ class PlotManager:
                 corr_method=corr_method,
                 demean_rows=demean_rows,
                 show_values=True,
-                auto_detect_pillars=True,  # Use ETF builder style pillar detection
-                min_tickers_per_pillar=3,  # ETF builder style: need 3+ tickers per pillar
-                min_pillars_per_ticker=2,  # ETF builder style: need 2+ pillars per ticker
+                auto_detect_pillars=False,  # Disable pillar auto-detection
+                max_expiries=self._current_max_expiries or 6,
+                weight_mode=weight_mode,  # Pass weight_mode argument
             )
 
         # cache for other plots (including PCA)

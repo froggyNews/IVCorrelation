@@ -25,8 +25,6 @@ from analysis.analysis_pipeline import available_tickers, available_dates, inges
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager
 from display.gui.spillover_gui import launch_spillover, SpilloverFrame
-from display.gui.model_params_gui import ModelParamsFrame
-
 
 
 class BrowserApp(tk.Tk):
@@ -41,9 +39,9 @@ class BrowserApp(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # ---- Main browser tab ----
+        # ---- Model params tab ----
         self.tab_browser = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_browser, text="Browser")
+        self.notebook.add(self.tab_browser, text="Model Params")
 
         # Inputs
         self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
@@ -103,10 +101,6 @@ class BrowserApp(tk.Tk):
         self.tab_spillover = SpilloverFrame(self.notebook)
         self.notebook.add(self.tab_spillover, text="Spillover")
 
-        # ---- Model Params tab ----
-        self.tab_modelparams = ModelParamsFrame(self.notebook)
-        self.notebook.add(self.tab_modelparams, text="Model Params")
-
         # Status bar for user feedback
         self.status = ttk.Label(self, text="Ready", anchor="w")
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -126,9 +120,12 @@ class BrowserApp(tk.Tk):
     # ---------- events ----------
     def _on_target_change(self, *_):
         """
-        Handle changes to the target ticker. Because fetching available dates
-        involves a database query, perform it in a background thread. When
-        complete, update the combobox on the main thread via `after()`.
+        Handle changes to the target ticker. To avoid thread‑affinity issues
+        with SQLite, this method spawns a worker thread that opens a fresh
+        database connection and queries the available dates for the current
+        ticker. The results are marshalled back to the Tkinter main thread
+        using ``after()`` to safely update the UI without blocking the event
+        loop.
         """
         t = self.inputs.get_target()
         if not t:
@@ -138,14 +135,40 @@ class BrowserApp(tk.Tk):
         self.status.config(text="Loading available dates...")
 
         def worker():
+            from data.db_utils import get_conn
+            import pandas as pd
+            dates: list[str] = []
+            conn = None
             try:
-                dates = available_dates(t)
+                conn = get_conn()
+                if t:
+                    # Query available dates for a specific ticker
+                    df = pd.read_sql_query(
+                        "SELECT DISTINCT asof_date FROM options_quotes WHERE ticker = ? ORDER BY 1",
+                        conn,
+                        params=[t],
+                    )
+                else:
+                    # Query all available dates
+                    df = pd.read_sql_query(
+                        "SELECT DISTINCT asof_date FROM options_quotes ORDER BY 1",
+                        conn,
+                    )
+                dates = df["asof_date"].tolist()
             except Exception:
                 dates = []
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
             # Schedule UI update on main thread
             def update_ui():
                 self.inputs.set_dates(dates)
                 self.status.config(text="Ready")
+
             self.after(0, update_ui)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -179,8 +202,6 @@ class BrowserApp(tk.Tk):
                 def done():
                     messagebox.showinfo("Download complete", f"Ingested rows: {inserted}\nTickers: {', '.join(universe)}")
                     self.status.config(text=f"Downloaded data for {', '.join(universe)}")
-                    # In-memory caches may still hold old date lists
-                    available_dates.cache_clear()
                     # Refresh available dates now that new data may be present
                     self._on_target_change()
                     self.inputs.btn_download.config(state=tk.NORMAL)
@@ -195,7 +216,6 @@ class BrowserApp(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _refresh_plot(self):
-        settings = self.inputs.get_settings()
         settings = dict(
             plot_type=self.inputs.get_plot_type(),
             target=self.inputs.get_target(),
