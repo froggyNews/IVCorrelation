@@ -29,7 +29,10 @@ from analysis.model_params_logger import append_params
 from analysis.pillars import (
     compute_atm_by_expiry,
     atm_curve_for_ticker_on_date,
+    _fit_smile_get_atm,
 )
+from volModel.sviFit import fit_svi_slice
+from volModel.sabrFit import fit_sabr_slice
 
 DEFAULT_ATM_BAND = 0.05
 
@@ -101,6 +104,8 @@ class PlotManager:
 
         # preserve last settings for weight computation context
         self.last_settings: dict = {}
+        # store latest fit parameters for UI parameter tab
+        self.last_fit_info: dict | None = None
 
     # -------------------- canvas wiring --------------------
     def attach_canvas(self, canvas):
@@ -148,6 +153,9 @@ class PlotManager:
         peers = settings["peers"]
         pillars = settings["pillars"]
         max_expiries = settings.get("max_expiries", 6)
+
+        # reset last-fit info before plotting
+        self.last_fit_info = None
 
         # remember for other helpers
         self._current_plot_type = plot_type
@@ -407,21 +415,53 @@ class PlotManager:
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
 
-        # log fit params
+        # compute and log parameters for both SVI, SABR and sensitivities
         try:
             expiry_dt = None
             if "expiry" in dfe.columns and not dfe["expiry"].empty:
                 expiry_dt = dfe["expiry"].iloc[0]
+
+            svi_params = fit_svi_slice(S, K, T_used, IV)
+            sabr_params = fit_sabr_slice(S, K, T_used, IV)
+
+            dfe2 = dfe.copy()
+            dfe2["moneyness"] = dfe2["K"].astype(float) / float(S)
+            sens = _fit_smile_get_atm(dfe2, model="auto")
+            sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
+
             append_params(
                 asof_date=asof,
                 ticker=target,
                 expiry=str(expiry_dt) if expiry_dt is not None else None,
-                model=model,
-                params=info.get("params", {}),
-                meta={"rmse": info.get("rmse")},
+                model="svi",
+                params=svi_params,
+                meta={"rmse": svi_params.get("rmse")},
             )
+            append_params(
+                asof_date=asof,
+                ticker=target,
+                expiry=str(expiry_dt) if expiry_dt is not None else None,
+                model="sabr",
+                params=sabr_params,
+                meta={"rmse": sabr_params.get("rmse")},
+            )
+            append_params(
+                asof_date=asof,
+                ticker=target,
+                expiry=str(expiry_dt) if expiry_dt is not None else None,
+                model="sens",
+                params=sens_params,
+            )
+
+            self.last_fit_info = {
+                "ticker": target,
+                "asof": asof,
+                "svi": svi_params,
+                "sabr": sabr_params,
+                "sens": sens_params,
+            }
         except Exception:
-            pass
+            self.last_fit_info = None
 
         if overlay_synth and peers:
             try:
