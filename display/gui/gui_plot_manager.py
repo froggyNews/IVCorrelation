@@ -33,7 +33,6 @@ from matplotlib.animation import FuncAnimation
 
 from analysis.pillars import atm_curve_for_ticker_on_date
 from display.plotting.anim_utils import animate_surface_timesweep
-# Removed animate_smile_over_time import as smile animations are disabled
 DEFAULT_ATM_BAND = ATM_BAND = 0.05
 def _cols_to_days(cols) -> np.ndarray:
     out = []
@@ -883,9 +882,7 @@ class PlotManager:
     
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if a plot type supports animation."""
-        # Disable time-lapse animation for smile plots as requested
-        # return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
-        return plot_type.startswith("Synthetic Surface")  # Only surfaces, no smile animations
+        return plot_type.startswith("Smile") or plot_type.startswith("Synthetic Surface")
     
     def is_animation_active(self) -> bool:
         """Check if an animation is currently active."""
