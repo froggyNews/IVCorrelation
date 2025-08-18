@@ -4,6 +4,7 @@ import pytest
 
 from data.db_utils import ensure_initialized, insert_quotes
 from analysis.unified_weights import compute_unified_weights
+from analysis.analysis_pipeline import compute_peer_weights
 
 
 def test_open_interest_weighting(monkeypatch):
@@ -41,3 +42,13 @@ def test_open_interest_weighting(monkeypatch):
 
     assert weights.loc["AAA"] == pytest.approx(0.25)
     assert weights.loc["BBB"] == pytest.approx(0.75)
+
+    # Integration test through analysis pipeline
+    weights_pipeline = compute_peer_weights(
+        target="TGT",
+        peers=["AAA", "BBB"],
+        weight_mode="oi",
+        asof="2024-01-01",
+    )
+    assert weights_pipeline.loc["AAA"] == pytest.approx(0.25)
+    assert weights_pipeline.loc["BBB"] == pytest.approx(0.75)
