@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from analysis.correlation_utils import corr_weights
+from analysis.unified_weights import compute_unified_weights
 
 
 # ---------------------------------------------------------------------------
@@ -118,21 +118,22 @@ def compute_and_plot_correlation(
     demean_rows: bool = False,
     show_values: bool = True,
     clip_negative: bool = True,
-    power: float = 1.0,
+    weight_power: float = 1.0,
     auto_detect_pillars: bool = True,
     min_tickers_per_pillar: int = 3,
     min_pillars_per_ticker: int = 2,
     max_expiries: int = 6,
     weight_mode: str = "corr",
+    **weight_config,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.Series]]:
     """
     Compute a correlation matrix and draw a heatmap without relying on pillars.
 
     Parameters remain compatible with the upstream version.  The ``weight_mode``
-    specifies how ETF weights are calculated:
-      • "corr" (default): use correlation-based weights via corr_weights.
-      • "equal": assign equal weights to each peer.
-      • Other values disable weighting.
+    is forwarded to :func:`analysis.unified_weights.compute_unified_weights`.
+    Additional weight configuration such as ``weight_power`` and
+    ``clip_negative`` can be supplied, along with any extra keyword arguments
+    understood by the unified weight system.
     """
     tickers = [t.upper() for t in tickers]
     atm_df, corr_df = _corr_by_expiry_rank(
@@ -146,23 +147,18 @@ def compute_and_plot_correlation(
     weights: Optional[pd.Series] = None
     if target and peers:
         peers_list = list(peers)
-        if weight_mode == "corr":
-            # Use correlation-based weights
-            try:
-                weights = corr_weights(
-                    corr_df=corr_df,
-                    target=target,
-                    peers=peers_list,
-                    clip_negative=clip_negative,
-                    power=power,
-                )
-            except Exception:
-                weights = None
-        elif weight_mode == "equal" and peers_list:
-            # Equal-weight portfolio among peers
-            w = 1.0 / len(peers_list)
-            weights = pd.Series({p: w for p in peers_list}, name="weight")
-        # Add more modes here if needed
+        try:
+            weights = compute_unified_weights(
+                target=target,
+                peers=peers_list,
+                mode=weight_mode,
+                asof=asof,
+                clip_negative=clip_negative,
+                power=weight_power,
+                **weight_config,
+            )
+        except Exception:
+            weights = None
 
     plot_correlation_details(ax, corr_df, weights=weights, show_values=show_values)
     return atm_df, corr_df, weights
