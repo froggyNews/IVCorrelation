@@ -321,82 +321,76 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     
     # Get available dates and tickers
     conn = get_conn()
-    try:
-        # Get all unique dates and tickers from the database
-        date_query = "SELECT DISTINCT asof_date FROM options_quotes ORDER BY asof_date DESC LIMIT 30"
-        date_df = pd.read_sql_query(date_query, conn)
-        
-        ticker_query = """
-        SELECT DISTINCT ticker 
-        FROM options_quotes 
-        WHERE iv IS NOT NULL AND ttm_years IS NOT NULL 
-        ORDER BY ticker
-        """
-        ticker_df = pd.read_sql_query(ticker_query, conn)
-        
-        if date_df.empty or ticker_df.empty:
-            return {}
-            
-        dates = date_df['asof_date'].tolist()[:5]  # Use last 5 dates for correlation
-        all_tickers = ticker_df['ticker'].tolist()
-        
-        # Filter to include benchmark and other tickers
-        if benchmark not in all_tickers:
-            return {}
-            
-        tickers = [t for t in all_tickers if t != benchmark][:10]  # Limit for performance
-        analysis_tickers = [benchmark] + tickers
-        
-        # Compute correlations for each date and aggregate
-        all_correlations = []
-        
-        for asof in dates:
-            try:
-                atm_df, corr_df = compute_atm_corr_pillar_free(
-                    get_smile_slice=get_smile_slice,
-                    tickers=analysis_tickers,
-                    asof=asof,
-                    max_expiries=6,
-                    atm_band=0.05,
-                )
-                
-                if not corr_df.empty and benchmark in corr_df.index:
-                    # Extract correlations with benchmark
-                    corr_series = corr_df.loc[benchmark].drop(benchmark, errors='ignore')
-                    corr_series.name = asof
-                    all_correlations.append(corr_series)
-                    
-            except Exception as e:
-                print(f"Warning: Failed to compute correlations for {asof}: {e}")
-                continue
-        
-        if not all_correlations:
-            return {}
-            
-        # Aggregate correlations across dates (take mean)
-        corr_matrix = pd.concat(all_correlations, axis=1)
-        mean_correlations = corr_matrix.mean(axis=1).dropna()
-        
-        # Convert correlations to "betas" for compatibility with existing interface
-        # Use multiple "pillars" to provide granular results as expected by downstream code
-        out = {}
-        base_pillars = [7, 30, 60, 90] if not pillar_days else list(pillar_days)
-        
-        for pillar in base_pillars:
-            # Add some noise to make each pillar slightly different
-            # This maintains the interface while using pillar-free computation
-            noise_factor = 1.0 + (pillar - 30) * 0.001  # Small variation by pillar
-            pillar_correlations = mean_correlations * noise_factor
-            out[int(pillar)] = pillar_correlations.rename(f"iv_atm_beta_{int(pillar)}d")
-            
-    finally:
+
+
+    # Get all unique dates and tickers from the database
+    date_query = "SELECT DISTINCT asof_date FROM options_quotes ORDER BY asof_date DESC LIMIT 30"
+    date_df = pd.read_sql_query(date_query, conn)
+
+    ticker_query = """
+    SELECT DISTINCT ticker
+    FROM options_quotes
+    WHERE iv IS NOT NULL AND ttm_years IS NOT NULL
+    ORDER BY ticker
+    """
+    ticker_df = pd.read_sql_query(ticker_query, conn)
+
+    if date_df.empty or ticker_df.empty:
+        return {}
+
+    dates = date_df['asof_date'].tolist()[:5]  # Use last 5 dates for correlation
+    all_tickers = ticker_df['ticker'].tolist()
+
+    # Filter to include benchmark and other tickers
+    if benchmark not in all_tickers:
+        return {}
+
+    tickers = [t for t in all_tickers if t != benchmark][:10]  # Limit for performance
+    analysis_tickers = [benchmark] + tickers
+
+    # Compute correlations for each date and aggregate
+    all_correlations = []
+
+    for asof in dates:
         try:
-            db_path = conn.execute("PRAGMA database_list").fetchone()[2]
-        except Exception:
-            db_path = None
-        if db_path not in (":memory:", "", None):
-            conn.close()
-    
+            atm_df, corr_df = compute_atm_corr_pillar_free(
+                get_smile_slice=get_smile_slice,
+                tickers=analysis_tickers,
+                asof=asof,
+                max_expiries=6,
+                atm_band=0.05,
+            )
+
+            if not corr_df.empty and benchmark in corr_df.index:
+                # Extract correlations with benchmark
+                corr_series = corr_df.loc[benchmark].drop(benchmark, errors='ignore')
+                corr_series.name = asof
+                all_correlations.append(corr_series)
+
+        except Exception as e:
+            print(f"Warning: Failed to compute correlations for {asof}: {e}")
+            continue
+
+    if not all_correlations:
+        return {}
+
+    # Aggregate correlations across dates (take mean)
+    corr_matrix = pd.concat(all_correlations, axis=1)
+    mean_correlations = corr_matrix.mean(axis=1).dropna()
+
+    # Convert correlations to "betas" for compatibility with existing interface
+    # Use multiple "pillars" to provide granular results as expected by downstream code
+    out = {}
+    base_pillars = [7, 30, 60, 90] if not pillar_days else list(pillar_days)
+
+    for pillar in base_pillars:
+        # Add some noise to make each pillar slightly different
+        # This maintains the interface while using pillar-free computation
+        noise_factor = 1.0 + (pillar - 30) * 0.001  # Small variation by pillar
+        pillar_correlations = mean_correlations * noise_factor
+        out[int(pillar)] = pillar_correlations.rename(f"iv_atm_beta_{int(pillar)}d")
+
+
     return out
 
 

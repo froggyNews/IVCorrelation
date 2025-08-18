@@ -122,3 +122,37 @@ def test_equal_weights():
     weights = uwc.compute_weights("TGT", ["P1", "P2", "P3"], cfg)
     assert weights.sum() == pytest.approx(1.0)
     assert all(weight == pytest.approx(1.0 / 3.0) for weight in weights)
+
+
+def test_surface_feature_set_dispatch(monkeypatch):
+    uwc = UnifiedWeightComputer()
+    cfg = WeightConfig(
+        method=WeightMethod.CORRELATION,
+        feature_set=FeatureSet.SURFACE,
+        asof="2024-01-01",
+    )
+
+    feature_df = pd.DataFrame(
+        [[1, 2], [1, 2], [1, 2]],
+        index=["TGT", "P1", "P2"],
+        columns=["f1", "f2"],
+    )
+
+    called = {"surface": False}
+
+    def fake_surface(self, tickers, asof, config):
+        called["surface"] = True
+        return feature_df
+
+    monkeypatch.setattr(UnifiedWeightComputer, "_build_surface_features", fake_surface)
+    monkeypatch.setattr(
+        UnifiedWeightComputer,
+        "_compute_weights_from_features",
+        lambda self, df, target, peers, config: pd.Series(0.5, index=peers),
+    )
+
+    weights = uwc.compute_weights("TGT", ["P1", "P2"], cfg)
+    assert called["surface"]
+    assert weights.sum() == pytest.approx(1.0)
+    assert weights.loc["P1"] == pytest.approx(0.5)
+    assert weights.loc["P2"] == pytest.approx(0.5)
