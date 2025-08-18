@@ -2,7 +2,51 @@
 Correlation plotting without pillars, with configurable weighting modes.
 
 This module computes correlations across implied-volatility surfaces using
-the first few expiries for each ticker (as opposed to fixed pillar days).
+the first few available expiries (regardless of tenor). Users can configure how to
+specify how weights are computed via the ``weight_mode`` parameter.
+"""
+
+from typing import Iterable, List, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from analysis.correlation_utils import corr_weights
+from data.data_pipeline import get_smile_slice
+
+__all__ = ["compute_and_plot_correlation", "plot_correlation_details"]
+    corr_df: pd.DataFrame,
+    weights: Optional[pd.Series] = None,
+    show_values: bool = True,
+    weight_mode: str = "corr",
+) -> None:
+    """
+    Heatmap of the correlation matrix; optionally show weights as annotation.
+
+    Adds a data-quality badge and, if supplied, lists the ETF weights on the
+    right.  The heatmap is labelled "per expiries" to emphasize that no
+    pillar selection is used.
+    """
+    ax.clear()
+    
+    # Set dynamic title based on weight mode
+    if weight_mode in ["corr", "iv_atm", "correlation"]:
+        title = "Correlation Matrix"
+    elif weight_mode in ["cosine", "cosine_atm", "cosine_similarity"]:
+        title = "Cosine Similarity Matrix"
+    elif weight_mode in ["distance", "euclidean"]:
+        title = "Distance Matrix"
+    elif weight_mode in ["beta", "regression"]:
+        title = "Beta Relationship Matrix"
+    else:
+        title = "Relationship Matrix"
+    
+    ax.set_title(title, fontsize=12, fontweight='bold')
+    
+    if corr_df is None or corr_df.empty:
+        ax.text(0.5, 0.5, "No correlation data", ha="center", va="center")
+        returnh ticker (as opposed to fixed pillar days).
 It then provides a heatmap and optional ETF weight annotations.  You can
 specify how weights are computed via the ``weight_mode`` parameter.
 """
@@ -226,18 +270,7 @@ def plot_correlation_details(
             transform=ax.transAxes,
             bbox=dict(boxstyle="round", facecolor="yellow", alpha=0.3),
         )
-    else:
-        ax.text(
-            0.5,
-            0.9,
-            f"Good data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
-            ha="center",
-            va="top",
-            fontsize=10,
-            color="green",
-            transform=ax.transAxes,
-            bbox=dict(boxstyle="round", facecolor="lightgreen", alpha=0.3),
-        )
+    # Good data quality - no message needed
 
     im = ax.imshow(data, vmin=-1.0, vmax=1.0, cmap="coolwarm", interpolation="nearest")
 
