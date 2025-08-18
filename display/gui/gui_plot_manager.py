@@ -184,6 +184,8 @@ class PlotManager:
                 except Exception:
                     tgt_surface = None
                     syn_surface = None
+
+            if overlay_peers and peers:
                 for p in peers:
                     df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
                     if df_p is None or df_p.empty:
@@ -540,9 +542,10 @@ class PlotManager:
             pass
 
         # overlay: synthetic smile (corr-matrix) at this T
+        settings = self._smile_ctx.get("settings", {})
         syn_surface = self._smile_ctx.get("syn_surface")
         tgt_surface = self._smile_ctx.get("tgt_surface")
-        if syn_surface is not None:
+        if settings.get("overlay_synth") and syn_surface is not None:
             syn_cols_days = _cols_to_days(syn_surface.columns)
             jx = _nearest_tenor_idx(syn_cols_days, T0 * 365.25)
             col_syn = syn_surface.columns[jx]
@@ -557,7 +560,7 @@ class PlotManager:
                     label="Synthetic smile (corr-matrix)")
 
         peer_slices = self._smile_ctx.get("peer_slices") or {}
-        if peer_slices:
+        if settings.get("overlay_peers") and peer_slices:
             for p, d in peer_slices.items():
                 T_p = d["T_arr"]
                 K_p = d["K_arr"]
