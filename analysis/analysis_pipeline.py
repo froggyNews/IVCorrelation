@@ -207,16 +207,36 @@ def compute_peer_weights(
     This function now uses the unified weight computation engine for consistency
     and better error handling across all weight modes and feature sets.
     """
+    # Direct dispatch for legacy tuple modes
+    if isinstance(weight_mode, tuple):
+        method, feature = weight_mode
+        return build_peer_weights(
+            method,
+            feature,
+            target,
+            peers,
+            get_smile_slice=get_smile_slice,
+            asof=asof,
+            pillars_days=pillar_days,
+            tenors=tenor_days,
+            mny_bins=mny_bins,
+        )
+
+    # Surface grid weights use vol beta builder
+    if weight_mode == "surface_grid":
+        return build_vol_betas(
+            mode=weight_mode,
+            benchmark=target,
+            pillar_days=pillar_days,
+            tenor_days=tenor_days,
+            mny_bins=mny_bins,
+        )
+
     try:
         from analysis.unified_weights import compute_unified_weights
-        
-        # Convert legacy tuple format to string format
-        if isinstance(weight_mode, tuple):
-            method, feature = weight_mode
-            mode_str = f"{method}_{feature}"
-        else:
-            mode_str = weight_mode
-        
+
+        mode_str = weight_mode
+
         return compute_unified_weights(
             target=target,
             peers=peers,
