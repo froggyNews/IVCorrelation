@@ -3,7 +3,7 @@ High-level Synthetic ETF construction utilities.
 
 Leverages existing primitives:
 - build_surface_grids / combine_surfaces (analysis.syntheticETFBuilder)
-- peer_weights_from_correlations / pca_weights (analysis.correlation_builder / pca_builder)
+- UnifiedWeightComputer for peer weighting (analysis.unified_weights)
 - relative_value_atm_report_corrweighted (analysis.analysis_pipeline)
 - sample_smile_curve / fit_smile_for (analysis.analysis_pipeline)
 
@@ -39,16 +39,10 @@ from analysis.syntheticETFBuilder import (
 )
 from analysis.analysis_pipeline import (
     relative_value_atm_report_corrweighted,
-    available_dates,
     sample_smile_curve,
-    get_smile_slice,
 )
-from analysis.beta_builder import peer_weights_from_correlations
-from analysis.beta_builder import pca_weights, pca_weights_from_atm_matrix
-from analysis.beta_builder import cosine_similarity_weights_from_atm_matrix
-from analysis.analysis_pipeline import ingest_and_process, available_tickers
 from analysis.analysis_pipeline import get_most_recent_date_global
-from analysis.pillars import compute_atm_by_expiry, load_atm, build_atm_matrix
+from analysis.unified_weights import UnifiedWeightComputer, WeightConfig
 
 WeightMode = Literal["corr", "pca", "cosine", "equal", "custom"]
 
@@ -86,13 +80,18 @@ class SyntheticETFArtifacts:
 
 
 class SyntheticETFBuilder:
-    def __init__(self, config: SyntheticETFConfig):
+    def __init__(
+        self,
+        config: SyntheticETFConfig,
+        weight_computer: Optional[UnifiedWeightComputer] = None,
+    ):
         self.cfg = config
         self.cfg.ensure_cache()
         self._weights: Optional[pd.Series] = None
         self._surfaces: Optional[Dict[str, Dict[str, pd.DataFrame]]] = None
         self._synthetic_surfaces: Optional[Dict[str, pd.DataFrame]] = None
         self._rv: Optional[pd.DataFrame] = None
+        self._weight_computer = weight_computer or UnifiedWeightComputer()
 
     # ----------------------
     # Weight Computation
@@ -101,114 +100,36 @@ class SyntheticETFBuilder:
         self,
         custom_weights: Optional[Dict[str, float]] = None,
     ) -> pd.Series:
-        """Compute portfolio weights using unified weight computation system."""
-        from analysis.unified_weights import compute_unified_weights
-        
+        """Compute portfolio weights using :class:`UnifiedWeightComputer`."""
+
         if self.cfg.weight_mode == "custom":
             if not custom_weights:
-                raise ValueError("custom weight_mode selected but no custom_weights supplied")
-            w = pd.Series(custom_weights, dtype=float)
-            return w / w.sum()
-        
-        # Use unified weight computation for all other modes
-        try:
-            w = compute_unified_weights(
-                target=self.cfg.target,
-                peers=self.cfg.peers,
-                mode=self.cfg.weight_mode,
-                pillars_days=self.cfg.pillar_days,
-                tenors=self.cfg.tenors,
-                mny_bins=self.cfg.mny_bins,
-                clip_negative=self.cfg.clip_negative,
-                power=self.cfg.weight_power,
-            )
-            
-            if w.empty:
-                raise ValueError(f"{self.cfg.weight_mode} weight computation returned empty series")
-            
-            self._weights = w
-            return w
-            
-        except Exception as e:
-            print(f"Unified weight computation failed: {e}")
-            # Fallback to legacy methods for critical modes
-            return self._compute_weights_legacy(custom_weights)
-
-    def _compute_weights_legacy(
-        self,
-        custom_weights: Optional[Dict[str, float]] = None,
-    ) -> pd.Series:
-        """Legacy weight computation methods (for fallback)."""
-        def _custom() -> pd.Series:
-            if not custom_weights:
-                raise ValueError("custom weight_mode selected but no custom_weights supplied")
+                raise ValueError(
+                    "custom weight_mode selected but no custom_weights supplied"
+                )
             w = pd.Series(custom_weights, dtype=float)
             return w / w.sum()
 
-        def _equal() -> pd.Series:
-            peers_list = list(self.cfg.peers)
-            return pd.Series(
-                1.0 / len(peers_list),
-                index=peers_list,
-                dtype=float,
-                name="weight",
+        cfg = WeightConfig.from_legacy_mode(
+            self.cfg.weight_mode,
+            pillars_days=self.cfg.pillar_days,
+            tenors=self.cfg.tenors,
+            mny_bins=self.cfg.mny_bins,
+            clip_negative=self.cfg.clip_negative,
+            power=self.cfg.weight_power,
+        )
+
+        w = self._weight_computer.compute_weights(
+            target=self.cfg.target,
+            peers=self.cfg.peers,
+            config=cfg,
+        )
+
+        if w.empty:
+            raise ValueError(
+                f"{self.cfg.weight_mode} weight computation returned empty series"
             )
 
-        def _pca() -> pd.Series:
-            # Get the most recent date for PCA computation
-            dates = available_dates(ticker=self.cfg.target, most_recent_only=True)
-            if not dates:
-                raise ValueError(f"No dates available for target {self.cfg.target}")
-            asof = dates[0]
-            
-            w = pca_weights(
-                get_smile_slice=get_smile_slice,
-                mode="pca_atm_market",  # Use the market-based PCA mode
-                target=self.cfg.target,
-                peers=self.cfg.peers,
-                asof=asof,
-                pillars_days=self.cfg.pillar_days,
-            )
-            if w.empty:
-                raise ValueError("PCA weight computation returned empty series")
-            return w
-
-        def _cosine() -> pd.Series:
-            w = cosine_weights_from_atm_matrix(
-                target=self.cfg.target,
-                peers=self.cfg.peers,
-                pillar_days=self.cfg.pillar_days,
-                tolerance_days=self.cfg.tolerance_days,
-            )
-            if w.empty:
-                raise ValueError("Cosine similarity weight computation returned empty series")
-            return w
-
-        def _corr() -> pd.Series:
-            w = peer_weights_from_correlations(
-                benchmark=self.cfg.target,
-                peers=self.cfg.peers,
-                mode="iv_atm",
-                pillar_days=self.cfg.pillar_days,
-                tenor_days=self.cfg.tenors,
-                mny_bins=self.cfg.mny_bins,
-                clip_negative=self.cfg.clip_negative,
-                power=self.cfg.weight_power,
-            )
-            if w.empty:
-                raise ValueError("Correlation weights came back empty (insufficient data?)")
-            return w
-
-        dispatch = {
-            "custom": _custom,
-            "equal": _equal,
-            "pca": _pca,
-            "cosine": _cosine,
-            "corr": _corr,
-        }
-
-        func = dispatch.get(self.cfg.weight_mode, _corr)
-        w = func()
         self._weights = w
         return w
 
@@ -359,56 +280,6 @@ class SyntheticETFBuilder:
             T_target_years=T_days / 365.25,
             model=model,
         )
-
-
-# ----------------------
-# Helper functions for weight computation
-# ----------------------
-def cosine_weights_from_atm_matrix(
-    target: str,
-    peers: Iterable[str],
-    pillar_days: Tuple[int, ...] = (7, 30, 60, 90),
-    tolerance_days: float = 7.0,
-) -> pd.Series:
-    """
-    Compute cosine similarity weights using ATM vol matrix.
-    
-    This function builds an ATM matrix from the database and computes
-    cosine similarity weights between target and peers.
-    """
-    from data.db_utils import get_conn
-    from analysis.pillars import build_atm_matrix
-    from analysis.analysis_pipeline import get_smile_slice
-    
-    # Get latest date for target
-    dates = available_dates(ticker=target, most_recent_only=True)
-    if not dates:
-        peers_list = list(peers) if peers else []
-        return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
-    
-    asof = dates[0]
-    tickers = [target] + list(peers)
-    
-    # Build ATM matrix
-    atm_df, _ = build_atm_matrix(
-        get_smile_slice=get_smile_slice,
-        tickers=tickers,
-        asof=asof,
-        pillars_days=pillar_days,
-        tol_days=tolerance_days,
-    )
-    
-    if atm_df.empty:
-        peers_list = list(peers) if peers else []
-        return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
-    
-    # Use the cosine similarity function from beta_builder
-    return cosine_similarity_weights_from_atm_matrix(
-        atm_df=atm_df,
-        target=target,
-        peers=list(peers),
-        clip_negative=True,
-    )
 
 
 # ----------------------
