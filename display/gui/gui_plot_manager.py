@@ -487,15 +487,50 @@ class PlotManager:
 
                         x_mny = _mny_from_index_labels(tgt_grid.index)
                         y_syn = syn_grid[col_syn].astype(float).to_numpy()
+                        
+                        # Improved grid alignment for synthetic smile
                         if not tgt_grid.index.equals(syn_grid.index):
-                            common = tgt_grid.index.intersection(syn_grid.index)
-                            if len(common) >= 3:
-                                x_mny = _mny_from_index_labels(common)
-                                y_syn = syn_grid.loc[common, col_syn].astype(float).to_numpy()
+                            try:
+                                # Try interpolation-based alignment
+                                syn_mny = _mny_from_index_labels(syn_grid.index)
+                                syn_iv = syn_grid[col_syn].astype(float).to_numpy()
+                                
+                                # Filter valid data
+                                syn_valid = np.isfinite(syn_mny) & np.isfinite(syn_iv)
+                                tgt_valid = np.isfinite(x_mny)
+                                
+                                if np.sum(syn_valid) >= 2 and np.sum(tgt_valid) >= 2:
+                                    from scipy.interpolate import interp1d
+                                    syn_mny_clean = syn_mny[syn_valid]
+                                    syn_iv_clean = syn_iv[syn_valid]
+                                    tgt_mny_clean = x_mny[tgt_valid]
+                                    
+                                    # Interpolate within range
+                                    min_syn = np.min(syn_mny_clean)
+                                    max_syn = np.max(syn_mny_clean)
+                                    interp_mask = (tgt_mny_clean >= min_syn) & (tgt_mny_clean <= max_syn)
+                                    
+                                    if np.sum(interp_mask) >= 2:
+                                        tgt_mny_interp = tgt_mny_clean[interp_mask]
+                                        f_interp = interp1d(syn_mny_clean, syn_iv_clean, 
+                                                          kind='linear', bounds_error=False, fill_value=np.nan)
+                                        syn_iv_interp = f_interp(tgt_mny_interp)
+                                        x_mny = tgt_mny_interp
+                                        y_syn = syn_iv_interp
+                                        
+                            except (ImportError, Exception):
+                                # Fallback to intersection-based alignment
+                                common = tgt_grid.index.intersection(syn_grid.index)
+                                if len(common) >= 3:
+                                    x_mny = _mny_from_index_labels(common)
+                                    y_syn = syn_grid.loc[common, col_syn].astype(float).to_numpy()
 
-                        ax.plot(
-                            x_mny, y_syn, "--", linewidth=1.6, alpha=0.95, label="Synthetic smile (corr-matrix)"
-                        )
+                        # Filter final valid data before plotting
+                        final_valid = np.isfinite(x_mny) & np.isfinite(y_syn)
+                        if np.sum(final_valid) >= 2:
+                            ax.plot(
+                                x_mny[final_valid], y_syn[final_valid], "--", linewidth=1.6, alpha=0.95, label="Synthetic smile (corr-matrix)"
+                            )
                         ax.legend(loc="best", fontsize=8)
             except Exception:
                 pass
@@ -541,15 +576,61 @@ class PlotManager:
             y_tgt = tgt_grid[col_tgt].astype(float).to_numpy()
             y_syn = syn_grid[col_syn].astype(float).to_numpy()
 
+            # Improved grid alignment for target vs synthetic comparison
             if not tgt_grid.index.equals(syn_grid.index):
-                common = tgt_grid.index.intersection(syn_grid.index)
-                if len(common) >= 3:
-                    x_mny = _mny_from_index_labels(common)
-                    y_tgt = tgt_grid.loc[common, col_tgt].astype(float).to_numpy()
-                    y_syn = syn_grid.loc[common, col_syn].astype(float).to_numpy()
+                try:
+                    # Try interpolation-based alignment
+                    tgt_mny = _mny_from_index_labels(tgt_grid.index)
+                    syn_mny = _mny_from_index_labels(syn_grid.index)
+                    
+                    # Filter valid data
+                    tgt_valid = np.isfinite(tgt_mny) & np.isfinite(y_tgt)
+                    syn_valid = np.isfinite(syn_mny) & np.isfinite(y_syn)
+                    
+                    if np.sum(tgt_valid) >= 2 and np.sum(syn_valid) >= 2:
+                        from scipy.interpolate import interp1d
+                        tgt_mny_clean = tgt_mny[tgt_valid]
+                        tgt_iv_clean = y_tgt[tgt_valid]
+                        syn_mny_clean = syn_mny[syn_valid]
+                        syn_iv_clean = y_syn[syn_valid]
+                        
+                        # Find common moneyness range
+                        min_common = max(np.min(tgt_mny_clean), np.min(syn_mny_clean))
+                        max_common = min(np.max(tgt_mny_clean), np.max(syn_mny_clean))
+                        
+                        if max_common > min_common:
+                            # Create common grid
+                            common_grid = np.linspace(min_common, max_common, 50)
+                            
+                            # Interpolate both curves onto common grid
+                            f_tgt = interp1d(tgt_mny_clean, tgt_iv_clean, 
+                                           kind='linear', bounds_error=False, fill_value=np.nan)
+                            f_syn = interp1d(syn_mny_clean, syn_iv_clean, 
+                                           kind='linear', bounds_error=False, fill_value=np.nan)
+                            
+                            y_tgt_interp = f_tgt(common_grid)
+                            y_syn_interp = f_syn(common_grid)
+                            
+                            # Use interpolated values
+                            x_mny = common_grid
+                            y_tgt = y_tgt_interp
+                            y_syn = y_syn_interp
+                            
+                except (ImportError, Exception):
+                    # Fallback to intersection-based alignment
+                    common = tgt_grid.index.intersection(syn_grid.index)
+                    if len(common) >= 3:
+                        x_mny = _mny_from_index_labels(common)
+                        y_tgt = tgt_grid.loc[common, col_tgt].astype(float).to_numpy()
+                        y_syn = syn_grid.loc[common, col_syn].astype(float).to_numpy()
 
-            ax.plot(x_mny, y_tgt, "-", linewidth=1.8, label=f"{target} smile @ ~{int(T_days)}d")
-            ax.plot(x_mny, y_syn, "--", linewidth=1.8, label="Synthetic (corr-matrix)")
+            # Filter final valid data before plotting
+            final_valid = np.isfinite(x_mny) & np.isfinite(y_tgt) & np.isfinite(y_syn)
+            if np.sum(final_valid) >= 2:
+                ax.plot(x_mny[final_valid], y_tgt[final_valid], "-", linewidth=1.8, label=f"{target} smile @ ~{int(T_days)}d")
+                ax.plot(x_mny[final_valid], y_syn[final_valid], "--", linewidth=1.8, label="Synthetic (corr-matrix)")
+            else:
+                ax.text(0.5, 0.5, "Insufficient valid data for comparison", ha="center", va="center")
             ax.set_xlabel("Moneyness (K/S)")
             ax.set_ylabel("Implied Vol")
             ax.set_title(f"Synthetic Construction vs {target} | asof={asof} | ~{int(T_days)}d")
@@ -638,17 +719,85 @@ class PlotManager:
         syn_surface = self._smile_ctx.get("syn_surface")
         tgt_surface = self._smile_ctx.get("tgt_surface")
         if settings.get("overlay_synth") and syn_surface is not None:
-            syn_cols_days = _cols_to_days(syn_surface.columns)
-            jx = _nearest_tenor_idx(syn_cols_days, T0 * 365.25)
-            col_syn = syn_surface.columns[jx]
-            x_mny = _mny_from_index_labels(syn_surface.index)
-            y_syn = syn_surface[col_syn].astype(float).to_numpy()
-            if tgt_surface is not None and not tgt_surface.index.equals(syn_surface.index):
-                common = tgt_surface.index.intersection(syn_surface.index)
-                if len(common) >= 3:
-                    x_mny = _mny_from_index_labels(common)
-                    y_syn = syn_surface.loc[common, col_syn].astype(float).to_numpy()
-            ax.plot(x_mny, y_syn, linestyle="--", linewidth=1.5, alpha=0.9, label="Synthetic smile (corr-matrix)")
+            try:
+                syn_cols_days = _cols_to_days(syn_surface.columns)
+                jx = _nearest_tenor_idx(syn_cols_days, T0 * 365.25)
+                col_syn = syn_surface.columns[jx]
+                
+                # Extract synthetic surface data
+                syn_mny = _mny_from_index_labels(syn_surface.index)
+                syn_iv = syn_surface[col_syn].astype(float).to_numpy()
+                
+                # Filter out NaN values
+                valid_mask = np.isfinite(syn_mny) & np.isfinite(syn_iv)
+                if np.sum(valid_mask) >= 2:
+                    syn_mny_clean = syn_mny[valid_mask]
+                    syn_iv_clean = syn_iv[valid_mask]
+                    
+                    # If we have target surface, try to align grids
+                    if tgt_surface is not None:
+                        tgt_mny = _mny_from_index_labels(tgt_surface.index)
+                        tgt_valid = np.isfinite(tgt_mny)
+                        
+                        if np.sum(tgt_valid) >= 2:
+                            tgt_mny_clean = tgt_mny[tgt_valid]
+                            
+                            # Interpolate synthetic IV onto target moneyness grid
+                            try:
+                                from scipy.interpolate import interp1d
+                                if len(syn_mny_clean) >= 2 and len(tgt_mny_clean) >= 2:
+                                    # Only interpolate within the range of synthetic data
+                                    min_syn_mny = np.min(syn_mny_clean)
+                                    max_syn_mny = np.max(syn_mny_clean)
+                                    
+                                    # Filter target grid to interpolation range
+                                    interp_mask = (tgt_mny_clean >= min_syn_mny) & (tgt_mny_clean <= max_syn_mny)
+                                    if np.sum(interp_mask) >= 2:
+                                        tgt_mny_interp = tgt_mny_clean[interp_mask]
+                                        
+                                        # Create interpolator and interpolate
+                                        f_interp = interp1d(syn_mny_clean, syn_iv_clean, 
+                                                          kind='linear', bounds_error=False, fill_value=np.nan)
+                                        syn_iv_interp = f_interp(tgt_mny_interp)
+                                        
+                                        # Use interpolated values
+                                        x_mny = tgt_mny_interp
+                                        y_syn = syn_iv_interp
+                                    else:
+                                        x_mny = syn_mny_clean
+                                        y_syn = syn_iv_clean
+                                else:
+                                    x_mny = syn_mny_clean
+                                    y_syn = syn_iv_clean
+                            except ImportError:
+                                # Fallback if scipy not available
+                                x_mny = syn_mny_clean
+                                y_syn = syn_iv_clean
+                        else:
+                            x_mny = syn_mny_clean
+                            y_syn = syn_iv_clean
+                    else:
+                        x_mny = syn_mny_clean
+                        y_syn = syn_iv_clean
+                    
+                    # Plot the synthetic smile with proper alignment
+                    final_valid = np.isfinite(x_mny) & np.isfinite(y_syn)
+                    if np.sum(final_valid) >= 2:
+                        ax.plot(x_mny[final_valid], y_syn[final_valid], 
+                               linestyle="--", linewidth=1.5, alpha=0.9, label="Synthetic smile (corr-matrix)")
+                        
+            except Exception as e:
+                print(f"Warning: Failed to plot synthetic smile overlay: {e}")
+                # Fallback to simple approach
+                try:
+                    x_mny = _mny_from_index_labels(syn_surface.index)
+                    y_syn = syn_surface[col_syn].astype(float).to_numpy()
+                    valid = np.isfinite(x_mny) & np.isfinite(y_syn)
+                    if np.sum(valid) >= 2:
+                        ax.plot(x_mny[valid], y_syn[valid], linestyle="--", linewidth=1.5, alpha=0.9, 
+                               label="Synthetic smile (corr-matrix)")
+                except Exception:
+                    pass
 
         peer_slices = self._smile_ctx.get("peer_slices") or {}
         if settings.get("overlay_peers") and peer_slices:

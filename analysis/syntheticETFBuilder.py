@@ -1,5 +1,6 @@
 # analysis/syntheticETFBuilder.py
 from __future__ import annotations
+import sqlite3
 from typing import Dict, Optional, Iterable, Mapping, Union, Tuple
 import pandas as pd
 import numpy as np
@@ -195,7 +196,7 @@ def build_synthetic_iv(
     weights: Mapping[str, float],
     pillar_days: Union[int, Iterable[int]] = (7, 30, 60, 90, 180, 365),
     tolerance_days: float = 7.0,
-    conn: Optional = None,
+    conn: Optional["sqlite3.Connection"] = None,
 ) -> pd.DataFrame:
     """
     Build a synthetic ATM volatility series by pillar, combining per-ticker ATM IVs.
