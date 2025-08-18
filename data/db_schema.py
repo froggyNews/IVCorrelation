@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS options_quotes (
     delta          REAL,
     is_atm         INTEGER,
     volume         REAL,
+    open_interest  REAL,
     bid            REAL,
     ask            REAL,
     mid            REAL,
@@ -94,6 +95,7 @@ MIGRATIONS = [
     ("rho", "ALTER TABLE options_quotes ADD COLUMN rho REAL"),
     ("d1", "ALTER TABLE options_quotes ADD COLUMN d1 REAL"),
     ("d2", "ALTER TABLE options_quotes ADD COLUMN d2 REAL"),
+    ("open_interest", "ALTER TABLE options_quotes ADD COLUMN open_interest REAL"),
 ]
 
 def init_db(conn: sqlite3.Connection) -> None:

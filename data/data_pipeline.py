@@ -88,12 +88,12 @@ def enrich_quotes(
     cols = [
         "asof_date", "ticker", "expiry", "K", "call_put",
         "sigma", "S", "T", "moneyness", "log_moneyness", "delta", "is_atm",
-        "volume_raw", "bid_raw", "ask_raw", "last_raw",
+        "volume_raw", "open_interest_raw", "bid_raw", "ask_raw", "last_raw",
         "r", "q", "price", "gamma", "vega", "theta", "rho", "d1", "d2",
         "vendor"
     ]
     # Some raw cols may be missing; add if needed
-    for c in ["volume_raw", "bid_raw", "ask_raw", "last_raw"]:
+    for c in ["volume_raw", "open_interest_raw", "bid_raw", "ask_raw", "last_raw"]:
         if c not in out.columns:
             out[c] = None
 

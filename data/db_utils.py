@@ -66,11 +66,21 @@ def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
         if hasattr(expiry, 'strftime'):  # pandas Timestamp or datetime
             expiry = expiry.strftime('%Y-%m-%d') if hasattr(expiry, 'strftime') else str(expiry)
         
+        volume = q.get("volume", q.get("volume_raw"))
+        bid = q.get("bid", q.get("bid_raw"))
+        ask = q.get("ask", q.get("ask_raw"))
+        mid = q.get("mid")
+        if mid is None and bid is not None and ask is not None:
+            mid = (bid + ask) / 2
+        if mid is None:
+            mid = q.get("last_raw")
+        open_interest = q.get("open_interest", q.get("open_interest_raw"))
+
         rows.append((
             asof_date, q["ticker"], expiry, float(q["K"]), q["call_put"],
             q.get("sigma"), q.get("S"), q.get("T"), q.get("moneyness"), q.get("log_moneyness"), q.get("delta"),
             1 if q.get("is_atm") else 0,
-            q.get("volume"), q.get("bid"), q.get("ask"), q.get("mid"),
+            volume, open_interest, bid, ask, mid,
             q.get("r"), q.get("q"), q.get("price"), q.get("gamma"), q.get("vega"), q.get("theta"), q.get("rho"), q.get("d1"), q.get("d2"),
             q.get("vendor", "yfinance"),
         ))
@@ -81,10 +91,10 @@ def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
             INSERT OR REPLACE INTO options_quotes (
                 asof_date, ticker, expiry, strike, call_put,
                 iv, spot, ttm_years, moneyness, log_moneyness, delta, is_atm,
-                volume, bid, ask, mid,
+                volume, open_interest, bid, ask, mid,
                 r, q, price, gamma, vega, theta, rho, d1, d2,
                 vendor
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
