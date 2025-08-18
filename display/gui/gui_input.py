@@ -238,6 +238,12 @@ class InputPanel(ttk.Frame):
         self.ent_pillars.grid(row=0, column=1, padx=6)
         self.ent_pillars.bind("<KeyRelease>", lambda e: (self._sync_settings(), self._refresh_visibility()))
 
+        ttk.Label(row3, text="ATM band").grid(row=0, column=4, sticky="w")
+        self.ent_atm_band = ttk.Entry(row3, width=6)
+        self.ent_atm_band.insert(0, f"{DEFAULT_ATM_BAND:.2f}")
+        self.ent_atm_band.grid(row=0, column=5, padx=6)
+        self.ent_atm_band.bind("<KeyRelease>", self._sync_settings)
+
         # Row 4: Weight power and clipping controls
         row4 = ttk.Frame(self); row4.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
         
@@ -413,6 +419,12 @@ class InputPanel(ttk.Frame):
         except Exception:
             return list(DEFAULT_PILLARS)
 
+    def get_atm_band(self) -> float:
+        try:
+            return float(self.ent_atm_band.get())
+        except Exception:
+            return DEFAULT_ATM_BAND
+
     def get_settings(self) -> dict:
         """Return a snapshot of all current settings."""
         self._sync_settings()
@@ -444,6 +456,7 @@ class InputPanel(ttk.Frame):
                 T_days=self.get_T_days(),
                 ci=self.get_ci(),
                 x_units=self.get_x_units(),
+                atm_band=self.get_atm_band(),
                 weight_mode=weight_mode,
                 weight_power=self.get_weight_power(),
                 clip_negative=self.get_clip_negative(),
