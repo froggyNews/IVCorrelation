@@ -479,8 +479,8 @@ def save_betas(
         )
         filename = f"betas_{mode}_vs_{benchmark}.parquet"
         p = os.path.join(base_path, filename)
-        df = res.sort_index().to_frame(name="beta")
-        df.to_parquet(p)
+        df = res.sort_index().to_frame(name="beta").reset_index().rename(columns={"index": "ticker"})
+        df.to_parquet(p, index=False)
         return [p]
     return save_correlations(mode=mode, benchmark=benchmark, base_path=base_path)
 # =========================
