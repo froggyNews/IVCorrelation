@@ -7,7 +7,16 @@ import pandas as pd
 
 from .db_schema import init_db
 
-DB_PATH = __file__.replace("db_utils.py", "iv_data.db")
+import os
+
+# Allow override via environment variable; fallback to the old logic
+import os
+
+# Allow override via environment variable; fallback to the old logic
+DB_PATH = os.getenv(
+    "DB_PATH",
+    __file__.replace("db_utils.py", "iv_data.db")
+)
 
 
 def get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
