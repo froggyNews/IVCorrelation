@@ -169,7 +169,7 @@ class UnifiedWeightComputer:
         
         if config.feature_set == FeatureSet.ATM:
             return self._build_atm_features(tickers, asof, config)
-        elif config.feature_set == FeatureSet.SURFACE_VECTOR:
+        elif config.feature_set in (FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
             return self._build_surface_features(tickers, asof, config)
         elif config.feature_set == FeatureSet.UNDERLYING_PX:
             return self._build_underlying_px_features(tickers)
@@ -289,14 +289,25 @@ class UnifiedWeightComputer:
     def _correlation_weights(
         self, feature_df: pd.DataFrame, target: str, peers_list: list[str], config: WeightConfig
     ) -> pd.Series:
-        """Compute correlation-based weights."""
-        from analysis.beta_builder import corr_weights_from_matrix
-        
-        return corr_weights_from_matrix(
-            feature_df, target, peers_list,
-            clip_negative=config.clip_negative,
-            power=config.power
-        )
+        """Compute correlation-based weights without silent fallback."""
+        import numpy as np
+
+        target = target.upper()
+        peers_list = [p.upper() for p in peers_list]
+
+        corr_df = feature_df.T.corr()
+        s = corr_df.reindex(index=peers_list, columns=[target]).iloc[:, 0]
+        s = s.apply(pd.to_numeric, errors="coerce")
+        if config.clip_negative:
+            s = s.clip(lower=0.0)
+        if config.power is not None and float(config.power) != 1.0:
+            s = s.pow(float(config.power))
+
+        total = float(s.sum())
+        if not np.isfinite(total) or total <= 0:
+            raise ValueError("correlation weights sum to zero")
+
+        return (s / total).reindex(peers_list).fillna(0.0)
     
     def _pca_weights(
         self, feature_df: pd.DataFrame, target: str, peers_list: list[str], config: WeightConfig
