@@ -263,7 +263,7 @@ def plot_correlation_details(
     ax.set_yticks(range(len(corr_df.index)))
     ax.set_xticklabels(corr_df.columns, rotation=45, ha="right", fontsize=9)
     ax.set_yticklabels(corr_df.index, fontsize=9)
-    ax.set_title("ATM Correlation (per expiries)")
+    ax.set_title(" (per expiries)")
 
     if show_values:
         n, m = data.shape

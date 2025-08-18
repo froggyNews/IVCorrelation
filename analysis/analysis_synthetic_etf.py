@@ -101,6 +101,44 @@ class SyntheticETFBuilder:
         self,
         custom_weights: Optional[Dict[str, float]] = None,
     ) -> pd.Series:
+        """Compute portfolio weights using unified weight computation system."""
+        from analysis.unified_weights import compute_unified_weights
+        
+        if self.cfg.weight_mode == "custom":
+            if not custom_weights:
+                raise ValueError("custom weight_mode selected but no custom_weights supplied")
+            w = pd.Series(custom_weights, dtype=float)
+            return w / w.sum()
+        
+        # Use unified weight computation for all other modes
+        try:
+            w = compute_unified_weights(
+                target=self.cfg.target,
+                peers=self.cfg.peers,
+                mode=self.cfg.weight_mode,
+                pillars_days=self.cfg.pillar_days,
+                tenors=self.cfg.tenors,
+                mny_bins=self.cfg.mny_bins,
+                clip_negative=self.cfg.clip_negative,
+                power=self.cfg.weight_power,
+            )
+            
+            if w.empty:
+                raise ValueError(f"{self.cfg.weight_mode} weight computation returned empty series")
+            
+            self._weights = w
+            return w
+            
+        except Exception as e:
+            print(f"Unified weight computation failed: {e}")
+            # Fallback to legacy methods for critical modes
+            return self._compute_weights_legacy(custom_weights)
+
+    def _compute_weights_legacy(
+        self,
+        custom_weights: Optional[Dict[str, float]] = None,
+    ) -> pd.Series:
+        """Legacy weight computation methods (for fallback)."""
         def _custom() -> pd.Series:
             if not custom_weights:
                 raise ValueError("custom weight_mode selected but no custom_weights supplied")

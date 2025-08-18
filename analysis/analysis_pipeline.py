@@ -201,6 +201,49 @@ def compute_peer_weights(
     tenor_days: Iterable[int] = DEFAULT_TENORS,
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
 ) -> pd.Series:
+    """
+    Compute portfolio weights using unified weight computation system.
+    
+    This function now uses the unified weight computation engine for consistency
+    and better error handling across all weight modes and feature sets.
+    """
+    try:
+        from analysis.unified_weights import compute_unified_weights
+        
+        # Convert legacy tuple format to string format
+        if isinstance(weight_mode, tuple):
+            method, feature = weight_mode
+            mode_str = f"{method}_{feature}"
+        else:
+            mode_str = weight_mode
+        
+        return compute_unified_weights(
+            target=target,
+            peers=peers,
+            mode=mode_str,
+            asof=asof,
+            pillars_days=pillar_days,
+            tenors=tenor_days,
+            mny_bins=mny_bins,
+        )
+    except Exception as e:
+        # Fallback to legacy system for compatibility during transition
+        print(f"Unified weights failed ({e}), falling back to legacy system")
+        return _compute_peer_weights_legacy(
+            target, peers, weight_mode, asof, pillar_days, tenor_days, mny_bins
+        )
+
+
+def _compute_peer_weights_legacy(
+    target: str,
+    peers: Iterable[str],
+    weight_mode: Union[str, Tuple[str, str]] = ("corr", "iv_atm"),
+    asof: str | None = None,
+    pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
+    tenor_days: Iterable[int] = DEFAULT_TENORS,
+    mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
+) -> pd.Series:
+    """Legacy weight computation system (for fallback during transition)."""
 
 
     target = target.upper()
@@ -221,6 +264,14 @@ def compute_peer_weights(
             method, feature = mode.split("_", 1)
         else:
             method, feature = mode, "iv_atm"
+
+        # Handle legacy mode mappings
+        if method == "iv":
+            method, feature = "corr", "iv_atm"
+        elif method == "surface":
+            method, feature = "corr", "surface"
+        elif method == "ul":
+            method, feature = "corr", "ul"
 
         # legacy modes routed to existing helpers
         if feature in ("iv_atm", "surface", "ul") and method == "corr":

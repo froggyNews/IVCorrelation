@@ -53,7 +53,7 @@ DEFAULT_OVERLAY = False
 PLOT_TYPES = (
     "Smile (K/S vs IV)",
     "Term (ATM vs T)",
-    "Corr Matrix (ATM)",
+    "Corr Matrix",
     "Synthetic Surface (Smile)",
     "ETF Weights",
 )
@@ -211,9 +211,7 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row3, text="Weight mode").grid(row=0, column=2, sticky="w")
         self.cmb_weight_mode = ttk.Combobox(row3, values=[
-            "iv_atm", "ul", "surface", "surface_grid",
-            "pca_atm_market", "pca_atm_regress",
-            "pca_surface_market", "pca_surface_regress"
+            "iv_atm", "ul", "surface", "surface_grid"
         ], width=18, state="readonly")
         self.cmb_weight_mode.set("iv_atm")
         self.cmb_weight_mode.grid(row=0, column=3, padx=6)
@@ -225,18 +223,34 @@ class InputPanel(ttk.Frame):
         self.ent_pillars.grid(row=0, column=1, padx=6)
         self.ent_pillars.bind("<KeyRelease>", self._sync_settings)
 
+        # Row 4: Weight power and clipping controls
+        row4 = ttk.Frame(self); row4.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
+        
+        ttk.Label(row4, text="Weight power").grid(row=0, column=0, sticky="w")
+        self.var_weight_power = tk.DoubleVar(value=1.0)
+        self.scl_weight_power = ttk.Scale(row4, from_=1.0, to=3.0, variable=self.var_weight_power, 
+                                          orient=tk.HORIZONTAL, length=120)
+        self.scl_weight_power.grid(row=0, column=1, padx=6, sticky="w")
+        self.var_weight_power.trace_add("write", lambda *args: self._sync_settings())
+        
+        self.var_clip_negative = tk.BooleanVar(value=True)
+        self.chk_clip_negative = ttk.Checkbutton(row4, text="Clip negative weights", 
+                                                variable=self.var_clip_negative)
+        self.chk_clip_negative.grid(row=0, column=2, padx=8, sticky="w")
+        self.var_clip_negative.trace_add("write", lambda *args: self._sync_settings())
+
         self.var_overlay_synth = tk.BooleanVar(value=bool(overlay_synth))
-        self.chk_overlay_synth = ttk.Checkbutton(row3, text="Overlay synth", variable=self.var_overlay_synth)
-        self.chk_overlay_synth.grid(row=0, column=4, padx=8, sticky="w")
+        self.chk_overlay_synth = ttk.Checkbutton(row4, text="Overlay synth", variable=self.var_overlay_synth)
+        self.chk_overlay_synth.grid(row=0, column=3, padx=8, sticky="w")
         self.var_overlay_synth.trace_add("write", lambda *args: self._sync_settings())
 
         self.var_overlay_peers = tk.BooleanVar(value=bool(overlay_peers))
-        self.chk_overlay_peers = ttk.Checkbutton(row3, text="Overlay peers", variable=self.var_overlay_peers)
-        self.chk_overlay_peers.grid(row=0, column=5, padx=4, sticky="w")
+        self.chk_overlay_peers = ttk.Checkbutton(row4, text="Overlay peers", variable=self.var_overlay_peers)
+        self.chk_overlay_peers.grid(row=0, column=4, padx=4, sticky="w")
         self.var_overlay_peers.trace_add("write", lambda *args: self._sync_settings())
 
-        self.btn_plot = ttk.Button(row3, text="Plot")
-        self.btn_plot.grid(row=0, column=6, padx=8)
+        self.btn_plot = ttk.Button(row4, text="Plot")
+        self.btn_plot.grid(row=0, column=5, padx=8)
 
         # initial sync of settings
         self._sync_settings()
@@ -368,6 +382,12 @@ class InputPanel(ttk.Frame):
     def get_weight_mode(self) -> str:
         return self.cmb_weight_mode.get() or DEFAULT_WEIGHT_MODE
 
+    def get_weight_power(self) -> float:
+        return self.var_weight_power.get()
+
+    def get_clip_negative(self) -> bool:
+        return self.var_clip_negative.get()
+
     def get_pillars(self) -> list[int]:
         try:
             txt = self.ent_pillars.get().strip()
@@ -395,6 +415,8 @@ class InputPanel(ttk.Frame):
                 ci=self.get_ci(),
                 x_units=self.get_x_units(),
                 weight_mode=self.get_weight_mode(),
+                weight_power=self.get_weight_power(),
+                clip_negative=self.get_clip_negative(),
                 overlay_synth=self.get_overlay_synth(),
                 overlay_peers=self.get_overlay_peers(),
                 pillars=self.get_pillars(),
