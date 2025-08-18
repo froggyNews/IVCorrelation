@@ -321,8 +321,12 @@ class PlotManager:
                 print(f"surface_grid weights failed: {e}")
                 return None
 
-        # 1) Use cached Corr Matrix from the Corr Matrix plot
-        if isinstance(self.last_corr_df, pd.DataFrame) and not self.last_corr_df.empty:
+        # 1) Use cached Corr Matrix from the Corr Matrix plot (only if weight_mode unchanged)
+        if (
+            isinstance(self.last_corr_df, pd.DataFrame)
+            and not self.last_corr_df.empty
+            and self.last_corr_meta.get("weight_mode") == weight_mode
+        ):
             try:
                 w = corr_weights(self.last_corr_df, target, peers, clip_negative=True, power=1.0)
                 if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
@@ -334,8 +338,25 @@ class PlotManager:
             except Exception:
                 pass
 
+        # 2) Fallback: compute weights directly using the requested mode
+        try:
+            from analysis.analysis_pipeline import compute_peer_weights
 
-
+            w = compute_peer_weights(
+                target=target,
+                peers=peers,
+                weight_mode=weight_mode,
+                asof=asof,
+                pillar_days=pillars or [7, 30, 60, 90, 180, 365],
+            )
+            if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
+                w = w.dropna().astype(float)
+                w = w[w.index.isin(peers)]
+                if not w.empty and np.isfinite(w.sum()):
+                    return (w / w.sum()).astype(float)
+        except Exception as e:
+            print(f"compute_peer_weights failed: {e}")
+            return None
 
     def _plot_smile(self, ax, df, target, asof, model, T_days, ci,
                     overlay_synth, peers, weight_mode):
@@ -821,6 +842,7 @@ class PlotManager:
             "pillars": list(pillars),
             "corr_method": corr_method,
             "demean_rows": bool(demean_rows),
+            "weight_mode": weight_mode,
         }
 
     def _corr_weighted_synth_atm_curve(
