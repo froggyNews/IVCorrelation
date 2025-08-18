@@ -917,14 +917,14 @@ def save_correlations(
             filename = f"betas_{mode}_{int(pillar)}d_vs_{benchmark}.parquet"
             p = os.path.join(base_path, filename)
             # Convert Series to DataFrame for parquet compatibility
-            df = ser.sort_index().to_frame(name="beta")
-            df.to_parquet(p)
+            df = ser.sort_index().to_frame(name="beta").reset_index().rename(columns={"index": "ticker"})
+            df.to_parquet(p, index=False)
             paths.append(p)
     else:
         filename = f"betas_{mode}_vs_{benchmark}.parquet"
         p = os.path.join(base_path, filename)
         # Convert Series to DataFrame for parquet compatibility
-        df = res.sort_index().to_frame(name="beta")
-        df.to_parquet(p)
+        df = res.sort_index().to_frame(name="beta").reset_index().rename(columns={"index": "ticker"})
+        df.to_parquet(p, index=False)
         paths.append(p)
     return paths
