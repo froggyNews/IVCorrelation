@@ -456,6 +456,7 @@ class PlotManager:
             self.last_fit_info = {
                 "ticker": target,
                 "asof": asof,
+                "expiry": str(expiry_dt.date()) if expiry_dt is not None else None,
                 "svi": svi_params,
                 "sabr": sabr_params,
                 "sens": sens_params,

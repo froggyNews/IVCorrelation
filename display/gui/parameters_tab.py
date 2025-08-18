@@ -9,6 +9,9 @@ class ParametersTab(ttk.Frame):
 
     def __init__(self, master):
         super().__init__(master)
+        self.lbl_meta = ttk.Label(self, text="", anchor="w")
+        self.lbl_meta.pack(fill=tk.X, padx=4, pady=(4, 2))
+
         cols = ("Model", "Parameter", "Value")
         self.tree = ttk.Treeview(self, columns=cols, show="headings")
         for c in cols:
@@ -21,7 +24,17 @@ class ParametersTab(ttk.Frame):
         for i in self.tree.get_children():
             self.tree.delete(i)
         if not info:
+            self.lbl_meta.config(text="No fit data")
             return
+
+        parts = []
+        if info.get("ticker"):
+            parts.append(str(info["ticker"]))
+        if info.get("asof"):
+            parts.append(str(info["asof"]))
+        if info.get("expiry"):
+            parts.append(f"expiry {info['expiry']}")
+        self.lbl_meta.config(text="  ".join(parts))
 
         def insert(model: str, params: Dict[str, Any]):
             for k, v in params.items():
