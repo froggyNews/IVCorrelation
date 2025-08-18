@@ -25,6 +25,7 @@ from analysis.analysis_pipeline import available_tickers, available_dates, inges
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager
 from display.gui.spillover_gui import launch_spillover, SpilloverFrame
+from display.gui.parameters_tab import ParametersTab
 
 
 class BrowserApp(tk.Tk):
@@ -39,9 +40,10 @@ class BrowserApp(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # ---- Model params tab ----
+        # ---- Main exploration tab ----
         self.tab_browser = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_browser, text="Model Params")
+        # Clarify purpose: this tab lets users explore IV surfaces
+        self.notebook.add(self.tab_browser, text="Parameter Explorer")
 
         # Inputs
         self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
@@ -96,6 +98,10 @@ class BrowserApp(tk.Tk):
 
         self.plot_mgr = PlotManager()
         self.plot_mgr.attach_canvas(self.canvas)
+
+        # ---- Parameter summary tab ----
+        self.tab_params = ParametersTab(self.notebook)
+        self.notebook.add(self.tab_params, text="Parameter Summary")
 
         # ---- Spillover tab ----
         self.tab_spillover = SpilloverFrame(self.notebook)
@@ -257,6 +263,8 @@ class BrowserApp(tk.Tk):
                 self.canvas.draw()
                 self.after(0, self._update_nav_buttons)
                 self.after(0, self._update_animation_buttons)
+                # Refresh parameter table with latest fit info
+                self.after(0, lambda: self.tab_params.update(self.plot_mgr.last_fit_info))
 
             except Exception as e:
                 def handle_err(exc: Exception):
