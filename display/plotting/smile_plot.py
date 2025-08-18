@@ -7,7 +7,12 @@ import matplotlib.pyplot as plt
 
 from volModel.sviFit import fit_svi_slice, svi_smile_iv
 from volModel.sabrFit import fit_sabr_slice, sabr_smile_iv
-from .confidence_bands import svi_confidence_bands, sabr_confidence_bands, Bands
+from .confidence_bands import (
+    svi_confidence_bands,
+    sabr_confidence_bands,
+    synthetic_etf_confidence_bands,
+    Bands,
+)
 from display.plotting.anim_utils import add_keyboard_toggles, add_legend_toggles
 
 ModelName = Literal["svi", "sabr"]
@@ -143,3 +148,62 @@ def fit_and_plot_smile(
         "S": float(S),
         "series_map": series_map if (enable_svi_toggles and model == "svi") else None,
     }
+
+
+def plot_synthetic_etf_smile(
+    ax: plt.Axes,
+    surfaces: Dict[str, np.ndarray],
+    weights: Dict[str, float],
+    grid: np.ndarray,
+    *,
+    level: float = 0.68,
+    n_boot: int = 200,
+    label: Optional[str] = "Synthetic ETF",
+    line_kwargs: Optional[Dict] = None,
+) -> Bands:
+    """Plot synthetic ETF smile with confidence bands.
+
+    Parameters
+    ----------
+    ax : plt.Axes
+        Axis to render on.
+    surfaces : dict
+        ``{ticker -> iv_array}`` aligned to ``grid``.
+    weights : dict
+        ``{ticker -> weight}`` for the synthetic combination.
+    grid : np.ndarray
+        Strike or moneyness grid.
+    level : float, optional
+        Confidence level for the bands.
+    n_boot : int, optional
+        Number of bootstrap samples.
+    label : str, optional
+        Legend label for the mean line.
+    line_kwargs : dict, optional
+        Extra kwargs for the mean line.
+
+    Returns
+    -------
+    Bands
+        Bootstrap bands for the synthetic smile.
+    """
+    bands = synthetic_etf_confidence_bands(
+        surfaces=surfaces,
+        weights=weights,
+        grid_K=np.asarray(grid, float),
+        level=level,
+        n_boot=n_boot,
+    )
+
+    ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(level*100)}%)")
+
+    line_kwargs = dict(line_kwargs or {})
+    line_kwargs.setdefault("lw", 1.8)
+    ax.plot(bands.x, bands.mean, label=label, **line_kwargs)
+
+    ax.set_xlabel("Strike / Moneyness")
+    ax.set_ylabel("Implied Vol")
+    if not ax.get_legend():
+        ax.legend(loc="best", fontsize=8)
+
+    return bands

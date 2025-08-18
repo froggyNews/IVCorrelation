@@ -3,9 +3,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import Optional
+from typing import Optional, Dict
 
-from display.plotting.confidence_bands import bootstrap_bands, Bands
+from display.plotting.confidence_bands import (
+    bootstrap_bands,
+    synthetic_etf_pillar_bands,
+    Bands,
+)
 
 
 def _polynomial_fit_fn(x: np.ndarray, y: np.ndarray, degree: int = 2) -> dict:
@@ -185,3 +189,38 @@ def plot_atm_term_structure(
     ax.set_xlabel(x_label)
     ax.set_ylabel("Implied Vol (ATM)")
     ax.legend(loc="best", fontsize=8)
+
+
+def plot_synthetic_etf_term_structure(
+    ax: plt.Axes,
+    atm_data: Dict[str, np.ndarray],
+    weights: Dict[str, float],
+    pillar_days: np.ndarray,
+    *,
+    level: float = 0.68,
+    n_boot: int = 200,
+    label: str = "Synthetic ATM",
+    line_kwargs: Optional[Dict] = None,
+) -> Bands:
+    """Plot synthetic ETF ATM term structure with confidence bands."""
+
+    bands = synthetic_etf_pillar_bands(
+        atm_data=atm_data,
+        weights=weights,
+        pillar_days=np.asarray(pillar_days, float),
+        level=level,
+        n_boot=n_boot,
+    )
+
+    ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(level*100)}%)")
+
+    line_kwargs = dict(line_kwargs or {})
+    line_kwargs.setdefault("lw", 1.8)
+    ax.plot(bands.x, bands.mean, label=label, **line_kwargs)
+
+    ax.set_xlabel("Pillar (days)")
+    ax.set_ylabel("Implied Vol (ATM)")
+    if not ax.get_legend():
+        ax.legend(loc="best", fontsize=8)
+
+    return bands
