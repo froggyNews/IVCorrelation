@@ -93,7 +93,8 @@ def surface_feature_matrix(
             feat_names = [f"T{c}_{r}" for c in df.columns for r in df.index]
         feats.append(arr); ok.append(tU)
     if not feats:
-        raise RuntimeError("no surface data for requested date")
+        # Return an empty matrix; the caller will decide how to handle it
+        return {}, np.empty((0, 0)), []
     X = np.vstack(feats)
     X = _impute_col_median(X)
     if standardize:

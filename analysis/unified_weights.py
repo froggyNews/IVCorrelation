@@ -106,6 +106,49 @@ class UnifiedWeightComputer:
     def __init__(self):
         self._feature_cache: Dict[str, pd.DataFrame] = {}
     
+    def _choose_asof(self, target: str, peers: list[str], config: WeightConfig) -> str:
+        """
+        Choose a robust asof date for the requested feature set:
+        - SURFACE/SURFACE_VECTOR: pick the most recent date that exists for ≥1 peer
+          and ideally for several (mode of available dates).
+        - Others: keep existing behavior (most-recent date for target).
+        """
+        from analysis.syntheticETFBuilder import build_surface_grids
+        from analysis.analysis_pipeline import available_dates, get_most_recent_date_global
+
+        # If caller supplied one, honor it
+        if config.asof:
+            return config.asof
+
+        if config.feature_set in (FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+            # Build minimal grids for all tickers and look at date coverage
+            tickers = [target] + peers
+            grids = build_surface_grids(tickers=tickers)  # fast, uses DB
+            # collect all candidate dates and pick the most common (mode), then latest
+            counts = {}
+            for t, date_map in grids.items():
+                for d in date_map.keys():
+                    counts[d] = counts.get(d, 0) + 1
+            if counts:
+                best = sorted(counts.items(), key=lambda kv: (kv[1], kv[0]))[-1][0]
+                return pd.Timestamp(best).strftime("%Y-%m-%d")
+
+            # Fallback: global most recent in DB
+            d = get_most_recent_date_global()
+            if d:
+                return d
+
+        # Default path (ATM/UL, etc.): keep prior logic
+        dates = available_dates(ticker=target, most_recent_only=True)
+        if dates:
+            return dates[0]
+        # last ditch: any global date
+        from analysis.analysis_pipeline import get_most_recent_date_global
+        d = get_most_recent_date_global()
+        if d:
+            return d
+        raise ValueError(f"No available data to select asof for {target}/{peers}")
+
     def compute_weights(
         self,
         target: str,
@@ -132,15 +175,8 @@ class UnifiedWeightComputer:
         if config.method == WeightMethod.OPEN_INTEREST:
             return self._open_interest_weights(peers_list, config.asof)
         
-        # Get as-of date
-        asof = config.asof
-        if asof is None:
-            dates = available_dates(ticker=target, most_recent_only=True)
-            if not dates:
-                raise ValueError(
-                    f"No available data for target {target}; cannot compute weights"
-                )
-            asof = dates[0]
+        # Get as-of date (robust)
+        asof = self._choose_asof(target, peers_list, config)
         
         # Build feature matrix
         feature_df = self._build_feature_matrix(
