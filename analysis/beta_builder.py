@@ -511,21 +511,17 @@ def peer_weights_from_correlations(
         tenor_days=tenor_days,
         mny_bins=mny_bins,
     )
-
-    # Handle empty results gracefully
     if isinstance(res, dict):
-        if not res:  # Empty dictionary
-            print(f"Warning: No correlation data available for {mode} mode with benchmark {benchmark}")
-            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
-        try:
-            ser = pd.concat(res).groupby(level=1).mean()
-        except Exception as e:
-            print(f"Warning: Failed to process correlation data: {e}")
-            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+        if not res:
+            raise ValueError(
+                f"No correlation data available for {mode} mode with benchmark {benchmark}"
+            )
+        ser = pd.concat(res).groupby(level=1).mean()
     else:
         if res is None or res.empty:
-            print(f"Warning: No correlation data available for {mode} mode with benchmark {benchmark}")
-            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+            raise ValueError(
+                f"No correlation data available for {mode} mode with benchmark {benchmark}"
+            )
         ser = res
 
     ser = ser.reindex(peers_list).dropna()
@@ -571,7 +567,7 @@ def cosine_similarity_weights_from_matrix(
     target = target.upper()
     peers = [p.upper() for p in peers]
     if target not in feature_df.index:
-        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
+        raise ValueError(f"target {target} not in feature matrix")
 
     df = feature_df.apply(pd.to_numeric, errors="coerce")
     X = _impute_col_median(df.to_numpy(float))
@@ -595,7 +591,7 @@ def cosine_similarity_weights_from_matrix(
         ser = ser.pow(float(power))
     total = float(ser.sum())
     if not np.isfinite(total) or total <= 0:
-        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
+        raise ValueError("cosine similarity weights sum to zero")
     return (ser / total).reindex(peers).fillna(0.0)
 
 
@@ -685,15 +681,10 @@ def cosine_similarity_weights(
         )
 
     elif "ul" in mode_lower:
-        try:
-            from data.db_utils import get_conn as conn_fn  # late import
-        except Exception:  # pragma: no cover - fallback for environments without DB
-            conn_fn = lambda: None  # type: ignore
+        from data.db_utils import get_conn as conn_fn  # late import
         ret = _underlying_log_returns(conn_fn)
         if ret.empty or target.upper() not in ret.columns:
-            return pd.Series(
-                1.0 / max(len(peers), 1), index=[p.upper() for p in peers], dtype=float
-            )
+            raise ValueError("underlying return data unavailable for weights")
         df = ret[[c for c in [target] + peers if c in ret.columns]].T
         weights = cosine_similarity_weights_from_matrix(
             df, target, peers, clip_negative=clip_negative, power=power
@@ -758,28 +749,22 @@ def build_peer_weights(
             )
             feature_df = pd.DataFrame(X, index=list(grids.keys()), columns=names)
     elif feature == "ul_px":
-        try:
-            from data.db_utils import get_conn as conn_fn  # late import
-        except Exception:  # pragma: no cover
-            conn_fn = lambda: None  # type: ignore
+        from data.db_utils import get_conn as conn_fn  # late import
         ret = _underlying_log_returns(conn_fn)
         if ret.empty:
-            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+            raise ValueError("underlying returns unavailable")
         subset = ret[[c for c in [target] + peers_list if c in ret.columns]]
         feature_df = subset.T
     elif feature == "ul_vol":
-        try:
-            from data.db_utils import get_conn as conn_fn  # late import
-        except Exception:  # pragma: no cover
-            conn_fn = lambda: None  # type: ignore
+        from data.db_utils import get_conn as conn_fn  # late import
         vol = _underlying_vol_series(conn_fn, window=window, min_obs=min_obs)
         if vol.empty:
-            return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+            raise ValueError("underlying volatility data unavailable")
         subset = vol[[c for c in [target] + peers_list if c in vol.columns]]
         feature_df = subset.T
 
     if feature_df is None or feature_df.empty:
-        return pd.Series(1.0 / max(len(peers_list), 1), index=peers_list, dtype=float)
+        raise ValueError("feature data unavailable for peer weights")
 
     if method == "corr":
         return corr_weights_from_matrix(

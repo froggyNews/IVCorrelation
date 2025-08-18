@@ -39,6 +39,7 @@ def test_open_interest_weighting(monkeypatch):
         mode="oi",
         asof="2024-01-01",
     )
+
     assert weights.loc["AAA"] == pytest.approx(0.25)
     assert weights.loc["BBB"] == pytest.approx(0.75)
 

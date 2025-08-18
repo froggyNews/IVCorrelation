@@ -287,7 +287,7 @@ def corr_weights(
         s = s.pow(float(power))
     total = float(s.sum())
     if not np.isfinite(total) or total <= 0:
-        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
+        raise ValueError("correlation weights sum to zero")
     return (s / total).fillna(0.0)
 
 
@@ -330,95 +330,65 @@ def flexible_weights(
     """
     target = target.upper()
     peers = [p.upper() for p in peers]
-    
-    # Handle empty or invalid inputs gracefully
+
     if data_df is None or data_df.empty or not peers:
-        return pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
-    
-    # Determine weight computation strategy based on mode and data
-    if weight_mode == "equal" or (weight_mode == "auto" and data_df.shape[1] < 2):
-        # Equal weights - always works regardless of data quality
+        raise ValueError("invalid data for weight computation")
+
+    if weight_mode == "equal":
         weights = pd.Series(1.0, index=peers, dtype=float)
-    
+
     elif weight_mode in ("corr", "correlation", "auto"):
-        # Correlation-based weights with fallbacks
+        if data_df.shape[1] < 2 and weight_mode == "auto":
+            raise ValueError("not enough features for correlation weights")
         if target in data_df.index and target in data_df.columns:
-            # Square correlation matrix - extract target correlations
-            corr_series = data_df.loc[peers, target] if target in data_df.columns else data_df.loc[target, peers]
+            corr_series = data_df.loc[peers, target]
         elif target in data_df.index:
-            # Feature matrix - compute correlations
             feature_corr = data_df.T.corr()
-            if target in feature_corr.columns:
-                corr_series = feature_corr.loc[peers, target]
-            else:
-                # Fallback to equal weights
-                corr_series = pd.Series(1.0, index=peers)
+            if target not in feature_corr.columns:
+                raise ValueError("target not present for correlation computation")
+            corr_series = feature_corr.loc[peers, target]
         else:
-            # Target not found - use equal weights
-            corr_series = pd.Series(1.0, index=peers)
-            
+            raise ValueError("target not found in data")
         weights = corr_series.fillna(0.0)
-    
+
     elif weight_mode in ("distance", "similarity"):
-        # Distance/similarity-based weights
-        if target in data_df.index:
-            target_features = data_df.loc[target].fillna(0.0)
-            peer_features = data_df.loc[data_df.index.intersection(peers)].fillna(0.0)
-            
-            if not peer_features.empty:
-                # Compute euclidean distance or cosine similarity
-                if weight_mode == "distance":
-                    distances = np.sqrt(((peer_features - target_features) ** 2).sum(axis=1))
-                    # Convert distance to similarity (inverse relationship)
-                    weights = 1.0 / (1.0 + distances)
-                else:  # similarity
-                    # Cosine similarity
-                    target_norm = np.linalg.norm(target_features)
-                    if target_norm > 0:
-                        similarities = peer_features.dot(target_features) / (
-                            np.linalg.norm(peer_features, axis=1) * target_norm
-                        )
-                        weights = pd.Series(similarities, index=peer_features.index)
-                    else:
-                        weights = pd.Series(1.0, index=peer_features.index)
-                
-                # Reindex to all peers
-                weights = weights.reindex(peers).fillna(1.0)
-            else:
-                weights = pd.Series(1.0, index=peers)
+        if target not in data_df.index:
+            raise ValueError("target not found in data")
+        target_features = data_df.loc[target].fillna(0.0)
+        peer_features = data_df.loc[data_df.index.intersection(peers)].fillna(0.0)
+        if peer_features.empty:
+            raise ValueError("peer feature data unavailable")
+        if weight_mode == "distance":
+            distances = np.sqrt(((peer_features - target_features) ** 2).sum(axis=1))
+            weights = 1.0 / (1.0 + distances)
         else:
-            weights = pd.Series(1.0, index=peers)
-    
+            target_norm = np.linalg.norm(target_features)
+            if target_norm <= 0:
+                raise ValueError("target feature norm is zero")
+            similarities = peer_features.dot(target_features) / (
+                np.linalg.norm(peer_features, axis=1) * target_norm
+            )
+            weights = pd.Series(similarities, index=peer_features.index)
+        weights = weights.reindex(peers).fillna(0.0)
+
     else:
-        # Unknown mode - fallback to equal weights
-        weights = pd.Series(1.0, index=peers, dtype=float)
-    
-    # Apply processing steps
+        raise ValueError(f"unknown weight_mode {weight_mode}")
+
     weights = weights.apply(pd.to_numeric, errors="coerce").fillna(0.0)
-    
-    # Clip negative weights if requested
     if clip_negative:
         weights = weights.clip(lower=0.0)
-    
-    # Apply power transformation
     if power is not None and float(power) != 1.0:
         weights = weights.pow(float(power))
-    
-    # Filter out very small weights (noise reduction)
     if min_weight_threshold > 0:
         weights = weights.where(weights >= min_weight_threshold, 0.0)
-    
-    # Normalize weights
+
     total = float(weights.sum())
     if not np.isfinite(total) or total <= 0:
-        # If all weights are zero/invalid, use equal weights
-        weights = pd.Series(1.0 / max(len(peers), 1), index=peers, dtype=float)
-    else:
-        weights = weights / total
-    
-    # Ensure we have weights for all peers
+        raise ValueError("weight computation produced zero sum")
+    weights = weights / total
+
     weights = weights.reindex(peers).fillna(0.0)
-    
+
     return weights
 
 
@@ -428,132 +398,23 @@ def adaptive_correlation_computation(
     asof: str,
     pillars_days: Iterable[int],
     weight_mode: str = "auto",
-    fallback_strategy: str = "graceful",
     **kwargs,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """
-    Adaptive correlation computation that gracefully handles poor data quality.
-    
-    This function is much more flexible and will attempt multiple strategies
-    to produce usable results even with sparse or poor quality data.
-    
-    Parameters
-    ----------
-    fallback_strategy : str, default "graceful"
-        How to handle failures: "graceful" (fallback modes), "strict" (fail fast)
-    
-    Returns
-    -------
-    atm_df : pd.DataFrame
-        ATM matrix
-    corr_df : pd.DataFrame  
-        Correlation/similarity matrix
-    metadata : dict
-        Information about the computation strategy used
-    """
+    """Compute correlations without fallback strategies."""
+    atm_df, corr_df = compute_atm_corr(
+        get_smile_slice=get_smile_slice,
+        tickers=tickers,
+        asof=asof,
+        pillars_days=pillars_days,
+        **kwargs,
+    )
+
     metadata = {
         "strategy_used": "primary",
         "pillars_attempted": list(pillars_days),
-        "pillars_used": [],
+        "pillars_used": list(atm_df.columns) if not atm_df.empty else [],
         "data_quality": "unknown",
-        "fallback_applied": False
+        "fallback_applied": False,
     }
-    
-    # Primary strategy: try the requested computation
-    try:
-        atm_df, corr_df = compute_atm_corr(
-            get_smile_slice=get_smile_slice,
-            tickers=tickers,
-            asof=asof,
-            pillars_days=pillars_days,
-            **kwargs
-        )
-        
-        # Check data quality
-        finite_count = pd.notna(corr_df).sum().sum() if not corr_df.empty else 0
-        total_elements = corr_df.size if not corr_df.empty else 0
-        data_quality = finite_count / total_elements if total_elements > 0 else 0
-        
-        metadata.update({
-            "pillars_used": list(atm_df.columns) if not atm_df.empty else [],
-            "data_quality": f"{data_quality:.2%}",
-        })
-        
-        # If primary strategy worked well enough, return results
-        if data_quality >= 0.3:  # At least 30% good data
-            return atm_df, corr_df, metadata
-        
-        # Otherwise, try fallback if enabled
-        if fallback_strategy != "graceful":
-            return atm_df, corr_df, metadata
-            
-    except Exception as e:
-        if fallback_strategy == "strict":
-            raise e
-        metadata["primary_error"] = str(e)
-    
-    # Fallback strategy 1: Reduce pillar requirements
-    if fallback_strategy == "graceful":
-        metadata["fallback_applied"] = True
-        metadata["strategy_used"] = "reduced_pillars"
-        
-        try:
-            # Try with more lenient parameters
-            fallback_kwargs = kwargs.copy()
-            fallback_kwargs.update({
-                "min_pillars": 1,
-                "min_tickers_per_pillar": 2,
-                "min_pillars_per_ticker": 1,
-            })
-            
-            atm_df, corr_df = compute_atm_corr(
-                get_smile_slice=get_smile_slice,
-                tickers=tickers,
-                asof=asof,
-                pillars_days=pillars_days,
-                **fallback_kwargs
-            )
-            
-            finite_count = pd.notna(corr_df).sum().sum() if not corr_df.empty else 0
-            total_elements = corr_df.size if not corr_df.empty else 0
-            data_quality = finite_count / total_elements if total_elements > 0 else 0
-            
-            metadata.update({
-                "pillars_used": list(atm_df.columns) if not atm_df.empty else [],
-                "data_quality": f"{data_quality:.2%}",
-            })
-            
-            if data_quality > 0:
-                return atm_df, corr_df, metadata
-                
-        except Exception as e:
-            metadata["fallback1_error"] = str(e)
-    
-    # Fallback strategy 2: Create synthetic correlation matrix
-    metadata["strategy_used"] = "synthetic"
-    tickers_list = list(tickers)
-    
-    # Create identity-like correlation matrix with some noise
-    n_tickers = len(tickers_list)
-    corr_matrix = np.eye(n_tickers) + np.random.normal(0, 0.1, (n_tickers, n_tickers))
-    corr_matrix = (corr_matrix + corr_matrix.T) / 2  # Make symmetric
-    np.fill_diagonal(corr_matrix, 1.0)  # Ensure diagonal is 1
-    
-    # Clip to valid correlation range
-    corr_matrix = np.clip(corr_matrix, -1, 1)
-    
-    corr_df = pd.DataFrame(corr_matrix, index=tickers_list, columns=tickers_list)
-    
-    # Create minimal ATM matrix
-    atm_df = pd.DataFrame(
-        np.random.normal(0.2, 0.05, (n_tickers, len(pillars_days))),
-        index=tickers_list,
-        columns=list(pillars_days)
-    )
-    
-    metadata.update({
-        "pillars_used": list(pillars_days),
-        "data_quality": "synthetic",
-    })
-    
+
     return atm_df, corr_df, metadata
