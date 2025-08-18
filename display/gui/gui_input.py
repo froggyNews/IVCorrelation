@@ -47,7 +47,7 @@ DEFAULT_MODEL = "svi"
 DEFAULT_ATM_BAND = 0.05
 DEFAULT_CI = 0.68
 DEFAULT_X_UNITS = "years"
-DEFAULT_WEIGHT_MODE = "corr_iv_atm"
+DEFAULT_WEIGHT_MODE = "iv_atm"
 DEFAULT_PILLARS = [7,30,60,90,180,365]
 DEFAULT_OVERLAY = False
 PLOT_TYPES = (
@@ -70,13 +70,13 @@ def _derive_feature_scope(plot_type: str, weight_mode: str) -> str:
     if plot_type.startswith("Synthetic Surface"):
         return "surface"
     if plot_type.startswith("Corr Matrix"):
-        if weight_mode.endswith("iv_atm") or weight_mode.endswith("ul"):
+        if weight_mode in ("iv_atm", "ul"):
             # decide later based on pillars count
             return "term"
         else:
             return "surface"
     if plot_type.startswith("ETF Weights"):
-        return "surface" if (weight_mode.endswith("surface") or weight_mode.endswith("surface_grid")) else "term"
+        return "surface" if weight_mode in ("surface", "surface_grid") else "term"
     return "term"
 
 class InputPanel(ttk.Frame):
@@ -226,9 +226,9 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row3, text="Weight mode").grid(row=0, column=2, sticky="w")
         self.cmb_weight_mode = ttk.Combobox(row3, values=[
-            "corr_iv_atm", "corr_ul", "corr_surface", "corr_surface_grid", "oi"
+            "iv_atm", "ul", "surface", "surface_grid", "oi"
         ], width=18, state="readonly")
-        self.cmb_weight_mode.set("corr_iv_atm")
+        self.cmb_weight_mode.set("iv_atm")
         self.cmb_weight_mode.grid(row=0, column=3, padx=6)
         self.cmb_weight_mode.bind("<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility()))
 
@@ -444,9 +444,7 @@ class InputPanel(ttk.Frame):
             pillars = self.get_pillars()
 
             feature_scope = _derive_feature_scope(plot_type, weight_mode)
-            if plot_type.startswith("Corr Matrix") and (
-                weight_mode.endswith("iv_atm") or weight_mode.endswith("ul")
-            ):
+            if plot_type.startswith("Corr Matrix") and weight_mode in ("iv_atm", "ul"):
                 feature_scope = "term" if len(pillars) >= 2 else "smile"
 
             self.manager.update(
@@ -477,28 +475,20 @@ class InputPanel(ttk.Frame):
         plot = self.get_plot_type()
 
         show_T = plot.startswith("Smile")
-        show_pillars = (
-            plot.startswith("Term")
-            or plot.startswith("Synthetic Surface")
-            or (plot.startswith("Corr Matrix") and (wm.endswith("surface") or wm.endswith("surface_grid")))
-        )
+        show_pillars = plot.startswith("Term") or plot.startswith("Synthetic Surface") or \
+                       (plot.startswith("Corr Matrix") and wm in ("surface", "surface_grid"))
 
-        if plot.startswith("Corr Matrix") and (wm.endswith("iv_atm") or wm.endswith("ul")):
+        if plot.startswith("Corr Matrix") and wm in ("iv_atm", "ul"):
             show_pillars = len(self.get_pillars()) >= 2
             show_T = not show_pillars
 
-        show_model = (
-            wm.endswith("surface") and not wm.endswith("surface_grid")
-            and (plot.startswith("Smile") or plot.startswith("Synthetic Surface"))
-        )
+        show_model = (wm == "surface") and (plot.startswith("Smile") or plot.startswith("Synthetic Surface"))
 
         self.ent_days.configure(state=("normal" if show_T else "disabled"))
         self.ent_pillars.configure(state=("normal" if show_pillars else "disabled"))
         self.cmb_model.configure(state=("readonly" if show_model else "disabled"))
 
-        self.cmb_xunits.configure(
-            state=("readonly" if (wm.endswith("surface") or wm.endswith("surface_grid")) else "disabled")
-        )
+        self.cmb_xunits.configure(state=("readonly" if wm in ("surface", "surface_grid") else "disabled"))
     
     # ---------- preset management ----------
     def _init_ticker_groups(self):
