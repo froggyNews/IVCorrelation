@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from analysis.spillover.vol_spillover import run_spillover
+from analysis.spillover.vol_spillover import run_spillover, load_iv_data
 
 
 class SpilloverFrame(ttk.Frame):
@@ -89,14 +89,14 @@ class SpilloverFrame(ttk.Frame):
         if not iv_path.exists():
             messagebox.showerror("Data missing", f"Cannot find {iv_path}")
             return
+        df = load_iv_data(str(iv_path), use_raw=self.var_raw.get())
         self.results = run_spillover(
-            str(iv_path),
+            df,
             tickers=tickers,
             threshold=thr,
             lookback=lookback,
             top_k=topk,
             horizons=horizons,
-            use_raw=self.var_raw.get(),
         )
         self._populate_events()
         self._plot_response()

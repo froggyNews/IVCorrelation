@@ -274,9 +274,10 @@ class PlotManager:
             self.prev_expiry()
 
     def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
-        """
-        Compute weights using the selected mode with unified weight system.
-        Much more lax with weight modes - determines importance based on weight values.
+        """Compute weights using the selected mode.
+
+        Tries the cached correlation matrix first, then falls back to the
+        unified weight system and legacy implementations.
         """
         import numpy as np
         import pandas as pd
@@ -284,6 +285,17 @@ class PlotManager:
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
         settings = getattr(self, 'last_settings', {})
+
+        # First attempt: legacy methods (cached corr matrix or compute_peer_weights)
+        w = self._weights_from_legacy_methods(target, peers, weight_mode, asof, pillars)
+        if w is not None and not w.empty:
+            return w
+
+        # Second attempt: unified weight computation system
+        try:
+            from analysis.unified_weights import compute_unified_weights
+
+            settings = getattr(self, 'last_settings', {})
 
         # First, try using a cached correlation matrix if weight_mode matches
         if (
@@ -368,8 +380,10 @@ class PlotManager:
         except Exception as e:
             print(f"Unified weight computation failed: {e}")
 
-        # Fallback to legacy methods for backward compatibility
-        return self._weights_from_legacy_methods(target, peers, weight_mode, asof, pillars)
+        # Final fallback: equal weights
+        equal_weight = 1.0 / max(len(peers), 1)
+        return pd.Series(equal_weight, index=peers, dtype=float)
+
     
     def _weights_from_legacy_methods(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
         """

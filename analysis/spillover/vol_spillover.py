@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Iterable
+from typing import List, Dict, Iterable, Callable
 
 """Tools to detect implied-volatility events and measure spillovers.
 
@@ -132,22 +132,31 @@ def persist_summary(summary: pd.DataFrame, path: str) -> None:
 
 
 def run_spillover(
-    iv_path: str,
+    source: pd.DataFrame | Callable[[], pd.DataFrame],
     *,
     tickers: Iterable[str] | None = None,
     threshold: float = 0.10,
     lookback: int = 60,
     top_k: int = 3,
     horizons: Iterable[int] = (1, 3, 5),
-    use_raw: bool = False,
     events_path: str = "spill_events.parquet",
     summary_path: str = "spill_summary.parquet",
 ) -> Dict[str, pd.DataFrame]:
     """High level helper that runs the full spillover analysis.
 
-    Returns a dictionary with keys ``events`` and ``summary``.
+    Parameters
+    ----------
+    source : DataFrame or callable returning DataFrame
+        Either a preloaded IV data table or a function that yields one.
+        This allows callers to supply data from any source (e.g. Parquet,
+        database, API) without ``run_spillover`` needing to know the details.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys ``events``, ``responses`` and ``summary``.
     """
-    df = load_iv_data(iv_path, use_raw=use_raw)
+    df = source() if callable(source) else source
     if tickers is not None:
         tickers = [t.upper() for t in tickers]
         df = df[df["ticker"].str.upper().isin(tickers)]
