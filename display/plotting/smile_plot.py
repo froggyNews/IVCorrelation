@@ -55,6 +55,10 @@ def fit_and_plot_smile(
     Plot observed points, model fit, and optional CI on moneyness (K/S).
     Returns dict: {params, rmse, T, S, series_map or None}
     """
+    
+    # ---- safety check: ensure axes has valid figure
+    if ax is None or ax.figure is None:
+        return {"params": {}, "rmse": np.nan, "T": float(T), "S": float(S), "series_map": None}
 
     # ---- sanitize
     S = float(S)
@@ -63,7 +67,9 @@ def fit_and_plot_smile(
 
     m = _finite_mask(K, iv)
     if not np.any(m):
-        ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
+        # Ensure axes has a valid figure before adding text
+        if ax.figure is not None:
+            ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
         return {"params": {}, "rmse": np.nan, "T": float(T), "S": S, "series_map": None}
 
     K = K[m]
@@ -118,10 +124,13 @@ def fit_and_plot_smile(
     ax.set_xlabel("Moneyness K/S")
     ax.set_ylabel("Implied Vol")
     if not ax.get_legend():
-        ax.legend(loc="best", fontsize=8)
+        # Only create legend if there are labeled artists
+        handles, labels = ax.get_legend_handles_labels()
+        if handles and labels:
+            ax.legend(loc="best", fontsize=8)
 
     # ---- legend-first toggle system (primary), keyboard helpers
-    if enable_svi_toggles and model == "svi" and series_map:
+    if enable_svi_toggles and model == "svi" and series_map and ax.figure is not None:
         add_legend_toggles(ax, series_map)  # your improved legend system
         add_keyboard_toggles(ax.figure, series_map, keymap={
             "o": "Observed Points",

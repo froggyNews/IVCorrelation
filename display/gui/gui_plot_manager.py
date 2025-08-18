@@ -684,10 +684,15 @@ class PlotManager:
                     line_kwargs={"alpha": 0.7},
                 )
 
-        ax.legend(loc="best", fontsize=8)
+        # Add legend only if there are labeled artists
+        handles, labels = ax.get_legend_handles_labels()
+        if handles and labels:
+            ax.legend(loc="best", fontsize=8)
         days = int(round(T0 * 365.25))
         ax.set_title(f"{target}  {asof}  T≈{T0:.3f}y (~{days}d)  RMSE={info['rmse']:.4f}\n(Use buttons or click: L=next, R=prev)")
-        if self.canvas is not None:
+        
+        # Ensure canvas and figure are valid before drawing
+        if self.canvas is not None and ax.figure is not None:
             self.canvas.draw_idle()
 
     # -------------------- smile state helpers --------------------
