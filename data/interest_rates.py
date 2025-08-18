@@ -7,7 +7,7 @@ from datetime import datetime
 import json
 import os
 
-from data.db_utils import get_conn
+from data.db_utils import get_conn, check_db_health
 
 """Central definitions for interest rate settings.
 
@@ -38,6 +38,7 @@ def create_default_interest_rates() -> None:
             VALUES (?, ?, ?, ?, ?, ?)
         """, ("default", DEFAULT_INTEREST_RATE, "Default interest rate (4.08%)", 1, now, now))
         conn.commit()
+        check_db_health(conn)
 
 
 def save_interest_rate(
@@ -56,11 +57,12 @@ def save_interest_rate(
     
     # Insert or replace the rate
     conn.execute("""
-        INSERT OR REPLACE INTO interest_rates 
+        INSERT OR REPLACE INTO interest_rates
         (rate_id, rate_value, description, is_default, created_at, updated_at)
         VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM interest_rates WHERE rate_id = ?), ?), ?)
     """, (rate_id, rate_value, description, int(is_default), rate_id, now, now))
     conn.commit()
+    check_db_health(conn)
 
 
 def load_interest_rate(rate_id: str) -> Optional[Tuple[float, str, bool]]:
@@ -123,6 +125,7 @@ def delete_interest_rate(rate_id: str) -> bool:
     
     conn.execute("DELETE FROM interest_rates WHERE rate_id = ?", (rate_id,))
     conn.commit()
+    check_db_health(conn)
     return True
 
 
@@ -137,9 +140,10 @@ def set_default_interest_rate(rate_id: str) -> bool:
     
     # Unset all defaults, then set this one
     conn.execute("UPDATE interest_rates SET is_default = 0")
-    conn.execute("UPDATE interest_rates SET is_default = 1, updated_at = ? WHERE rate_id = ?", 
+    conn.execute("UPDATE interest_rates SET is_default = 1, updated_at = ? WHERE rate_id = ?",
                 (datetime.now().isoformat(), rate_id))
     conn.commit()
+    check_db_health(conn)
     return True
 
 
@@ -179,11 +183,12 @@ def save_ticker_interest_rates(ticker_rates: List[dict], source_file: str) -> in
         ))
     
     conn.executemany("""
-        INSERT OR REPLACE INTO ticker_interest_rates 
+        INSERT OR REPLACE INTO ticker_interest_rates
         (ticker, rate_date, rate_value, fee, adjusted_float, lender_count, borrow_status, source_file, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, rows)
     conn.commit()
+    check_db_health(conn)
     return len(rows)
 
 
