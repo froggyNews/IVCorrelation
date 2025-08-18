@@ -208,24 +208,30 @@ class UnifiedWeightComputer:
         """Build underlying price return features."""
         from analysis.beta_builder import _underlying_log_returns
         from data.db_utils import get_conn
-        
+
         ret = _underlying_log_returns(get_conn)
         if ret.empty:
             return None
-        
+
         subset = ret[[c for c in tickers if c in ret.columns]]
+        subset = subset.dropna(how="all")
+        if subset.shape[0] < 2:
+            return None
         return subset.T if not subset.empty else None
-    
+
     def _build_underlying_vol_features(self, tickers: list[str]) -> Optional[pd.DataFrame]:
         """Build underlying volatility features."""
         from analysis.beta_builder import _underlying_vol_series
         from data.db_utils import get_conn
-        
+
         vol = _underlying_vol_series(get_conn, window=21, min_obs=10)
         if vol.empty:
             return None
-        
+
         subset = vol[[c for c in tickers if c in vol.columns]]
+        subset = subset.dropna(how="all")
+        if subset.shape[0] < 2:
+            return None
         return subset.T if not subset.empty else None
 
     def _open_interest_weights(self, peers_list: list[str], asof: Optional[str]) -> pd.Series:
