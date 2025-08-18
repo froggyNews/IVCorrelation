@@ -323,7 +323,7 @@ def scatter_corr_matrix(
     If ``plot`` is True, the scatter-matrix uses pandas.plotting.scatter_matrix().
     """
     if isinstance(df_or_path, str):
-        df = pd.read_csv(df_or_path)
+        df = pd.read_parquet(df_or_path)
     else:
         df = df_or_path.copy()
 

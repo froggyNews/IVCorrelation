@@ -23,7 +23,6 @@ python examples/caching_improvements_demo.py
 - **41%+ file size reduction** with Parquet format
 - **Smart cache invalidation** prevents unnecessary recomputation
 - **Configuration-aware caching** automatically handles settings changes
-- **Backwards compatibility** with CSV format when needed
 
 This demo answers the original questions from issue #47:
 - "Should this be cached in CSVs or would using parquet be more effective?" → **Parquet is more effective**
