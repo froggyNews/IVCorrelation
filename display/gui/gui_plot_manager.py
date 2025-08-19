@@ -1000,8 +1000,6 @@ class PlotManager:
         pillars,
         weight_mode,  # passed through to compute_and_plot_correlation
         atm_band,
-        corr_method: str = "pearson",
-        demean_rows: bool = False,
     ):
         tickers = [t for t in [target] + peers if t]
         if not tickers:
@@ -1012,49 +1010,20 @@ class PlotManager:
         weight_power = settings.get("weight_power", 1.0)
         clip_negative = settings.get("clip_negative", True)
 
-        try:
-            atm_df, corr_df, weights = compute_and_plot_correlation(
-                ax=ax,
-                get_smile_slice=self.get_smile_slice,
-                tickers=tickers,
-                asof=asof,
-                pillars_days=pillars,
-                atm_band=atm_band,
-                tol_days=7.0,
-                min_pillars=3,
-                corr_method=corr_method,
-                demean_rows=demean_rows,
-                show_values=True,
-                clip_negative=clip_negative,
-                power=weight_power,
-                target=target,
-                peers=peers,
-                auto_detect_pillars=False,
-                min_tickers_per_pillar=3,
-                min_pillars_per_ticker=2,
-                max_expiries=self._current_max_expiries or 6,
-                weight_mode=weight_mode,
-            )
-        except TypeError:
-            # Fallback: older signature without some args
-            atm_df, corr_df = compute_and_plot_correlation(
-                ax=ax,
-                get_smile_slice=self.get_smile_slice,
-                tickers=tickers,
-                asof=asof,
-                pillars_days=pillars,
-                atm_band=atm_band,
-                tol_days=7.0,
-                min_pillars=3,
-                corr_method=corr_method,
-                demean_rows=demean_rows,
-                show_values=True,
-                clip_negative=clip_negative,
-                power=weight_power,
-                auto_detect_pillars=False,
-                max_expiries=self._current_max_expiries or 6,
-                weight_mode=weight_mode,
-            )
+        atm_df, corr_df, _ = compute_and_plot_correlation(
+            ax=ax,
+            get_smile_slice=self.get_smile_slice,
+            tickers=tickers,
+            asof=asof,
+            atm_band=atm_band,
+            show_values=True,
+            clip_negative=clip_negative,
+            weight_power=weight_power,
+            target=target,
+            peers=peers,
+            max_expiries=self._current_max_expiries or 6,
+            weight_mode=weight_mode,
+        )
 
         # cache for other plots
         self.last_corr_df = corr_df
@@ -1063,8 +1032,6 @@ class PlotManager:
             "asof": asof,
             "tickers": list(tickers),
             "pillars": list(pillars or []),
-            "corr_method": corr_method,
-            "demean_rows": bool(demean_rows),
             "weight_mode": weight_mode,
             "weight_power": weight_power,
             "clip_negative": clip_negative,

@@ -51,6 +51,7 @@ class WeightMethod(Enum):
 
 class FeatureSet(Enum):
     ATM = "iv_atm"                    # options ATM features
+    ATM_RANKS = "iv_atm_ranks"        # pillar-free ATM by expiry rank
     SURFACE = "surface"               # options surface (flattened grid)
     SURFACE_VECTOR = "surface_grid"   # alias of SURFACE
     UNDERLYING_PX = "ul"              # underlying price returns (time-series)
@@ -70,6 +71,7 @@ class WeightConfig:
     asof: Optional[str] = None
     atm_band: float = 0.08
     atm_tol_days: float = 10.0
+    max_expiries: int = 6
 
     @classmethod
     def from_legacy_mode(cls, mode: str, **kwargs) -> "WeightConfig":
@@ -91,6 +93,9 @@ class WeightConfig:
         feature_map = {
             "atm": FeatureSet.ATM,
             "iv_atm": FeatureSet.ATM,
+            "iv_atm_ranks": FeatureSet.ATM_RANKS,
+            "atm_ranks": FeatureSet.ATM_RANKS,
+            "atm_ranked": FeatureSet.ATM_RANKS,
             "surface": FeatureSet.SURFACE,
             "surface_full": FeatureSet.SURFACE,
             "surface_vector": FeatureSet.SURFACE_VECTOR,
@@ -154,6 +159,30 @@ def atm_feature_matrix(
     if standardize:
         X, _, _ = _zscore_cols(X)
     return atm_df, X, list(atm_df.columns)
+
+
+def _atm_rank_feature_matrix(
+    tickers: Iterable[str],
+    asof: str,
+    max_expiries: int = 6,
+    *,
+    atm_band: float = 0.05,
+) -> tuple[pd.DataFrame, list[int]]:
+    """Build expiry-rank ATM feature matrix (rows=tickers, cols=ranks)."""
+    from analysis.analysis_pipeline import get_smile_slice  # delayed import
+    from analysis.correlation_utils import compute_atm_corr_pillar_free
+
+    tickers = [t.upper() for t in tickers]
+    atm_df, _ = compute_atm_corr_pillar_free(
+        get_smile_slice=get_smile_slice,
+        tickers=tickers,
+        asof=asof,
+        max_expiries=max_expiries,
+        atm_band=atm_band,
+    )
+    # ensure all requested tickers present
+    atm_df = atm_df.reindex(tickers)
+    return atm_df, list(atm_df.columns)
 
 
 def surface_feature_matrix(
@@ -334,7 +363,7 @@ class UnifiedWeightComputer:
         """Robust as-of for options features; UL ignores."""
         if config.asof:
             return config.asof
-        if config.feature_set in (FeatureSet.ATM, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+        if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
             from data.db_utils import get_conn
             tickers = [target] + peers
             conn = get_conn()
@@ -406,7 +435,7 @@ class UnifiedWeightComputer:
 
         # Pick as-of only for options features
         asof = None
-        if config.feature_set in (FeatureSet.ATM, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+        if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
             asof = self._choose_asof(target, peers_list, config)
             if asof is None:
                 raise ValueError("no surface/ATM date available to build features")
@@ -480,6 +509,15 @@ class UnifiedWeightComputer:
                 config.pillars_days,
                 atm_band=config.atm_band,
                 tol_days=config.atm_tol_days,
+            )
+            self._log_option_counts(tickers, asof, atm_df)
+            return atm_df
+        if config.feature_set == FeatureSet.ATM_RANKS:
+            atm_df, _ = _atm_rank_feature_matrix(
+                tickers,
+                asof,
+                max_expiries=config.max_expiries,
+                atm_band=config.atm_band,
             )
             self._log_option_counts(tickers, asof, atm_df)
             return atm_df
@@ -578,6 +616,7 @@ def compute_peer_weights_unified(
     pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
     tenor_days: Iterable[int] = (7, 30, 60, 90, 180, 365),
     mny_bins: Tuple[Tuple[float, float], ...] = ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+    max_expiries: int = 6,
 ) -> pd.Series:
     return compute_unified_weights(
         target=target,
@@ -587,4 +626,5 @@ def compute_peer_weights_unified(
         pillars_days=tuple(pillar_days),
         tenors=tuple(tenor_days),
         mny_bins=tuple(mny_bins),
+        max_expiries=max_expiries,
     )

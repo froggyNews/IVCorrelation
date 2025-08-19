@@ -4,7 +4,6 @@ High-level Synthetic ETF construction utilities.
 Leverages existing primitives:
 - build_surface_grids / combine_surfaces (analysis.syntheticETFBuilder)
 - UnifiedWeightComputer for peer weighting (analysis.unified_weights)
-- relative_value_atm_report_corrweighted (analysis.analysis_pipeline)
 - sample_smile_curve / fit_smile_for (analysis.analysis_pipeline)
 
 Provides:
@@ -38,11 +37,13 @@ from analysis.syntheticETFBuilder import (
     DEFAULT_MNY_BINS,
 )
 from analysis.analysis_pipeline import (
-    relative_value_atm_report_corrweighted,
     sample_smile_curve,
+    get_most_recent_date_global,
+    get_smile_slice,
 )
-from analysis.analysis_pipeline import get_most_recent_date_global
-from analysis.unified_weights import UnifiedWeightComputer, WeightConfig
+from analysis.unified_weights import UnifiedWeightComputer, WeightConfig, FeatureSet, WeightMethod
+from analysis.pillars import compute_atm_by_expiry
+from analysis.syntheticETFBuilder import build_synthetic_iv_by_rank
 
 WeightMode = Literal["corr", "pca", "cosine", "equal", "custom"]
 
@@ -51,7 +52,7 @@ WeightMode = Literal["corr", "pca", "cosine", "equal", "custom"]
 class SyntheticETFConfig:
     target: str
     peers: Iterable[str]
-    pillar_days: Tuple[int, ...] = (7, 30, 60, 90)
+    max_expiries: int = 6
     tenors: Tuple[int, ...] = DEFAULT_TENORS
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS
     tolerance_days: float = 7.0
@@ -112,11 +113,11 @@ class SyntheticETFBuilder:
 
         cfg = WeightConfig.from_legacy_mode(
             self.cfg.weight_mode,
-            pillars_days=self.cfg.pillar_days,
             tenors=self.cfg.tenors,
             mny_bins=self.cfg.mny_bins,
             clip_negative=self.cfg.clip_negative,
             power=self.cfg.weight_power,
+            max_expiries=getattr(self.cfg, "max_expiries", 6),
         )
 
         w = self._weight_computer.compute_weights(
@@ -174,17 +175,32 @@ class SyntheticETFBuilder:
     # Relative Value (ATM)
     # ----------------------
     def compute_relative_value(self) -> pd.DataFrame:
-        rv, w_used = relative_value_atm_report_corrweighted(
-            target=self.cfg.target,
-            peers=self.cfg.peers,
-            mode="iv_atm",
-            pillar_days=self.cfg.pillar_days,
-            lookback=self.cfg.lookback,
-            tolerance_days=self.cfg.tolerance_days,
-        )
+        if self._weights is None:
+            raise RuntimeError("Weights not computed yet.")
+
+        uw = UnifiedWeightComputer()
+        asof = uw._choose_asof(self.cfg.target, list(self.cfg.peers),
+                               WeightConfig(method=WeightMethod.CORRELATION,
+                                            feature_set=FeatureSet.ATM))
+        if not asof:
+            raise RuntimeError("No as-of date available for RV.")
+
+        syn = build_synthetic_iv_by_rank(self._weights.to_dict(), asof=asof,
+                                         max_expiries=self.cfg.max_expiries)
+        if syn.empty:
+            self._rv = syn
+            return syn
+
+        df = get_smile_slice(self.cfg.target, asof, T_target_years=None)
+        tgt_curve = compute_atm_by_expiry(df)[["T", "atm_vol"]].dropna().sort_values("T")
+        tgt_curve = tgt_curve.reset_index(drop=True).rename(columns={"atm_vol": "target_iv"})
+        tgt_curve["rank"] = tgt_curve.index
+
+        rv = tgt_curve.merge(syn, on="rank", how="inner")
+        rv["spread"] = rv["target_iv"] - rv["synth_iv"]
+        rv["asof_date"] = pd.to_datetime(asof)
+        rv = rv[["asof_date", "rank", "T", "target_iv", "synth_iv", "spread"]]
         self._rv = rv
-        # w_used may differ from earlier weighting if internal weighting logic diverges;
-        # we keep original in self._weights but attach w_used to metadata if needed.
         return rv
 
     # ----------------------
@@ -205,10 +221,10 @@ class SyntheticETFBuilder:
             "peers": ",".join(self.cfg.peers),
             "weight_mode": self.cfg.weight_mode,
             "lookback": str(self.cfg.lookback),
-            "pillar_days": ",".join(map(str, self.cfg.pillar_days)),
             "tenors": ",".join(map(str, self.cfg.tenors)),
             "mny_bins": ";".join(f"{a}:{b}" for a, b in self.cfg.mny_bins),
             "tolerance_days": str(self.cfg.tolerance_days),
+            "max_expiries": str(self.cfg.max_expiries),
             "build_timestamp_utc": pd.Timestamp.utcnow().isoformat(),
             "elapsed_sec": f"{time.time()-start:.2f}",
         }

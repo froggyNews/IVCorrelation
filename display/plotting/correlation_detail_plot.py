@@ -111,18 +111,10 @@ def compute_and_plot_correlation(
     *,
     target: Optional[str] = None,
     peers: Optional[Iterable[str]] = None,
-    pillars_days: Iterable[int] = (7, 14, 30),
     atm_band: float = 0.05,
-    tol_days: float = 7.0,
-    min_pillars: int = 2,
-    corr_method: str = "pearson",
-    demean_rows: bool = False,
     show_values: bool = True,
     clip_negative: bool = True,
     weight_power: float = 1.0,
-    auto_detect_pillars: bool = True,
-    min_tickers_per_pillar: int = 3,
-    min_pillars_per_ticker: int = 2,
     max_expiries: int = 6,
     weight_mode: str = "corr",
     **weight_config,
@@ -130,11 +122,12 @@ def compute_and_plot_correlation(
     """
     Compute a correlation matrix and draw a heatmap without relying on pillars.
 
-    Parameters remain compatible with the upstream version.  The ``weight_mode``
-    is forwarded to :func:`analysis.unified_weights.compute_unified_weights`.
-    Additional weight configuration such as ``weight_power`` and
-    ``clip_negative`` can be supplied, along with any extra keyword arguments
-    understood by the unified weight system.
+    Parameters remain compatible with the upstream version but no longer accept
+    pillar-related options.  The ``weight_mode`` is forwarded to
+    :func:`analysis.unified_weights.compute_unified_weights`. Additional weight
+    configuration such as ``weight_power`` and ``clip_negative`` can be
+    supplied, along with any extra keyword arguments understood by the unified
+    weight system.
     """
     tickers = [t.upper() for t in tickers]
     atm_df, corr_df = _corr_by_expiry_rank(
