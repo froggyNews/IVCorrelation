@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Tuple, List, Mapping, Union, Any
+from typing import Any, Dict, Iterable, Optional, Tuple, List, Mapping, Union
 
 import json
 import logging
@@ -48,12 +48,6 @@ from .beta_builder import (
     surface_feature_matrix,
     build_peer_weights,
     corr_weights_from_matrix,
-)
-from .unified_weights import (
-    compute_unified_weights,
-    WeightConfig,
-    UnifiedWeightComputer,
-    cosine_similarity_weights_from_matrix as cosine_similarity_weights,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm
 from .correlation_utils import (
@@ -864,6 +858,110 @@ def prepare_smile_data(
         "expiry_arr": expiry_arr,
         "fit_info": fit_info,
     }
+
+def prepare_term_data(
+    target: str,
+    asof: str,
+    ci: float = 68.0,
+    overlay_synth: bool = False,
+    peers: Iterable[str] | None = None,
+    weights: Optional[Mapping[str, float]] = None,
+    atm_band: float = 0.05,
+    max_expiries: int = 6,
+) -> Dict[str, Any]:
+    """Precompute ATM term structure and optional synthetic overlay.
+
+    Returns a dictionary with ``atm_curve`` and (if requested) ``synth_curve``
+    DataFrames ready for plotting.
+    """
+
+    df_all = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
+    if df_all is None or df_all.empty:
+        return {}
+
+    min_boot = 64 if (ci and ci > 0) else 0
+    atm_curve = compute_atm_by_expiry(
+        df_all,
+        atm_band=atm_band,
+        method="fit",
+        model="auto",
+        vega_weighted=True,
+        n_boot=min_boot,
+        ci_level=ci,
+    )
+
+    synth_curve = None
+    if overlay_synth and peers:
+        w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
+        if w.sum() <= 0:
+            w = pd.Series({p: 1.0 for p in peers}, dtype=float)
+        w = (w / w.sum()).astype(float)
+        peers = [p for p in w.index if p in peers]
+
+        curves: Dict[str, pd.DataFrame] = {}
+        for p in peers:
+            c = atm_curve_for_ticker_on_date(
+                get_smile_slice,
+                p,
+                asof,
+                atm_band=atm_band,
+                method="median",
+                model="auto",
+                vega_weighted=False,
+            )
+            if not c.empty:
+                curves[p] = c
+
+        if curves:
+            grid_days = np.unique(
+                np.concatenate([c["T"].to_numpy(float) * 365.25 for c in curves.values()])
+            )
+            grid_days.sort()
+
+            tol = 10.0
+            out_T, out_iv = [], []
+            for td in grid_days:
+                contrib, wts = [], []
+                for p, c in curves.items():
+                    arr_days = c["T"].to_numpy(float) * 365.25
+                    if arr_days.size == 0:
+                        continue
+                    j = int(np.argmin(np.abs(arr_days - td)))
+                    if np.abs(arr_days[j] - td) <= tol:
+                        ivp = float(c["atm_vol"].iloc[j])
+                        if np.isfinite(ivp):
+                            wp = float(w.get(p, 0.0))
+                            if wp > 0:
+                                contrib.append(ivp * wp)
+                                wts.append(wp)
+                if wts:
+                    out_T.append(td / 365.25)
+                    out_iv.append(sum(contrib) / sum(wts))
+
+            if out_T:
+                synth_curve = pd.DataFrame(
+                    {"T": np.array(out_T, float), "atm_vol": np.array(out_iv, float)}
+                ).sort_values("T")
+
+                raw_T = atm_curve["T"].to_numpy(float)
+                synth_T = synth_curve["T"].to_numpy(float)
+                tol_days = max(2.0 / 365.25, 0.1 * min(raw_T.min(), synth_T.min()))
+                common_T = []
+                for rt in raw_T:
+                    if np.any(np.abs(synth_T - rt) <= tol_days):
+                        common_T.append(rt)
+                if common_T:
+                    common_T = np.array(sorted(common_T))
+                    atm_curve = atm_curve[
+                        atm_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_days))
+                    ]
+                    synth_curve = synth_curve[
+                        synth_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_days))
+                    ]
+                else:
+                    synth_curve = None
+
+    return {"atm_curve": atm_curve, "synth_curve": synth_curve}
 
 
 def fit_smile_for(
