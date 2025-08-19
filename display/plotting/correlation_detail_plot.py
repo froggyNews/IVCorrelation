@@ -1,4 +1,3 @@
-
 """
 Correlation plotting without pillars, with configurable weighting modes.
 
@@ -22,6 +21,7 @@ from analysis.unified_weights import compute_unified_weights
 # ---------------------------------------------------------------------------
 # Helpers to compute ATM curves and correlations without using fixed pillars
 # ---------------------------------------------------------------------------
+
 
 def _compute_atm_curve_simple(df: pd.DataFrame, atm_band: float = 0.05) -> pd.DataFrame:
     """
@@ -77,7 +77,9 @@ def _corr_by_expiry_rank(
     rows: List[pd.Series] = []
     for t in tickers:
         try:
-            df = get_slice(t, asof_date=asof, T_target_years=None, call_put=None, nearest_by="T")
+            df = get_slice(
+                t, asof_date=asof, T_target_years=None, call_put=None, nearest_by="T"
+            )
         except Exception:
             df = None
         if df is None or df.empty:
@@ -93,7 +95,9 @@ def _corr_by_expiry_rank(
         rows.append(pd.Series(values, name=t.upper()))
     atm_rank_df = pd.DataFrame(rows)
     if atm_rank_df.empty or len(atm_rank_df.index) < 2:
-        corr_df = pd.DataFrame(index=atm_rank_df.index, columns=atm_rank_df.index, dtype=float)
+        corr_df = pd.DataFrame(
+            index=atm_rank_df.index, columns=atm_rank_df.index, dtype=float
+        )
     else:
         corr_df = atm_rank_df.transpose().corr(method="pearson", min_periods=2)
     return atm_rank_df, corr_df
@@ -102,6 +106,7 @@ def _corr_by_expiry_rank(
 # ---------------------------------------------------------------------------
 # Correlation: compute and plot (optionally show weights)
 # ---------------------------------------------------------------------------
+
 
 def compute_and_plot_correlation(
     ax: plt.Axes,
@@ -193,58 +198,50 @@ def plot_correlation_details(
 
     data_quality = finite_count / total_elements if total_elements > 0 else 0
     if data_quality < 0.3:
-        ax.text(
-            0.5,
-            0.9,
-            f"Poor data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
-            ha="center",
-            va="top",
-            fontsize=10,
-            color="red",
-            transform=ax.transAxes,
-            bbox=dict(boxstyle="round", facecolor="lightcoral", alpha=0.3),
-        )
+        dq_msg = f"Poor data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})"
+        dq_color = "red"
+        dq_face = "lightcoral"
     elif data_quality < 0.7:
-        ax.text(
-            0.5,
-            0.9,
-            f"Limited data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
-            ha="center",
-            va="top",
-            fontsize=10,
-            color="orange",
-            transform=ax.transAxes,
-            bbox=dict(boxstyle="round", facecolor="yellow", alpha=0.3),
-        )
+        dq_msg = f"Limited data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})"
+        dq_color = "orange"
+        dq_face = "yellow"
     else:
-        ax.text(
-            0.5,
-            0.9,
-            f"Good data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})",
-            ha="center",
-            va="top",
-            fontsize=10,
-            color="green",
-            transform=ax.transAxes,
-            bbox=dict(boxstyle="round", facecolor="lightgreen", alpha=0.3),
-        )
+        dq_msg = f"Good data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})"
+        dq_color = "green"
+        dq_face = "lightgreen"
+
+    ax.text(
+        0.5,
+        1.02,
+        dq_msg,
+        ha="center",
+        va="bottom",
+        fontsize=10,
+        color=dq_color,
+        transform=ax.transAxes,
+        bbox=dict(boxstyle="round", facecolor=dq_face, alpha=0.3),
+        clip_on=False,
+    )
 
     im = ax.imshow(data, vmin=-1.0, vmax=1.0, cmap="coolwarm", interpolation="nearest")
 
-    if not hasattr(ax.figure, '_orig_position'):
+    if not hasattr(ax.figure, "_orig_position"):
         ax.figure._orig_position = ax.get_position().bounds
         sp = ax.figure.subplotpars
         ax.figure._orig_subplotpars = (sp.left, sp.right, sp.bottom, sp.top)
 
     # Add or update correlation-specific colorbar
-    if hasattr(ax.figure, '_correlation_colorbar'):
+    if hasattr(ax.figure, "_correlation_colorbar"):
         try:
             ax.figure._correlation_colorbar.update_normal(im)
         except Exception:
             pass
+        else:
+            ax.figure._correlation_colorbar.set_label("Correlation (\u03c1)")
     else:
         try:
             cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label("Correlation (\u03c1)")
             ax.figure._correlation_colorbar = cbar
         except Exception:
             pass
@@ -253,7 +250,7 @@ def plot_correlation_details(
     ax.set_yticks(range(len(corr_df.index)))
     ax.set_xticklabels(corr_df.columns, rotation=45, ha="right", fontsize=9)
     ax.set_yticklabels(corr_df.index, fontsize=9)
-    ax.set_title(" (per expiries)")
+    ax.set_title("Correlation and Relative Importance (per expiries)")
 
     if show_values:
         n, m = data.shape
@@ -283,21 +280,34 @@ def plot_correlation_details(
                         style="italic",
                     )
 
+    if hasattr(ax.figure, "_corr_weight_ax"):
+        try:
+            ax.figure._corr_weight_ax.remove()
+        except Exception:
+            pass
+        delattr(ax.figure, "_corr_weight_ax")
+
     if weights is not None and not weights.empty:
         w_sorted = weights.sort_values(ascending=False)
-        txt = "ETF Weights (corr→ρ):\n" + "\n".join(
-            [f"{k}: {v:.3f}" for k, v in w_sorted.items()]
+        bbox = ax.get_position()
+        legend_ax = ax.figure.add_axes(
+            [
+                bbox.x1 + 0.02,
+                bbox.y0,
+                0.2,
+                bbox.height,
+            ]
         )
-        ax.text(
-            1.02,
-            0.5,
-            txt,
-            transform=ax.transAxes,
-            va="center",
-            ha="left",
+        legend_ax.axis("off")
+        legend_ax.set_title("Relative Importance", fontsize=10)
+        legend_ax.text(
+            0,
+            1,
+            "\n".join([f"{k}: {v:.3f}" for k, v in w_sorted.items()]),
+            va="top",
             fontsize=9,
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85),
         )
+        ax.figure._corr_weight_ax = legend_ax
 
 
 def scatter_corr_matrix(
@@ -334,4 +344,3 @@ def scatter_corr_matrix(
             pass
 
     return corr_df
-
