@@ -195,21 +195,36 @@ def surface_feature_matrix(
 ) -> Tuple[Dict[str, Dict[pd.Timestamp, pd.DataFrame]], np.ndarray, List[str]]:
     """Rows=tickers, cols=flattened (tenor × moneyness) grid for a single as-of date."""
     from analysis.syntheticETFBuilder import build_surface_grids  # Delayed import
-    
+
+    req = [t.upper() for t in tickers]
+    logger.debug("Building surface grids for %s on %s", req, asof)
     grids = build_surface_grids(
-        tickers=[t.upper() for t in tickers],
+        tickers=req,
         tenors=tenors,
         mny_bins=mny_bins,
         use_atm_only=False,
     )
+    if not grids:
+        logger.debug("No surface grids returned for %s on %s", req, asof)
+
     feats: list[np.ndarray] = []
     ok: list[str] = []
     feat_names: list[str] | None = None
 
-    for t in [t.upper() for t in tickers]:
-        if t not in grids or asof not in grids[t]:
+    for t in req:
+        if t not in grids:
+            logger.debug("Ticker %s missing from surface grids", t)
+            continue
+        if asof not in grids[t]:
+            logger.debug(
+                "Ticker %s has no surface for %s (available=%s)",
+                t,
+                asof,
+                sorted(grids[t].keys()),
+            )
             continue
         df = grids[t][asof]  # index=mny labels, columns=tenor (days)
+        logger.debug("Ticker %s surface grid shape %s", t, df.shape)
         arr = df.to_numpy(float).T.reshape(-1)
         if feat_names is None:
             feat_names = [f"T{c}_{r}" for c in df.columns for r in df.index]
@@ -217,11 +232,13 @@ def surface_feature_matrix(
         ok.append(t)
 
     if not feats:
+        logger.debug("No surface features constructed for %s on %s", req, asof)
         return {}, np.empty((0, 0)), []
 
     X = _impute_col_median(np.vstack(feats))
     if standardize:
         X, _, _ = _zscore_cols(X)
+    logger.debug("Surface feature matrix shape %s for tickers %s", X.shape, ok)
     return {t: grids[t] for t in ok}, X, feat_names or []
 
 
@@ -367,20 +384,23 @@ class UnifiedWeightComputer:
             from data.db_utils import get_conn
             tickers = [target] + peers
             conn = get_conn()
+            placeholders = ','.join('?' * len(tickers))
             q = (
-                "SELECT asof_date, COUNT(DISTINCT ticker) AS n FROM options_quotes "
-                f"WHERE ticker IN ({','.join('?' * len(tickers))}) GROUP BY asof_date"
+                "SELECT asof_date, COUNT(DISTINCT ticker) AS n "
+                "FROM options_quotes WHERE ticker IN (" + placeholders + ") "
+                "GROUP BY asof_date "
+                "HAVING SUM(CASE WHEN ticker = ? THEN 1 ELSE 0 END) > 0 "
+                "ORDER BY n DESC, asof_date DESC LIMIT 1"
             )
-            df = pd.read_sql_query(q, conn, params=[t.upper() for t in tickers])
+            params = [t.upper() for t in tickers] + [target.upper()]
+            df = pd.read_sql_query(q, conn, params=params)
             if not df.empty:
-                df["asof_date"] = pd.to_datetime(df["asof_date"])
-                df = df.sort_values(["n", "asof_date"])  # ascending, tie -> latest
-                best_row = df.iloc[-1]
-                best_date = pd.Timestamp(best_row["asof_date"])
+                best_date = pd.to_datetime(df["asof_date"].iloc[0])
+                best_n = int(df["n"].iloc[0])
                 logger.debug(
                     "_choose_asof picked %s with %d/%d ticker coverage",
                     best_date,
-                    int(best_row["n"]),
+                    best_n,
                     len(tickers),
                 )
                 return best_date.strftime("%Y-%m-%d")
@@ -527,6 +547,11 @@ class UnifiedWeightComputer:
                 asof,
                 tenors=config.tenors,
                 mny_bins=config.mny_bins,
+            )
+            logger.debug(
+                "surface_feature_matrix returned shape %s for tickers %s",
+                X.shape,
+                list(grids.keys()),
             )
             self._log_option_counts(tickers, asof, None)
             return pd.DataFrame(X, index=list(grids.keys()), columns=names)
