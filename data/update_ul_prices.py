@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Update underlying prices with comprehensive historical data."""
 
-from data.underlying_prices import update_underlying_prices
-from data.db_utils import get_conn
+from .underlying_prices import update_underlying_prices
+from .db_utils import get_conn
 import pandas as pd
 
 def get_available_tickers():
