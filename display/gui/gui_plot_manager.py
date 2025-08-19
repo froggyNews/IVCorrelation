@@ -24,13 +24,10 @@ from display.plotting.weights_plot import plot_weights
 from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
-from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data
+from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
+
 from analysis.model_params_logger import append_params
-from analysis.pillars import (
-    compute_atm_by_expiry,
-    atm_curve_for_ticker_on_date,
-    _fit_smile_get_atm,
-)
+from analysis.pillars import _fit_smile_get_atm
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 
@@ -236,11 +233,40 @@ class PlotManager:
         # --- Term: needs all expiries for this day ---
         elif plot_type.startswith("Term"):
             self._clear_correlation_colorbar(ax)
-            df_all = self.get_smile_slice(target, asof, T_target_years=None)
-            if df_all is None or df_all.empty:
+
+            weights = None
+            if overlay_synth and peers:
+                weights = self._weights_from_ui_or_matrix(
+                    target,
+                    peers,
+                    weight_mode,
+                    asof=asof,
+                    pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
+                )
+
+            data = prepare_term_data(
+                target=target,
+                asof=asof,
+                ci=ci,
+                overlay_synth=overlay_synth,
+                peers=peers,
+                weights=weights.to_dict() if weights is not None else None,
+                atm_band=atm_band,
+                max_expiries=max_expiries,
+            )
+
+            atm_curve = data.get("atm_curve") if data else None
+            if atm_curve is None or atm_curve.empty:
                 ax.set_title("No data")
                 return
-            self._plot_term(ax, df_all, target, asof, x_units, ci, overlay_synth, peers, weight_mode, atm_band)
+            self._plot_term(
+                ax,
+                data,
+                target,
+                asof,
+                x_units,
+                ci,
+            )
             return
 
         # --- Corr Matrix ---
@@ -863,93 +889,44 @@ class PlotManager:
         self._render_smile_at_index()
 
     # -------------------- term structure --------------------
-    def _plot_term(self, ax, df, target, asof, x_units, ci, overlay_synth, peers, weight_mode, atm_band):
-        """Plot target ATM term structure; optionally overlay corr-matrix synthetic ATM curve."""
-        # Keep GUI responsive; only bootstrap if user asked for CI
-        min_boot = 64 if (ci and ci > 0) else 0
-        atm_target = compute_atm_by_expiry(
-            df,
-            atm_band=atm_band,
-            method="fit",
-            model="auto",
-            vega_weighted=True,
-            n_boot=min_boot,
-            ci_level=ci,
-        )
+    
+    def _plot_term(self, ax, data, target, asof, x_units, ci):
+        """Plot precomputed ATM term structure and optional synthetic overlay."""
+        atm_curve = data.get("atm_curve")
         plot_atm_term_structure(
             ax,
-            atm_target,
+            atm_curve,
             x_units=x_units,
             connect=True,
             smooth=True,
-            show_ci=bool(min_boot),
+            show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
             ci_level=ci,
             generate_ci=False,
         )
-        title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_target)})"
-
-        if overlay_synth and peers:
-            try:
-                w = self._weights_from_ui_or_matrix(
-                    target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
-                )
-                synth_curve = self._corr_weighted_synth_atm_curve(
-                    asof=asof, peers=peers, weights=w, atm_band=atm_band, t_tolerance_days=10.0
-                )
-                if synth_curve is not None and not synth_curve.empty:
-                    # Align expiries approximately to avoid visual mismatch
-                    raw_T = atm_target["T"].to_numpy(float)
-                    synth_T = synth_curve["T"].to_numpy(float)
-                    tol_days = max(2.0 / 365.25, 0.1 * min(raw_T.min(), synth_T.min()))
-
-                    common_T = []
-                    for rt in raw_T:
-                        if np.any(np.abs(synth_T - rt) <= tol_days):
-                            common_T.append(rt)
-
-                    if len(common_T) > 0:
-                        common_T = np.array(sorted(common_T))
-                        raw_filtered = atm_target[atm_target["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_days))]
-                        synth_filtered = synth_curve[synth_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_days))]
-
-                        # Re-plot raw to ensure consistent axis after filtering
-                        ax.clear()
-                        plot_atm_term_structure(
-                            ax,
-                            raw_filtered,
-                            x_units=x_units,
-                            connect=True,
-                            smooth=True,
-                            show_ci=bool(min_boot),
-                            ci_level=ci,
-                            generate_ci=False,
-                        )
-
-                        x = synth_filtered["T"].to_numpy(float)
-                        if x_units == "days":
-                            x = x * 365.25
-                        y = synth_filtered["atm_vol"].to_numpy(float)
-                        order = np.argsort(x)
-                        ax.plot(x[order], y[order], linestyle="--", linewidth=1.6, alpha=0.9, label="Synthetic ATM (corr-matrix)")
-                        ax.scatter(x, y, s=18, alpha=0.8)
-                        title = (
-                            f"{target}  {asof}  ATM Term Structure  (N={len(raw_filtered)})"
-                            f" - Synthetic Overlay (N={len(synth_filtered)})"
-                        )
-                        ax.legend(loc="best", fontsize=8)
-                    else:
-                        x = synth_curve["T"].to_numpy(float)
-                        if x_units == "days":
-                            x = x * 365.25
-                        y = synth_curve["atm_vol"].to_numpy(float)
-                        order = np.argsort(x)
-                        ax.plot(x[order], y[order], linestyle="--", linewidth=1.6, alpha=0.9, label="Synthetic ATM (corr-matrix)")
-                        ax.scatter(x, y, s=18, alpha=0.8)
-                        ax.legend(loc="best", fontsize=8)
-            except Exception:
-                pass
-
+        title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
+        synth_curve = data.get("synth_curve")
+        if synth_curve is not None and not synth_curve.empty:
+            x = synth_curve["T"].to_numpy(float)
+            if x_units == "days":
+                x = x * 365.25
+            y = synth_curve["atm_vol"].to_numpy(float)
+            order = np.argsort(x)
+            ax.plot(
+                x[order],
+                y[order],
+                linestyle="--",
+                linewidth=1.6,
+                alpha=0.9,
+                label="Synthetic ATM (corr-matrix)",
+            )
+            ax.scatter(x, y, s=18, alpha=0.8)
+            title = (
+                f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
+                f" - Synthetic Overlay (N={len(synth_curve)})"
+            )
+            ax.legend(loc="best", fontsize=8)
         ax.set_title(title)
+
 
     # -------------------- correlation matrix --------------------
     def _plot_corr_matrix(
@@ -999,62 +976,6 @@ class PlotManager:
         }
 
     # -------------------- synthetic ATM helper --------------------
-    def _corr_weighted_synth_atm_curve(
-        self,
-        asof: str,
-        peers: list[str],
-        weights: pd.Series | None,
-        atm_band: float = DEFAULT_ATM_BAND,
-        t_tolerance_days: float = 10.0,
-    ) -> pd.DataFrame:
-        if weights is None or weights.empty:
-            weights = pd.Series({p: 1.0 for p in peers}, dtype=float)
-        weights = (weights / weights.sum()).astype(float)
-        peers = [p for p in weights.index if p in peers]
-
-        curves = {}
-        for p in peers:
-            c = atm_curve_for_ticker_on_date(
-                self.get_smile_slice,
-                p,
-                asof,
-                atm_band=atm_band,
-                method="median",  # fast & robust
-                model="auto",
-                vega_weighted=False,
-            )
-            if not c.empty:
-                curves[p] = c
-        if not curves:
-            return pd.DataFrame(columns=["T", "atm_vol"])
-
-        grid_days = np.unique(np.concatenate([(c["T"].to_numpy() * 365.25) for c in curves.values()]))
-        grid_days.sort()
-
-        tol = float(t_tolerance_days)
-        out_T, out_iv = [], []
-        for td in grid_days:
-            contrib, wts = [], []
-            for p, c in curves.items():
-                arr_days = c["T"].to_numpy() * 365.25
-                if arr_days.size == 0:
-                    continue
-                j = int(np.argmin(np.abs(arr_days - td)))
-                if np.abs(arr_days[j] - td) <= tol:
-                    ivp = float(c["atm_vol"].iloc[j])
-                    if np.isfinite(ivp):
-                        wp = float(weights.get(p, 0.0))
-                        if wp > 0:
-                            contrib.append(ivp * wp)
-                            wts.append(wp)
-            if wts:
-                out_T.append(td / 365.25)
-                out_iv.append(sum(contrib) / sum(wts))
-
-        if not out_T:
-            return pd.DataFrame(columns=["T", "atm_vol"])
-        return pd.DataFrame({"T": np.array(out_T, float), "atm_vol": np.array(out_iv, float)}).sort_values("T")
-
     # -------------------- animation control --------------------
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if animation is supported for the given plot type."""
