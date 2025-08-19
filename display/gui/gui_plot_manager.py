@@ -493,7 +493,7 @@ class PlotManager:
                 )
                 tickers = list({target, *peers})
                 surfaces = build_surface_grids(
-                    tickers=tickers, tenors=None, mny_bins=None, use_atm_only=False, max_expiries=self._current_max_expiries
+                    tickers=tickers, use_atm_only=False, max_expiries=self._current_max_expiries
                 )
                 if target in surfaces and asof in surfaces[target]:
                     peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
