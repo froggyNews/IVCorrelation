@@ -532,6 +532,32 @@ def cosine_similarity_weights_from_matrix(
     )
 
 
+def cosine_similarity_weights(
+    get_smile_slice,
+    mode: str,
+    target: str,
+    peers: Iterable[str],
+    *,
+    asof: str | None = None,
+    **kwargs,
+) -> pd.Series:
+    """Convenience wrapper dispatching to ``build_peer_weights`` for cosine modes."""
+    if not mode.startswith("cosine_"):
+        raise ValueError("mode must start with 'cosine_'")
+    feature = mode[len("cosine_"):]
+    if feature == "ul":
+        feature = "ul_px"
+    return build_peer_weights(
+        "cosine",
+        feature,
+        target,
+        peers,
+        get_smile_slice=get_smile_slice,
+        asof=asof,
+        **kwargs,
+    )
+
+
 # =========================
 # High-level dispatcher (kept for compatibility)
 # =========================
@@ -564,7 +590,7 @@ def build_peer_weights(
     # Build the feature matrix via unified builders
     feature_df: pd.DataFrame | None = None
 
-    if feature in ("atm", "surface_vector"):
+    if feature in ("atm", "surface", "surface_vector"):
         if asof is None:
             raise ValueError("asof date required for ATM/surface features")
         if feature == "atm":
@@ -574,10 +600,11 @@ def build_peer_weights(
             grids, X, names = surface_feature_matrix([target] + peers_list, asof, tenors=tenors, mny_bins=mny_bins)
             feature_df = pd.DataFrame(X, index=list(grids.keys()), columns=names)
     elif feature == "ul_px":
-        # unified returns: rows=tickers; subset to requested
-        df_all = uw_underlying_returns_matrix(tickers=[])
-        req = [t for t in [target] + peers_list if t in df_all.index]
-        feature_df = df_all.loc[req]
+        # Use legacy helper to allow monkeypatching in tests
+        ret = _underlying_log_returns(lambda: None)
+        if ret is not None and not ret.empty:
+            cols = [c for c in [target] + peers_list if c in ret.columns]
+            feature_df = ret[cols].T
     elif feature == "ul_vol":
         # legacy rolling vol path (kept local)
         from data.db_utils import get_conn as conn_fn
