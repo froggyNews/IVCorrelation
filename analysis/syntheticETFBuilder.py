@@ -39,6 +39,11 @@ def build_surface_grids(
     """
     conn = get_conn()
 
+    if tenors is None:
+        tenors = DEFAULT_TENORS
+    if mny_bins is None:
+        mny_bins = DEFAULT_MNY_BINS
+
     cols = "asof_date, ticker, ttm_years, moneyness, iv, is_atm"
     q = f"SELECT {cols} FROM options_quotes"
     params: list = []

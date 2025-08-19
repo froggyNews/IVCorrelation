@@ -791,6 +791,7 @@ def prepare_smile_data(
         if not np.any(mask):
             continue
 
+
         S = float(np.nanmedian(S_arr[mask])) if np.any(mask) else float("nan")
         K = K_arr[mask]
         IV = sigma_arr[mask]
@@ -879,8 +880,6 @@ def prepare_smile_data(
             tickers = list({target, *peers})
             surfaces = build_surface_grids(
                 tickers=tickers,
-                tenors=None,
-                mny_bins=None,
                 use_atm_only=False,
                 max_expiries=max_expiries,
             )
