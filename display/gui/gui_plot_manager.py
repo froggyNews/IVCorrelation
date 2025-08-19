@@ -24,7 +24,7 @@ from display.plotting.weights_plot import plot_weights
 from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
-from analysis.analysis_pipeline import get_smile_slice
+from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data
 from analysis.model_params_logger import append_params
 from analysis.pillars import (
     compute_atm_by_expiry,
@@ -192,83 +192,44 @@ class PlotManager:
         if plot_type.startswith("Smile"):
             self._clear_correlation_colorbar(ax)
 
-            chain_df = self.get_smile_slice(target, asof, T_target_years=None)
-            if chain_df is None or chain_df.empty:
-                ax.set_title("No data")
-                return
-
-            # precompute arrays for fast slicing
-            T_arr = pd.to_numeric(chain_df["T"], errors="coerce").to_numpy(float)
-            K_arr = pd.to_numeric(chain_df["K"], errors="coerce").to_numpy(float)
-            sigma_arr = pd.to_numeric(chain_df["sigma"], errors="coerce").to_numpy(float)
-            S_arr = pd.to_numeric(chain_df["S"], errors="coerce").to_numpy(float)
-            expiry_arr = pd.to_datetime(chain_df.get("expiry"), errors="coerce").to_numpy()
-
-            Ts = np.sort(np.unique(T_arr[np.isfinite(T_arr)]))
-            if Ts.size == 0:
-                ax.set_title("No expiries")
-                return
-            target_T = float(T_days) / 365.25
-            idx0 = int(np.argmin(np.abs(Ts - target_T)))
-
             weights = None
-            tgt_surface = None
-            syn_surface = None
-            peer_slices: dict[str, dict] = {}
-
             if overlay_synth and peers:
                 weights = self._weights_from_ui_or_matrix(
                     target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
                 )
-                try:
-                    tickers = list({target, *peers})
-                    surfaces = build_surface_grids(
-                        tickers=tickers,
-                        tenors=None,
-                        mny_bins=None,
-                        use_atm_only=False,
-                        max_expiries=max_expiries,
-                    )
-                    if target in surfaces and asof in surfaces[target]:
-                        tgt_surface = surfaces[target][asof]
-                    peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces}
-                    synth_by_date = combine_surfaces(peer_surfaces, weights.to_dict())
-                    syn_surface = synth_by_date.get(asof)
-                except Exception:
-                    tgt_surface = None
-                    syn_surface = None
 
-            if overlay_peers and peers:
-                for p in peers:
-                    df_p = self.get_smile_slice(p, asof, T_target_years=None)
-                    if df_p is None or df_p.empty:
-                        continue
-                    T_p = pd.to_numeric(df_p["T"], errors="coerce").to_numpy(float)
-                    K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float)
-                    sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float)
-                    S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float)
-                    peer_slices[p.upper()] = {
-                        "T_arr": T_p,
-                        "K_arr": K_p,
-                        "sigma_arr": sigma_p,
-                        "S_arr": S_p,
-                    }
+            data = prepare_smile_data(
+                target=target,
+                asof=asof,
+                T_days=T_days,
+                model=model,
+                ci=ci,
+                overlay_synth=overlay_synth,
+                peers=peers,
+                weights=weights.to_dict() if weights is not None else None,
+                overlay_peers=overlay_peers,
+                max_expiries=max_expiries,
+            )
+            if not data:
+                ax.set_title("No data")
+                return
 
             self._smile_ctx = {
                 "ax": ax,
-                "T_arr": T_arr,
-                "K_arr": K_arr,
-                "sigma_arr": sigma_arr,
-                "S_arr": S_arr,
-                "Ts": Ts,
-                "idx": idx0,
+                "T_arr": data["T_arr"],
+                "K_arr": data["K_arr"],
+                "sigma_arr": data["sigma_arr"],
+                "S_arr": data["S_arr"],
+                "Ts": data["Ts"],
+                "idx": data["idx0"],
                 "settings": settings,
                 "weights": weights,
-                "tgt_surface": tgt_surface,
-                "syn_surface": syn_surface,
-                "peer_slices": peer_slices,
-                "expiry_arr": expiry_arr,
+                "tgt_surface": data.get("tgt_surface"),
+                "syn_surface": data.get("syn_surface"),
+                "peer_slices": data.get("peer_slices", {}),
+                "expiry_arr": data.get("expiry_arr"),
             }
+            self.last_fit_info = data.get("fit_info")
             self._render_smile_at_index()
             return
 
