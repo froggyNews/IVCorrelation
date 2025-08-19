@@ -59,7 +59,7 @@ from .correlation_utils import (
 )
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
-from .model_params_logger import append_params
+from .model_params_logger import append_params, load_model_params
 
 
 # -----------------------------------------------------------------------------
@@ -755,6 +755,17 @@ def prepare_smile_data(
     """
     peers = list(peers or [])
 
+    asof_ts = pd.to_datetime(asof).normalize()
+    try:
+        params_cache = load_model_params()
+        params_cache = params_cache[
+            (params_cache["ticker"] == target)
+            & (params_cache["asof_date"] == asof_ts)
+            & (params_cache["model"].isin(["svi", "sabr", "sens"]))
+        ]
+    except Exception:
+        params_cache = pd.DataFrame()
+
     df = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
     if df is None or df.empty:
         return {}
@@ -780,6 +791,7 @@ def prepare_smile_data(
         if not np.any(mask):
             continue
 
+
         S = float(np.nanmedian(S_arr[mask])) if np.any(mask) else float("nan")
         K = K_arr[mask]
         IV = sigma_arr[mask]
@@ -787,28 +799,62 @@ def prepare_smile_data(
         expiry_dt = None
         if expiry_arr.size and np.any(mask):
             try:
-                expiry_dt = expiry_arr[mask][0]
+                expiry_dt = pd.to_datetime(expiry_arr[mask][0])
             except Exception:
                 expiry_dt = None
 
-        svi_params = fit_svi_slice(S, K, T_val, IV)
-        sabr_params = fit_sabr_slice(S, K, T_val, IV)
+        tenor_d = None
+        if expiry_dt is not None:
+            try:
+                tenor_d = int((expiry_dt - asof_ts).days)
+            except Exception:
+                tenor_d = None
+        if tenor_d is None:
+            tenor_d = int(round(float(T_val) * 365.25))
 
-        dfe = df[mask].copy()
-        try:
-            dfe["moneyness"] = dfe["K"].astype(float) / float(S)
-        except Exception:
-            dfe["moneyness"] = np.nan
-        sens = _fit_smile_get_atm(dfe, model="auto")
-        sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
+        def _cached(model: str) -> Optional[Dict[str, float]]:
+            if params_cache.empty:
+                return None
+            sub = params_cache[
+                (params_cache["tenor_d"] == tenor_d)
+                & (params_cache["model"] == model)
+            ]
+            if sub.empty:
+                return None
+            return sub.set_index("param")["value"].to_dict()
 
-        try:
-            exp_str = str(expiry_dt) if expiry_dt is not None else None
-            append_params(asof, target, exp_str, "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
-            append_params(asof, target, exp_str, "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
-            append_params(asof, target, exp_str, "sens", sens_params)
-        except Exception:
-            pass
+        svi_params = _cached("svi")
+        if not svi_params:
+            svi_params = fit_svi_slice(S, K, T_val, IV)
+            try:
+                exp_str = str(expiry_dt) if expiry_dt is not None else None
+                append_params(asof, target, exp_str, "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
+            except Exception:
+                pass
+
+        sabr_params = _cached("sabr")
+        if not sabr_params:
+            sabr_params = fit_sabr_slice(S, K, T_val, IV)
+            try:
+                exp_str = str(expiry_dt) if expiry_dt is not None else None
+                append_params(asof, target, exp_str, "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
+            except Exception:
+                pass
+
+        sens_params = _cached("sens")
+        if not sens_params:
+            dfe = df[mask].copy()
+            try:
+                dfe["moneyness"] = dfe["K"].astype(float) / float(S)
+            except Exception:
+                dfe["moneyness"] = np.nan
+            sens = _fit_smile_get_atm(dfe, model="auto")
+            sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
+            try:
+                exp_str = str(expiry_dt) if expiry_dt is not None else None
+                append_params(asof, target, exp_str, "sens", sens_params)
+            except Exception:
+                pass
 
         fit_by_expiry[T_val] = {
             "svi": svi_params,
