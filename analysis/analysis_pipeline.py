@@ -52,7 +52,7 @@ from .beta_builder import (
 from .unified_weights import (
     cosine_similarity_weights_from_matrix as cosine_similarity_weights,
 )
-from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm
+from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm, compute_atm_by_expiry, DEFAULT_PILLARS_DAYS, atm_curve_for_ticker_on_date
 from .correlation_utils import (
     compute_atm_corr_pillar_free,
     corr_weights,
@@ -60,6 +60,7 @@ from .correlation_utils import (
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from .model_params_logger import append_params
+
 
 # -----------------------------------------------------------------------------
 # Logging
