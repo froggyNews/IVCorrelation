@@ -52,7 +52,7 @@ from .beta_builder import (
     build_peer_weights,
     corr_weights_from_matrix,
 )
-from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
+from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm
 from .correlation_utils import (
     compute_atm_corr,
     compute_atm_corr_optimized,
@@ -60,6 +60,9 @@ from .correlation_utils import (
     compute_atm_corr_pillar_free,
     corr_weights,
 )
+from volModel.sviFit import fit_svi_slice
+from volModel.sabrFit import fit_sabr_slice
+from .model_params_logger import append_params
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -733,6 +736,134 @@ def get_smile_slice(
             df = df[df["expiry"] == first_expiry]
 
     return df.sort_values(["call_put", "T", "moneyness", "K"]).reset_index(drop=True)
+
+
+def prepare_smile_data(
+    target: str,
+    asof: str,
+    T_days: float,
+    model: str = "svi",
+    ci: float = 68.0,
+    overlay_synth: bool = False,
+    peers: Iterable[str] | None = None,
+    weights: Optional[Mapping[str, float]] = None,
+    overlay_peers: bool = False,
+    max_expiries: int = 6,
+) -> Dict[str, Any]:
+    """Precompute smile data and fitted parameters for plotting.
+
+    Returns a dictionary with raw quote arrays, optional prebuilt surfaces,
+    peer slices, and a ``fit_info`` mapping suitable for parameter summaries.
+    """
+    peers = list(peers or [])
+
+    df = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
+    if df is None or df.empty:
+        return {}
+
+    T_arr = pd.to_numeric(df["T"], errors="coerce").to_numpy(float)
+    K_arr = pd.to_numeric(df["K"], errors="coerce").to_numpy(float)
+    sigma_arr = pd.to_numeric(df["sigma"], errors="coerce").to_numpy(float)
+    S_arr = pd.to_numeric(df["S"], errors="coerce").to_numpy(float)
+    expiry_arr = pd.to_datetime(df.get("expiry"), errors="coerce").to_numpy()
+
+    Ts = np.sort(np.unique(T_arr[np.isfinite(T_arr)]))
+    if Ts.size == 0:
+        return {}
+    idx0 = int(np.argmin(np.abs(Ts * 365.25 - float(T_days))))
+    T0 = float(Ts[idx0])
+
+    mask = np.isclose(T_arr, T0)
+    if not np.any(mask):
+        tol = 1e-6
+        mask = (T_arr >= T0 - tol) & (T_arr <= T0 + tol)
+
+    S = float(np.nanmedian(S_arr[mask])) if np.any(mask) else float("nan")
+    K = K_arr[mask]
+    IV = sigma_arr[mask]
+
+    expiry_dt = None
+    if expiry_arr.size and np.any(mask):
+        try:
+            expiry_dt = expiry_arr[mask][0]
+        except Exception:
+            expiry_dt = None
+
+    svi_params = fit_svi_slice(S, K, T0, IV)
+    sabr_params = fit_sabr_slice(S, K, T0, IV)
+    dfe = df[mask].copy()
+    try:
+        dfe["moneyness"] = dfe["K"].astype(float) / float(S)
+    except Exception:
+        dfe["moneyness"] = np.nan
+    sens = _fit_smile_get_atm(dfe, model="auto")
+    sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
+
+    try:
+        exp_str = str(expiry_dt) if expiry_dt is not None else None
+        append_params(asof, target, exp_str, "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
+        append_params(asof, target, exp_str, "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
+        append_params(asof, target, exp_str, "sens", sens_params)
+    except Exception:
+        pass
+
+    fit_info = {
+        "ticker": target,
+        "asof": asof,
+        "expiry": str(getattr(expiry_dt, "date", lambda: expiry_dt)()) if expiry_dt is not None else None,
+        "svi": svi_params,
+        "sabr": sabr_params,
+        "sens": sens_params,
+    }
+
+    tgt_surface = None
+    syn_surface = None
+    if overlay_synth and peers:
+        try:
+            tickers = list({target, *peers})
+            surfaces = build_surface_grids(
+                tickers=tickers,
+                tenors=None,
+                mny_bins=None,
+                use_atm_only=False,
+                max_expiries=max_expiries,
+            )
+            if target in surfaces and asof in surfaces[target]:
+                tgt_surface = surfaces[target][asof]
+            peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces}
+            if weights:
+                w = dict(weights)
+                synth_by_date = combine_surfaces(peer_surfaces, w)
+                syn_surface = synth_by_date.get(asof)
+        except Exception:
+            tgt_surface = None
+            syn_surface = None
+
+    peer_slices: Dict[str, Dict[str, np.ndarray]] = {}
+    if overlay_peers and peers:
+        for p in peers:
+            df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
+            if df_p is None or df_p.empty:
+                continue
+            T_p = pd.to_numeric(df_p["T"], errors="coerce").to_numpy(float)
+            K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float)
+            sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float)
+            S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float)
+            peer_slices[p.upper()] = {"T_arr": T_p, "K_arr": K_p, "sigma_arr": sigma_p, "S_arr": S_p}
+
+    return {
+        "T_arr": T_arr,
+        "K_arr": K_arr,
+        "sigma_arr": sigma_arr,
+        "S_arr": S_arr,
+        "Ts": Ts,
+        "idx0": idx0,
+        "tgt_surface": tgt_surface,
+        "syn_surface": syn_surface,
+        "peer_slices": peer_slices,
+        "expiry_arr": expiry_arr,
+        "fit_info": fit_info,
+    }
 
 
 def fit_smile_for(
