@@ -2,8 +2,8 @@
 Matplotlib-based viewer for Synthetic ETF surfaces.
 
 Features:
-- Side-by-side target vs synthetic surface (moneyness × tenor)
-- Difference heatmap
+- Side-by-side target vs synthetic surface (moneyness × tenor × IV)
+- Difference surface
 - ATM relative value summary table (spread / z / pct_rank per pillar)
 - Optional save to disk
 
@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from typing import Optional
-from matplotlib.colors import TwoSlopeNorm
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  # needed for 3D plotting
 
 from analysis.analysis_synthetic_etf import SyntheticETFArtifacts
 
@@ -71,21 +71,19 @@ def _extract_latest(
 
 
 def _plot_surface(ax, df: pd.DataFrame, title: str, cmap="viridis"):
+    """Render a 3D volatility surface."""
+
     # df: rows mny bins (string labels), cols tenor-days
     mat = df.to_numpy(dtype=float)
-    mny_vals = _as_float_index(df.index)
-    tenors = [float(c) for c in df.columns]
-    im = ax.imshow(
-        mat,
-        origin="lower",
-        aspect="auto",
-        extent=[min(tenors), max(tenors), min(mny_vals), max(mny_vals)],
-        cmap=cmap,
-    )
+    mny_vals = np.array(_as_float_index(df.index), dtype=float)
+    tenors = np.array([float(c) for c in df.columns], dtype=float)
+    T, M = np.meshgrid(tenors, mny_vals)
+    surf = ax.plot_surface(T, M, mat, cmap=cmap)
     ax.set_title(title)
     ax.set_xlabel("Tenor (days)")
     ax.set_ylabel("Moneyness (K/S)")
-    return im
+    ax.set_zlabel("IV")
+    return surf
 
 
 def show_synthetic_etf(
@@ -101,35 +99,28 @@ def show_synthetic_etf(
         print("Missing surface data to plot synthetic ETF.")
         return
 
-    fig, axes = plt.subplots(
-        1, 3 if show_diff else 2, figsize=figsize, constrained_layout=True
-    )
-    ax0, ax1 = axes[0], axes[1]
-    im0 = _plot_surface(ax0, tgt_df, f"{target} Surface ({tgt_date})")
-    im1 = _plot_surface(ax1, syn_df, f"Synthetic Surface ({syn_date})")
+    ncols = 3 if show_diff else 2
+    fig = plt.figure(figsize=figsize, constrained_layout=True)
+    ax0 = fig.add_subplot(1, ncols, 1, projection="3d")
+    ax1 = fig.add_subplot(1, ncols, 2, projection="3d")
+    surf0 = _plot_surface(ax0, tgt_df, f"{target} Surface ({tgt_date})")
+    surf1 = _plot_surface(ax1, syn_df, f"Synthetic Surface ({syn_date})")
 
-    fig.colorbar(im0, ax=ax0, fraction=0.046)
-    fig.colorbar(im1, ax=ax1, fraction=0.046)
+    fig.colorbar(surf0, ax=ax0, shrink=0.5, aspect=10)
+    fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=10)
 
     if show_diff:
-        ax2 = axes[2]
+        ax2 = fig.add_subplot(1, ncols, 3, projection="3d")
         diff = tgt_df.astype(float) - syn_df.astype(float)
-        mat = diff.to_numpy()
-        mny_vals = _as_float_index(diff.index)
-        tenors = [float(c) for c in diff.columns]
-        norm = TwoSlopeNorm(vcenter=0.0)
-        im2 = ax2.imshow(
-            mat,
-            origin="lower",
-            aspect="auto",
-            extent=[min(tenors), max(tenors), min(mny_vals), max(mny_vals)],
+        vmax = np.nanmax(np.abs(diff.to_numpy()))
+        surf2 = _plot_surface(
+            ax2,
+            diff,
+            "Target - Synthetic (Diff)",
             cmap="coolwarm",
-            norm=norm,
         )
-        ax2.set_title("Target - Synthetic (Diff)")
-        ax2.set_xlabel("Tenor (days)")
-        ax2.set_ylabel("Moneyness (K/S)")
-        fig.colorbar(im2, ax=ax2, fraction=0.046)
+        surf2.set_clim(-vmax, vmax)
+        fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=10)
 
     # Add RV metrics table as inset
     rv_df = artifacts.rv_metrics
