@@ -211,7 +211,9 @@ def plot_synthetic_etf_smile(
 
     ax.set_xlabel("Strike / Moneyness")
     ax.set_ylabel("Implied Vol")
-    if not ax.get_legend():
-        ax.legend(loc="best", fontsize=8)
+    # Always refresh the legend so newly added synthetic curves appear
+    handles, labels = ax.get_legend_handles_labels()
+    if handles and labels:
+        ax.legend(handles, labels, loc="best", fontsize=8)
 
     return bands
