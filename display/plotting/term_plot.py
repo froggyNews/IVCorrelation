@@ -220,7 +220,9 @@ def plot_synthetic_etf_term_structure(
 
     ax.set_xlabel("Pillar (days)")
     ax.set_ylabel("Implied Vol (ATM)")
-    if not ax.get_legend():
-        ax.legend(loc="best", fontsize=8)
+    # Refresh legend to ensure synthetic term structure is visible
+    handles, labels = ax.get_legend_handles_labels()
+    if handles and labels:
+        ax.legend(handles, labels, loc="best", fontsize=8)
 
     return bands
