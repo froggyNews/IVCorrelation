@@ -523,7 +523,10 @@ class PlotManager:
                     target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
                 )
                 tickers = list({target, *peers})
-                surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
+                surfaces = build_surface_grids(
+                    tickers=tickers, use_atm_only=False, max_expiries=self._current_max_expiries
+                )
+
                 if target in surfaces and asof in surfaces[target]:
                     peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
                     synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())

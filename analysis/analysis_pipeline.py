@@ -834,8 +834,6 @@ def prepare_smile_data(
             tickers = list({target, *peers})
             surfaces = build_surface_grids(
                 tickers=tickers,
-                tenors=None,
-                mny_bins=None,
                 use_atm_only=False,
                 max_expiries=max_expiries,
             )
