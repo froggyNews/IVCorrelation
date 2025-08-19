@@ -49,6 +49,9 @@ from .beta_builder import (
     build_peer_weights,
     corr_weights_from_matrix,
 )
+from .unified_weights import (
+    cosine_similarity_weights_from_matrix as cosine_similarity_weights,
+)
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm
 from .correlation_utils import (
     compute_atm_corr_pillar_free,
