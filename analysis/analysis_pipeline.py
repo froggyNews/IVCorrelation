@@ -771,47 +771,60 @@ def prepare_smile_data(
     idx0 = int(np.argmin(np.abs(Ts * 365.25 - float(T_days))))
     T0 = float(Ts[idx0])
 
-    mask = np.isclose(T_arr, T0)
-    if not np.any(mask):
-        tol = 1e-6
-        mask = (T_arr >= T0 - tol) & (T_arr <= T0 + tol)
+    fit_by_expiry: Dict[float, Dict[str, Any]] = {}
+    for T_val in Ts:
+        mask = np.isclose(T_arr, T_val)
+        if not np.any(mask):
+            tol = 1e-6
+            mask = (T_arr >= T_val - tol) & (T_arr <= T_val + tol)
+        if not np.any(mask):
+            continue
 
-    S = float(np.nanmedian(S_arr[mask])) if np.any(mask) else float("nan")
-    K = K_arr[mask]
-    IV = sigma_arr[mask]
+        S = float(np.nanmedian(S_arr[mask])) if np.any(mask) else float("nan")
+        K = K_arr[mask]
+        IV = sigma_arr[mask]
 
-    expiry_dt = None
-    if expiry_arr.size and np.any(mask):
+        expiry_dt = None
+        if expiry_arr.size and np.any(mask):
+            try:
+                expiry_dt = expiry_arr[mask][0]
+            except Exception:
+                expiry_dt = None
+
+        svi_params = fit_svi_slice(S, K, T_val, IV)
+        sabr_params = fit_sabr_slice(S, K, T_val, IV)
+
+        dfe = df[mask].copy()
         try:
-            expiry_dt = expiry_arr[mask][0]
+            dfe["moneyness"] = dfe["K"].astype(float) / float(S)
         except Exception:
-            expiry_dt = None
+            dfe["moneyness"] = np.nan
+        sens = _fit_smile_get_atm(dfe, model="auto")
+        sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
 
-    svi_params = fit_svi_slice(S, K, T0, IV)
-    sabr_params = fit_sabr_slice(S, K, T0, IV)
-    dfe = df[mask].copy()
-    try:
-        dfe["moneyness"] = dfe["K"].astype(float) / float(S)
-    except Exception:
-        dfe["moneyness"] = np.nan
-    sens = _fit_smile_get_atm(dfe, model="auto")
-    sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
+        try:
+            exp_str = str(expiry_dt) if expiry_dt is not None else None
+            append_params(asof, target, exp_str, "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
+            append_params(asof, target, exp_str, "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
+            append_params(asof, target, exp_str, "sens", sens_params)
+        except Exception:
+            pass
 
-    try:
-        exp_str = str(expiry_dt) if expiry_dt is not None else None
-        append_params(asof, target, exp_str, "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
-        append_params(asof, target, exp_str, "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
-        append_params(asof, target, exp_str, "sens", sens_params)
-    except Exception:
-        pass
+        fit_by_expiry[T_val] = {
+            "svi": svi_params,
+            "sabr": sabr_params,
+            "sens": sens_params,
+            "expiry": str(expiry_dt) if expiry_dt is not None else None,
+        }
 
+    fit_entry = fit_by_expiry.get(T0, {})
     fit_info = {
         "ticker": target,
         "asof": asof,
-        "expiry": str(getattr(expiry_dt, "date", lambda: expiry_dt)()) if expiry_dt is not None else None,
-        "svi": svi_params,
-        "sabr": sabr_params,
-        "sens": sens_params,
+        "expiry": fit_entry.get("expiry"),
+        "svi": fit_entry.get("svi", {}),
+        "sabr": fit_entry.get("sabr", {}),
+        "sens": fit_entry.get("sens", {}),
     }
 
     tgt_surface = None
@@ -861,6 +874,7 @@ def prepare_smile_data(
         "peer_slices": peer_slices,
         "expiry_arr": expiry_arr,
         "fit_info": fit_info,
+        "fit_by_expiry": fit_by_expiry,
     }
 
 def prepare_term_data(

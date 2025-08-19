@@ -225,6 +225,7 @@ class PlotManager:
                 "syn_surface": data.get("syn_surface"),
                 "peer_slices": data.get("peer_slices", {}),
                 "expiry_arr": data.get("expiry_arr"),
+                "fit_by_expiry": data.get("fit_by_expiry", {}),
             }
             self.last_fit_info = data.get("fit_info")
             self._render_smile_at_index()
@@ -702,6 +703,9 @@ class PlotManager:
         K = K_arr[mask]
         IV = sigma_arr[mask]
 
+        fit_map = self._smile_ctx.get("fit_by_expiry", {})
+        pre = fit_map.get(T0)
+        pre_params = pre.get(model) if isinstance(pre, dict) else None
         info = fit_and_plot_smile(
             ax,
             S=S,
@@ -709,6 +713,7 @@ class PlotManager:
             T=T0,
             iv=IV,
             model=model,
+            params=pre_params,
             moneyness_grid=(0.7, 1.3, 121),
             ci_level=ci,
             show_points=True,
@@ -716,26 +721,8 @@ class PlotManager:
             enable_svi_toggles=(model == "svi"),
         )
 
-        try:
-            expiry_dt = None
-            expiry_arr = self._smile_ctx.get("expiry_arr")
-            if expiry_arr is not None:
-                try:
-                    exp_sel = expiry_arr[mask]
-                    if getattr(exp_sel, "size", 0) > 0:
-                        expiry_dt = exp_sel[0]
-                except Exception:
-                    pass
-            append_params(
-                asof_date=asof,
-                ticker=target,
-                expiry=str(expiry_dt) if expiry_dt is not None else None,
-                model=model,
-                params=info.get("params", {}),
-                meta={"rmse": info.get("rmse")},
-            )
-        except Exception:
-            pass
+        if pre:
+            self.last_fit_info = {"ticker": target, "asof": asof, **pre}
 
         # overlay: synthetic smile at this T
         syn_surface = self._smile_ctx.get("syn_surface")
