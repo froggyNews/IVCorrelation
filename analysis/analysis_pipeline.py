@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Tuple, List, Mapping, Union
+from typing import Dict, Iterable, Optional, Tuple, List, Mapping, Union, Any
 
 import json
 import logging
@@ -42,21 +42,21 @@ from .syntheticETFBuilder import (
 
 from .beta_builder import (
     pca_weights,
-    iv_atm_betas,
-    surface_betas,
     peer_weights_from_correlations,
     build_vol_betas,
     save_correlations,
-    cosine_similarity_weights_from_matrix as cosine_similarity_weights,
     surface_feature_matrix,
     build_peer_weights,
     corr_weights_from_matrix,
 )
+from .unified_weights import (
+    compute_unified_weights,
+    WeightConfig,
+    UnifiedWeightComputer,
+    cosine_similarity_weights_from_matrix as cosine_similarity_weights,
+)
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm
 from .correlation_utils import (
-    compute_atm_corr,
-    compute_atm_corr_optimized,
-    compute_atm_corr_restricted,
     compute_atm_corr_pillar_free,
     corr_weights,
 )
