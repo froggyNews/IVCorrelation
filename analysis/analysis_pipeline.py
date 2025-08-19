@@ -60,6 +60,7 @@ from .pillars import (
     compute_atm_by_expiry,
     atm_curve_for_ticker_on_date,
 )
+
 from .correlation_utils import (
     compute_atm_corr,
     compute_atm_corr_optimized,
@@ -871,7 +872,6 @@ def prepare_smile_data(
         "expiry_arr": expiry_arr,
         "fit_info": fit_info,
     }
-
 
 def prepare_term_data(
     target: str,
