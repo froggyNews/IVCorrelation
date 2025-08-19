@@ -290,6 +290,49 @@ def build_synthetic_iv(
     return pd.DataFrame(out_rows).sort_values(["asof_date", "pillar_days"]).reset_index(drop=True)
 
 
+def build_synthetic_iv_by_rank(
+    weights: Mapping[str, float],
+    asof: str,
+    max_expiries: int = 6,
+    atm_band: float = 0.05,
+) -> pd.DataFrame:
+    """Combine peer ATM vols by expiry rank into synthetic curve for one date."""
+    from analysis.analysis_pipeline import get_smile_slice
+    from analysis.correlation_utils import compute_atm_corr_pillar_free
+
+    weights = {k.upper(): float(v) for k, v in dict(weights).items()}
+    total = sum(max(0.0, w) for w in weights.values())
+    if total <= 0:
+        raise ValueError("All weights are zero")
+    w_norm = {k: w / total for k, w in weights.items()}
+    tickers = list(w_norm.keys())
+
+    atm_df, _ = compute_atm_corr_pillar_free(
+        get_smile_slice=get_smile_slice,
+        tickers=tickers,
+        asof=asof,
+        max_expiries=max_expiries,
+        atm_band=atm_band,
+    )
+    if atm_df.empty:
+        return pd.DataFrame(columns=["rank", "synth_iv"])
+
+    out = []
+    for r in atm_df.columns:
+        ivs = []
+        ws = []
+        for t in tickers:
+            if t in atm_df.index:
+                v = atm_df.at[t, r]
+                if pd.notna(v):
+                    ivs.append(float(v))
+                    ws.append(float(w_norm.get(t, 0.0)))
+        if ws:
+            s = float(np.dot(ws, ivs)) / float(np.sum(ws))
+            out.append({"rank": int(r), "synth_iv": s})
+    return pd.DataFrame(out)
+
+
 # ============================================================
 # __main__ smoke test (optional)
 # ============================================================
