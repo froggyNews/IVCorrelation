@@ -352,7 +352,7 @@ def compute_atm_by_expiry(
     model: str = "auto",        # when method="fit": "svi" | "sabr" | "auto"
     vega_weighted: bool = True,
     min_points: int = 4,
-    n_boot: int = 0,            # bootstrap reps per expiry (0 = off)
+    n_boot: int = 100,          # bootstrap reps per expiry (100 = default for CI)
     ci_level: float = 0.68,     # used if n_boot>0
 ) -> pd.DataFrame:
     """

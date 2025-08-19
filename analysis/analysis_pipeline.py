@@ -1067,12 +1067,6 @@ if __name__ == "__main__":
     else:
         print("  No disk cache files found")
 
-    print("\n=== Enhanced Caching Features ===")
-    print("✓ Parquet format (smaller & faster)")
-    print("✓ Config-aware cache validation")
-    print("✓ Cache utilities (get_cache_info / clear_all_caches)")
-    print("✓ Smart invalidation when settings change")
-
     # Optional: smile modeling
     try:
         dates = available_dates("SPY")

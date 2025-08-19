@@ -47,7 +47,7 @@ def fit_and_plot_smile(
     *,
     model: ModelName = "svi",
     moneyness_grid: Tuple[float, float, int] = (0.8, 1.2, 121),
-    ci_level: float = 0.0,          # 0 disables CI
+    ci_level: float = 0.68,         # confidence level (0 disables CI)
     n_boot: int = 200,              # used only if ci_level > 0
     show_points: bool = True,
     beta: float = 0.5,              # SABR beta
