@@ -106,6 +106,9 @@ class PlotManager:
         # store latest fit parameters for UI parameter tab
         self.last_fit_info: dict | None = None
 
+        # cache for surface grids: key is (tickers tuple, max_expiries)
+        self._surface_cache: dict[tuple[tuple[str, ...], int], dict] = {}
+
     # -------------------- canvas wiring --------------------
     def attach_canvas(self, canvas):
         self.canvas = canvas
@@ -137,6 +140,27 @@ class PlotManager:
         except Exception:
             pass
 
+    def invalidate_surface_cache(self):
+        """Clear any cached surface grids."""
+        self._surface_cache.clear()
+
+    def _get_surface_grids(self, tickers, max_expiries):
+        """Return surface grids for ``tickers`` using cache if available."""
+        key = (tuple(sorted(set(tickers))), int(max_expiries))
+        if key not in self._surface_cache:
+            try:
+                grids = build_surface_grids(
+                    tickers=list(key[0]),
+                    tenors=None,
+                    mny_bins=None,
+                    use_atm_only=False,
+                    max_expiries=key[1],
+                )
+                self._surface_cache[key] = grids if grids is not None else {}
+            except Exception:
+                self._surface_cache[key] = {}
+        return self._surface_cache.get(key, {})
+
     # -------------------- main entry --------------------
     def plot(self, ax: plt.Axes, settings: dict):
         plot_type = settings["plot_type"]
@@ -166,6 +190,13 @@ class PlotManager:
         peers = settings["peers"]
         pillars = settings["pillars"]
         max_expiries = settings.get("max_expiries", 6)
+
+        # invalidate surface cache if tickers or max_expiries changed
+        prev = getattr(self, "last_settings", {}) or {}
+        prev_tickers = set([prev.get("target", "")] + prev.get("peers", []))
+        curr_tickers = set([target] + peers)
+        if prev_tickers != curr_tickers or prev.get("max_expiries") != max_expiries:
+            self.invalidate_surface_cache()
 
         # reset last-fit info before plotting
         self.last_fit_info = None
@@ -495,6 +526,7 @@ class PlotManager:
                 surfaces = build_surface_grids(
                     tickers=tickers, use_atm_only=False, max_expiries=self._current_max_expiries
                 )
+
                 if target in surfaces and asof in surfaces[target]:
                     peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
                     synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
@@ -572,7 +604,7 @@ class PlotManager:
 
         try:
             tickers = list({target, *peers})
-            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False, max_expiries=self._current_max_expiries)
+            surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
 
             if target not in surfaces or asof not in surfaces[target]:
                 ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center")
@@ -727,86 +759,118 @@ class PlotManager:
         # overlay: synthetic smile at this T
         syn_surface = self._smile_ctx.get("syn_surface")
         tgt_surface = self._smile_ctx.get("tgt_surface")
-        if settings.get("overlay_synth") and syn_surface is not None:
-            try:
-                syn_cols_days = _cols_to_days(syn_surface.columns)
-                jx = _nearest_tenor_idx(syn_cols_days, T0 * 365.25)
-                col_syn = syn_surface.columns[jx]
-                
-                # Extract synthetic surface data
-                syn_mny = _mny_from_index_labels(syn_surface.index)
-                syn_iv = syn_surface[col_syn].astype(float).to_numpy()
-                
-                # Filter out NaN values
-                valid_mask = np.isfinite(syn_mny) & np.isfinite(syn_iv)
-                if np.sum(valid_mask) >= 2:
-                    syn_mny_clean = syn_mny[valid_mask]
-                    syn_iv_clean = syn_iv[valid_mask]
-                    
-                    # If we have target surface, try to align grids
-                    if tgt_surface is not None:
-                        tgt_mny = _mny_from_index_labels(tgt_surface.index)
-                        tgt_valid = np.isfinite(tgt_mny)
-                        
-                        if np.sum(tgt_valid) >= 2:
-                            tgt_mny_clean = tgt_mny[tgt_valid]
-                            
-                            # Interpolate synthetic IV onto target moneyness grid
-                            try:
-                                from scipy.interpolate import interp1d
-                                if len(syn_mny_clean) >= 2 and len(tgt_mny_clean) >= 2:
-                                    # Only interpolate within the range of synthetic data
-                                    min_syn_mny = np.min(syn_mny_clean)
-                                    max_syn_mny = np.max(syn_mny_clean)
-                                    
-                                    # Filter target grid to interpolation range
-                                    interp_mask = (tgt_mny_clean >= min_syn_mny) & (tgt_mny_clean <= max_syn_mny)
-                                    if np.sum(interp_mask) >= 2:
-                                        tgt_mny_interp = tgt_mny_clean[interp_mask]
-                                        
-                                        # Create interpolator and interpolate
-                                        f_interp = interp1d(syn_mny_clean, syn_iv_clean, 
-                                                          kind='linear', bounds_error=False, fill_value=np.nan)
-                                        syn_iv_interp = f_interp(tgt_mny_interp)
-                                        
-                                        # Use interpolated values
-                                        x_mny = tgt_mny_interp
-                                        y_syn = syn_iv_interp
+        if settings.get("overlay_synth"):
+            if syn_surface is None or tgt_surface is None:
+                try:
+                    weights = self._smile_ctx.get("weights")
+                    tickers = [target] + (settings.get("peers") or [])
+                    surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
+                    if tgt_surface is None and target in surfaces and asof in surfaces[target]:
+                        tgt_surface = surfaces[target][asof]
+                        self._smile_ctx["tgt_surface"] = tgt_surface
+                    if weights is not None:
+                        peer_surfaces = {p: surfaces[p] for p in (settings.get("peers") or []) if p in surfaces}
+                        synth_by_date = combine_surfaces(peer_surfaces, weights.to_dict())
+                        syn_surface = synth_by_date.get(asof)
+                        self._smile_ctx["syn_surface"] = syn_surface
+                except Exception:
+                    syn_surface = None
+            if syn_surface is not None:
+                try:
+                    syn_cols_days = _cols_to_days(syn_surface.columns)
+                    jx = _nearest_tenor_idx(syn_cols_days, T0 * 365.25)
+                    col_syn = syn_surface.columns[jx]
+
+                    # Extract synthetic surface data
+                    syn_mny = _mny_from_index_labels(syn_surface.index)
+                    syn_iv = syn_surface[col_syn].astype(float).to_numpy()
+
+                    # Filter out NaN values
+                    valid_mask = np.isfinite(syn_mny) & np.isfinite(syn_iv)
+                    if np.sum(valid_mask) >= 2:
+                        syn_mny_clean = syn_mny[valid_mask]
+                        syn_iv_clean = syn_iv[valid_mask]
+
+                        # If we have target surface, try to align grids
+                        if tgt_surface is not None:
+                            tgt_mny = _mny_from_index_labels(tgt_surface.index)
+                            tgt_valid = np.isfinite(tgt_mny)
+
+                            if np.sum(tgt_valid) >= 2:
+                                tgt_mny_clean = tgt_mny[tgt_valid]
+
+                                # Interpolate synthetic IV onto target moneyness grid
+                                try:
+                                    from scipy.interpolate import interp1d
+                                    if len(syn_mny_clean) >= 2 and len(tgt_mny_clean) >= 2:
+                                        # Only interpolate within the range of synthetic data
+                                        min_syn_mny = np.min(syn_mny_clean)
+                                        max_syn_mny = np.max(syn_mny_clean)
+
+                                        # Filter target grid to interpolation range
+                                        interp_mask = (tgt_mny_clean >= min_syn_mny) & (tgt_mny_clean <= max_syn_mny)
+                                        if np.sum(interp_mask) >= 2:
+                                            tgt_mny_interp = tgt_mny_clean[interp_mask]
+
+                                            # Create interpolator and interpolate
+                                            f_interp = interp1d(
+                                                syn_mny_clean,
+                                                syn_iv_clean,
+                                                kind="linear",
+                                                bounds_error=False,
+                                                fill_value=np.nan,
+                                            )
+                                            syn_iv_interp = f_interp(tgt_mny_interp)
+
+                                            # Use interpolated values
+                                            x_mny = tgt_mny_interp
+                                            y_syn = syn_iv_interp
+                                        else:
+                                            x_mny = syn_mny_clean
+                                            y_syn = syn_iv_clean
                                     else:
                                         x_mny = syn_mny_clean
                                         y_syn = syn_iv_clean
-                                else:
+                                except ImportError:
+                                    # Fallback if scipy not available
                                     x_mny = syn_mny_clean
                                     y_syn = syn_iv_clean
-                            except ImportError:
-                                # Fallback if scipy not available
+                            else:
                                 x_mny = syn_mny_clean
                                 y_syn = syn_iv_clean
                         else:
                             x_mny = syn_mny_clean
                             y_syn = syn_iv_clean
-                    else:
-                        x_mny = syn_mny_clean
-                        y_syn = syn_iv_clean
-                    
-                    # Plot the synthetic smile with proper alignment
-                    final_valid = np.isfinite(x_mny) & np.isfinite(y_syn)
-                    if np.sum(final_valid) >= 2:
-                        ax.plot(x_mny[final_valid], y_syn[final_valid], 
-                               linestyle="--", linewidth=1.5, alpha=0.9, label="Synthetic smile (corr-matrix)")
-                        
-            except Exception as e:
-                print(f"Warning: Failed to plot synthetic smile overlay: {e}")
-                # Fallback to simple approach
-                try:
-                    x_mny = _mny_from_index_labels(syn_surface.index)
-                    y_syn = syn_surface[col_syn].astype(float).to_numpy()
-                    valid = np.isfinite(x_mny) & np.isfinite(y_syn)
-                    if np.sum(valid) >= 2:
-                        ax.plot(x_mny[valid], y_syn[valid], linestyle="--", linewidth=1.5, alpha=0.9, 
-                               label="Synthetic smile (corr-matrix)")
-                except Exception:
-                    pass
+
+                        # Plot the synthetic smile with proper alignment
+                        final_valid = np.isfinite(x_mny) & np.isfinite(y_syn)
+                        if np.sum(final_valid) >= 2:
+                            ax.plot(
+                                x_mny[final_valid],
+                                y_syn[final_valid],
+                                linestyle="--",
+                                linewidth=1.5,
+                                alpha=0.9,
+                                label="Synthetic smile (corr-matrix)",
+                            )
+                except Exception as e:
+                    print(f"Warning: Failed to plot synthetic smile overlay: {e}")
+                    # Fallback to simple approach
+                    try:
+                        x_mny = _mny_from_index_labels(syn_surface.index)
+                        y_syn = syn_surface[col_syn].astype(float).to_numpy()
+                        valid = np.isfinite(x_mny) & np.isfinite(y_syn)
+                        if np.sum(valid) >= 2:
+                            ax.plot(
+                                x_mny[valid],
+                                y_syn[valid],
+                                linestyle="--",
+                                linewidth=1.5,
+                                alpha=0.9,
+                                label="Synthetic smile (corr-matrix)",
+                            )
+                    except Exception:
+                        pass
 
         peer_slices = self._smile_ctx.get("peer_slices") or {}
         if settings.get("overlay_peers") and peer_slices:
