@@ -61,12 +61,24 @@ class ParametersTab(ttk.Frame):
         super().__init__(master)
         # Define table columns: model name, parameter name, value, as‑of date, metric
         cols = ("Model", "Parameter", "Value", "As of", "Metric")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings")
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings")
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
         for c in cols:
             self.tree.heading(c, text=c)
             # Left‑align text and allow columns to stretch
             self.tree.column(c, anchor=tk.W, stretch=True)
-        self.tree.pack(fill=tk.BOTH, expand=True)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
 
     def update(self, info: Optional[Dict[str, Any] | pd.DataFrame]) -> None:
         """Update table with latest fit information.
