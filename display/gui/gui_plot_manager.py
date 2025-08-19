@@ -35,6 +35,8 @@ from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 
 DEFAULT_ATM_BAND = 0.05
+DEFAULT_WEIGHT_METHOD = "corr"
+DEFAULT_FEATURE_MODE = "iv_atm"
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +150,20 @@ class PlotManager:
         ci = settings["ci"]
         x_units = settings["x_units"]
         atm_band = settings.get("atm_band", DEFAULT_ATM_BAND)
-        weight_mode = settings["weight_mode"]
+        weight_method = settings.get("weight_method", DEFAULT_WEIGHT_METHOD)
+        feature_mode = settings.get("feature_mode", DEFAULT_FEATURE_MODE)
+        # backward compatibility: allow legacy weight_mode field
+        legacy = settings.get("weight_mode")
+        if legacy and not settings.get("weight_method"):
+            if legacy == "oi":
+                weight_method, feature_mode = "oi", DEFAULT_FEATURE_MODE
+            elif "_" in legacy:
+                weight_method, feature_mode = legacy.split("_", 1)
+            else:
+                weight_method, feature_mode = legacy, DEFAULT_FEATURE_MODE
+        weight_mode = (
+            "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
+        )
         overlay_synth = settings.get("overlay_synth", False)
         overlay_peers = settings.get("overlay_peers", False)
         peers = settings["peers"]
