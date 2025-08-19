@@ -46,6 +46,7 @@ def fit_and_plot_smile(
     iv: np.ndarray,
     *,
     model: ModelName = "svi",
+    params: Optional[Dict] = None,
     moneyness_grid: Tuple[float, float, int] = (0.8, 1.2, 121),
     ci_level: float = 0.68,         # confidence level (0 disables CI)
     n_boot: int = 200,              # used only if ci_level > 0
@@ -96,14 +97,17 @@ def fit_and_plot_smile(
 
     # ---- fit + optional CI
     bands: Optional[Bands] = None
+    fit_params = params or {}
     if model == "svi":
-        params = fit_svi_slice(S, K, T, iv)
-        y_fit = svi_smile_iv(S, K_grid, T, params)
+        if not fit_params:
+            fit_params = fit_svi_slice(S, K, T, iv)
+        y_fit = svi_smile_iv(S, K_grid, T, fit_params)
         if ci_level and ci_level > 0:
             bands = svi_confidence_bands(S, K, T, iv, K_grid, level=float(ci_level), n_boot=int(n_boot))
     else:
-        params = fit_sabr_slice(S, K, T, iv, beta=beta)
-        y_fit = sabr_smile_iv(S, K_grid, T, params)
+        if not fit_params:
+            fit_params = fit_sabr_slice(S, K, T, iv, beta=beta)
+        y_fit = sabr_smile_iv(S, K_grid, T, fit_params)
         if ci_level and ci_level > 0:
             bands = sabr_confidence_bands(S, K, T, iv, K_grid, beta=beta, level=float(ci_level), n_boot=int(n_boot))
 
@@ -143,10 +147,10 @@ def fit_and_plot_smile(
             add_checkboxes(ax.figure, series_map)
 
     # ---- fit quality
-    rmse = float(params.get("rmse", np.nan)) if isinstance(params, dict) else np.nan
+    rmse = float(fit_params.get("rmse", np.nan)) if isinstance(fit_params, dict) else np.nan
 
     return {
-        "params": params,
+        "params": fit_params,
         "rmse": rmse,
         "T": float(T),
         "S": float(S),
