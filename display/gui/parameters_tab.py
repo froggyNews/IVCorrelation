@@ -12,7 +12,9 @@ class ParametersTab(ttk.Frame):
         self.lbl_meta = ttk.Label(self, text="", anchor="w")
         self.lbl_meta.pack(fill=tk.X, padx=4, pady=(4, 2))
 
-        cols = ("Model", "Parameter", "Value")
+        # Include expiry so we can show parameters for all tenors, not just
+        # the currently viewed slice
+        cols = ("Expiry", "Model", "Parameter", "Value")
         tree_frame = ttk.Frame(self)
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -48,17 +50,30 @@ class ParametersTab(ttk.Frame):
             parts.append(f"expiry {info['expiry']}")
         self.lbl_meta.config(text="  ".join(parts))
 
-        def insert(model: str, params: Dict[str, Any]):
+        def insert(expiry: str, model: str, params: Dict[str, Any]):
             for k, v in params.items():
                 try:
                     val = float(v)
                 except Exception:
                     continue
-                self.tree.insert("", tk.END, values=(model, k, f"{val:.6g}"))
+                self.tree.insert("", tk.END, values=(expiry, model, k, f"{val:.6g}"))
 
+        # New structure: info may contain a mapping of parameters by expiry
+        fit_map = info.get("fit_by_expiry") if isinstance(info, dict) else None
+        if fit_map:
+            for T, models in sorted(fit_map.items(), key=lambda kv: kv[0]):
+                expiry = models.get("expiry") or str(T)
+                for mkey, mname in [("svi", "SVI"), ("sabr", "SABR"), ("sens", "Sensitivity")]:
+                    params = models.get(mkey)
+                    if params:
+                        insert(expiry, mname, params)
+            return
+
+        # Fallback: legacy single-expiry structure
+        expiry = info.get("expiry", "")
         if info.get("svi"):
-            insert("SVI", info["svi"])
+            insert(expiry, "SVI", info["svi"])
         if info.get("sabr"):
-            insert("SABR", info["sabr"])
+            insert(expiry, "SABR", info["sabr"])
         if info.get("sens"):
-            insert("Sensitivity", info["sens"])
+            insert(expiry, "Sensitivity", info["sens"])

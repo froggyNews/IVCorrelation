@@ -242,6 +242,7 @@ class PlotManager:
                 ax.set_title("No data")
                 return
 
+            fit_map = data.get("fit_by_expiry", {})
             self._smile_ctx = {
                 "ax": ax,
                 "T_arr": data["T_arr"],
@@ -256,9 +257,13 @@ class PlotManager:
                 "syn_surface": data.get("syn_surface"),
                 "peer_slices": data.get("peer_slices", {}),
                 "expiry_arr": data.get("expiry_arr"),
-                "fit_by_expiry": data.get("fit_by_expiry", {}),
+                "fit_by_expiry": fit_map,
             }
-            self.last_fit_info = data.get("fit_info")
+            self.last_fit_info = {
+                "ticker": target,
+                "asof": asof,
+                "fit_by_expiry": fit_map,
+            }
             self._render_smile_at_index()
             return
 
@@ -506,13 +511,18 @@ class PlotManager:
                 params=sens_params,
             )
 
+            fit_map = {
+                float(T_used): {
+                    "expiry": str(expiry_dt.date()) if expiry_dt is not None else None,
+                    "svi": svi_params,
+                    "sabr": sabr_params,
+                    "sens": sens_params,
+                }
+            }
             self.last_fit_info = {
                 "ticker": target,
                 "asof": asof,
-                "expiry": str(expiry_dt.date()) if expiry_dt is not None else None,
-                "svi": svi_params,
-                "sabr": sabr_params,
-                "sens": sens_params,
+                "fit_by_expiry": fit_map,
             }
         except Exception:
             self.last_fit_info = None
@@ -753,8 +763,12 @@ class PlotManager:
             enable_svi_toggles=(model == "svi"),
         )
 
-        if pre:
-            self.last_fit_info = {"ticker": target, "asof": asof, **pre}
+        if fit_map:
+            self.last_fit_info = {
+                "ticker": target,
+                "asof": asof,
+                "fit_by_expiry": fit_map,
+            }
 
         # overlay: synthetic smile at this T
         syn_surface = self._smile_ctx.get("syn_surface")
