@@ -367,20 +367,23 @@ class UnifiedWeightComputer:
             from data.db_utils import get_conn
             tickers = [target] + peers
             conn = get_conn()
+            placeholders = ','.join('?' * len(tickers))
             q = (
-                "SELECT asof_date, COUNT(DISTINCT ticker) AS n FROM options_quotes "
-                f"WHERE ticker IN ({','.join('?' * len(tickers))}) GROUP BY asof_date"
+                "SELECT asof_date, COUNT(DISTINCT ticker) AS n "
+                "FROM options_quotes WHERE ticker IN (" + placeholders + ") "
+                "GROUP BY asof_date "
+                "HAVING SUM(CASE WHEN ticker = ? THEN 1 ELSE 0 END) > 0 "
+                "ORDER BY n DESC, asof_date DESC LIMIT 1"
             )
-            df = pd.read_sql_query(q, conn, params=[t.upper() for t in tickers])
+            params = [t.upper() for t in tickers] + [target.upper()]
+            df = pd.read_sql_query(q, conn, params=params)
             if not df.empty:
-                df["asof_date"] = pd.to_datetime(df["asof_date"])
-                df = df.sort_values(["n", "asof_date"])  # ascending, tie -> latest
-                best_row = df.iloc[-1]
-                best_date = pd.Timestamp(best_row["asof_date"])
+                best_date = pd.to_datetime(df["asof_date"].iloc[0])
+                best_n = int(df["n"].iloc[0])
                 logger.debug(
                     "_choose_asof picked %s with %d/%d ticker coverage",
                     best_date,
-                    int(best_row["n"]),
+                    best_n,
                     len(tickers),
                 )
                 return best_date.strftime("%Y-%m-%d")
