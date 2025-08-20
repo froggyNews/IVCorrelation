@@ -50,24 +50,38 @@ def _extract_latest(
 
     Attempts to find a common date between target and synthetic surfaces. If none
     exists, falls back to the most recent date available for each side
-    independently so the viewer can still render something.
+    independently so the viewer can still render something.  The artifact
+    dictionaries may contain date keys as strings, ``datetime`` objects or
+    ``pd.Timestamp``.  We normalize everything to ``Timestamp`` to ensure a fair
+    comparison.
     """
 
     if target not in artifacts.surfaces:
         return None, None, None, None
 
-    target_dates = sorted(artifacts.surfaces[target].keys())
-    synth_dates = sorted(artifacts.synthetic_surfaces.keys())
+    def _normalize_dates(d: dict) -> dict[pd.Timestamp, pd.DataFrame]:
+        return {pd.to_datetime(k): v for k, v in d.items()}
+
+    tgt_map = _normalize_dates(artifacts.surfaces[target])
+    syn_map = _normalize_dates(artifacts.synthetic_surfaces)
+
+    target_dates = sorted(tgt_map.keys())
+    synth_dates = sorted(syn_map.keys())
     common = sorted(set(target_dates).intersection(synth_dates))
     if common:
         d = common[-1]
-        return artifacts.surfaces[target][d], artifacts.synthetic_surfaces[d], d, d
+        return tgt_map[d], syn_map[d], d.date().isoformat(), d.date().isoformat()
 
     d_tgt = target_dates[-1] if target_dates else None
     d_syn = synth_dates[-1] if synth_dates else None
-    tgt_df = artifacts.surfaces[target].get(d_tgt) if d_tgt else None
-    syn_df = artifacts.synthetic_surfaces.get(d_syn) if d_syn else None
-    return tgt_df, syn_df, d_tgt, d_syn
+    tgt_df = tgt_map.get(d_tgt)
+    syn_df = syn_map.get(d_syn)
+    return (
+        tgt_df,
+        syn_df,
+        d_tgt.date().isoformat() if d_tgt else None,
+        d_syn.date().isoformat() if d_syn else None,
+    )
 
 
 def _plot_surface(ax, df: pd.DataFrame, title: str, cmap="viridis"):
