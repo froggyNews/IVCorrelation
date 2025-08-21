@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 # Centralized builders & utilities (moved to unified_weights)
-from analysis.unified_weights import (
+from analysis.beta_builder.unified_weights import (
     atm_feature_matrix as uw_atm_feature_matrix,
     surface_feature_matrix as uw_surface_feature_matrix,
     underlying_returns_matrix as uw_underlying_returns_matrix,
@@ -17,7 +17,7 @@ from analysis.unified_weights import (
 )
 
 from analysis.pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
-from analysis.correlation_utils import compute_atm_corr_pillar_free
+from analysis.beta_builder.correlation_utils import compute_atm_corr_pillar_free
 
 
 # =========================
@@ -222,7 +222,7 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     """
     from data.db_utils import get_conn
     from analysis.analysis_pipeline import get_smile_slice
-    from analysis.correlation_utils import compute_atm_corr_pillar_free
+    from analysis.beta_builder.correlation_utils import compute_atm_corr_pillar_free
 
     conn = get_conn()
     date_df = pd.read_sql_query(

@@ -31,7 +31,6 @@ from data.db_utils import get_conn
 from data.interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 from data.data_pipeline import enrich_quotes
 from volModel.volModel import VolModel
-from volModel.termFit import fit_term_structure, term_structure_iv
 
 from .syntheticETFBuilder import (
     build_surface_grids,
@@ -41,7 +40,7 @@ from .syntheticETFBuilder import (
     build_synthetic_iv as build_synthetic_iv_pillars,
 )
 
-from .beta_builder import (
+from .beta_builder.beta_builder import (
     pca_weights,
     peer_weights_from_correlations,
     build_vol_betas,
@@ -50,11 +49,11 @@ from .beta_builder import (
     build_peer_weights,
     corr_weights_from_matrix,
 )
-from .unified_weights import (
+from .beta_builder.unified_weights import (
     cosine_similarity_weights_from_matrix as cosine_similarity_weights,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm, compute_atm_by_expiry, DEFAULT_PILLARS_DAYS, atm_curve_for_ticker_on_date
-from .correlation_utils import (
+from .beta_builder.correlation_utils import (
     compute_atm_corr_pillar_free,
     corr_weights,
 )
@@ -254,7 +253,7 @@ def compute_peer_weights(
 
     # Unified primary path
     try:
-        from analysis.unified_weights import compute_unified_weights
+        from analysis.beta_builder.unified_weights import compute_unified_weights
         return compute_unified_weights(
             target=target,
             peers=peers,
@@ -968,19 +967,7 @@ def prepare_term_data(
         ci_level=ci,
     )
 
-    # Precompute polynomial term-structure fit for plotting
-    fit_x = fit_y = None
-    try:
-        x = atm_curve["T"].to_numpy(float)
-        y = atm_curve["atm_vol"].to_numpy(float)
-        if len(x) > 2:
-            params = fit_term_structure(x, y, degree=2)
-            fit_x = np.linspace(x.min(), x.max(), 200)
-            fit_y = term_structure_iv(fit_x, params)
-    except Exception:
-        pass
     synth_curve = None
-    synth_bands = None
 
     if peers:
         w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
@@ -1053,13 +1040,7 @@ def prepare_term_data(
                         }
                     )
 
-    return {
-        "atm_curve": atm_curve,
-        "synth_curve": synth_curve,
-        "synth_bands": synth_bands,
-        "fit_x": fit_x,
-        "fit_y": fit_y,
-    }
+    return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
 
 
 def fit_smile_for(

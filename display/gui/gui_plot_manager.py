@@ -29,11 +29,9 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
-from analysis.compute_or_load import compute_or_load
+from data.compute_or_load import compute_or_load
 
-
-from analysis.cache_io import  WarmupWorker
-
+from data.cache_io import  WarmupWorker
 
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
@@ -339,7 +337,6 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "atm_band": atm_band,
                 "max_expiries": max_expiries,
-
                 "weight_mode": weight_mode,
             }
 
@@ -406,8 +403,8 @@ class PlotManager:
             )
             return
 
-        # --- Relative Weight Matrix ---
-        elif plot_type.startswith("Relative Weight Matrix"):
+        # --- Corr Matrix ---
+        elif plot_type.startswith("Corr Matrix"):
             self._plot_corr_matrix(ax, target, peers, asof, pillars, weight_mode, atm_band)
             return
 
@@ -474,11 +471,11 @@ class PlotManager:
         (target, peers, weight_mode=..., asof=..., pillar_days=...)
         positional: (target, peers, mode, asof, pillar_days)
 
-        Fallbacks to relative weight matrix-derived weights (if cached meta matches) then equal weights.
+        Fallbacks to corr-matrix-derived weights (if cached meta matches) then equal weights.
         """
         import numpy as np
         import pandas as pd
-        from analysis.correlation_utils import corr_weights
+        from analysis.beta_builder.correlation_utils import corr_weights
 
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
@@ -487,7 +484,7 @@ class PlotManager:
 
         # 1) Unified weights with signature shims
         try:
-            from analysis.unified_weights import compute_unified_weights
+            from analysis.beta_builder.unified_weights import compute_unified_weights
 
             def _normalize(w: pd.Series) -> pd.Series | None:
                 if w is None or w.empty:
@@ -715,17 +712,8 @@ class PlotManager:
                         # Filter final valid data before plotting
                         final_valid = np.isfinite(x_mny) & np.isfinite(y_syn)
                         if np.sum(final_valid) >= 2:
-                            mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
-                            if mode_lbl == "corr":
-                                mode_lbl = "relative weight matrix"
-                            syn_label = f"Synthetic ETF smile ({mode_lbl})" if mode_lbl else "Synthetic ETF smile"
                             ax.plot(
-                                x_mny[final_valid],
-                                y_syn[final_valid],
-                                "--",
-                                linewidth=1.6,
-                                alpha=0.95,
-                                label=syn_label,
+                                x_mny[final_valid], y_syn[final_valid], "--", linewidth=1.6, alpha=0.95, label="Synthetic smile (corr-matrix)"
                             )
                         ax.legend(loc="best", fontsize=8)
             except Exception:
@@ -823,24 +811,8 @@ class PlotManager:
             # Filter final valid data before plotting
             final_valid = np.isfinite(x_mny) & np.isfinite(y_tgt) & np.isfinite(y_syn)
             if np.sum(final_valid) >= 2:
-                ax.plot(
-                    x_mny[final_valid],
-                    y_tgt[final_valid],
-                    "-",
-                    linewidth=1.8,
-                    label=f"{target} smile @ ~{int(T_days)}d",
-                )
-                mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
-                if mode_lbl == "corr":
-                    mode_lbl = "relative weight matrix"
-                syn_label = f"Synthetic ETF surface ({mode_lbl})" if mode_lbl else "Synthetic ETF surface"
-                ax.plot(
-                    x_mny[final_valid],
-                    y_syn[final_valid],
-                    "--",
-                    linewidth=1.8,
-                    label=syn_label,
-                )
+                ax.plot(x_mny[final_valid], y_tgt[final_valid], "-", linewidth=1.8, label=f"{target} smile @ ~{int(T_days)}d")
+                ax.plot(x_mny[final_valid], y_syn[final_valid], "--", linewidth=1.8, label="Synthetic (corr-matrix)")
             else:
                 ax.text(0.5, 0.5, "Insufficient valid data for comparison", ha="center", va="center")
             ax.set_xlabel("Moneyness (K/S)")
@@ -869,10 +841,6 @@ class PlotManager:
         asof = settings["asof"]
         model = settings["model"]
         ci = settings["ci"]
-        wm = settings.get("weight_mode")
-        mode_lbl = wm.split("_")[0] if wm else ""
-        if mode_lbl == "corr":
-            mode_lbl = "relative weight matrix"
 
         T_sel = float(Ts[i])
         # pick nearest slice to T_sel
@@ -1027,14 +995,13 @@ class PlotManager:
                         # Plot the synthetic smile with proper alignment
                         final_valid = np.isfinite(x_mny) & np.isfinite(y_syn)
                         if np.sum(final_valid) >= 2:
-                            syn_label = f"Synthetic ETF smile ({mode_lbl})" if mode_lbl else "Synthetic ETF smile"
                             ax.plot(
                                 x_mny[final_valid],
                                 y_syn[final_valid],
                                 linestyle="--",
                                 linewidth=1.5,
                                 alpha=0.9,
-                                label=syn_label,
+                                label="Synthetic smile (corr-matrix)",
                             )
                 except Exception as e:
                     print(f"Warning: Failed to plot synthetic smile overlay: {e}")
@@ -1044,14 +1011,13 @@ class PlotManager:
                         y_syn = syn_surface[col_syn].astype(float).to_numpy()
                         valid = np.isfinite(x_mny) & np.isfinite(y_syn)
                         if np.sum(valid) >= 2:
-                            syn_label = f"Synthetic ETF smile ({mode_lbl})" if mode_lbl else "Synthetic ETF smile"
                             ax.plot(
                                 x_mny[valid],
                                 y_syn[valid],
                                 linestyle="--",
                                 linewidth=1.5,
                                 alpha=0.9,
-                                label=syn_label,
+                                label="Synthetic smile (corr-matrix)",
                             )
                     except Exception:
                         pass
@@ -1138,8 +1104,7 @@ class PlotManager:
             ax,
             atm_curve,
             x_units=x_units,
-            fit_x=data.get("fit_x"),
-            fit_y=data.get("fit_y"),
+            fit=True,
             show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
