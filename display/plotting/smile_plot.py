@@ -4,6 +4,12 @@ from __future__ import annotations
 from typing import Dict, Optional, Tuple, Literal
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
+from pathlib import Path
+
+# Add project root to path for imports
+sys.path.append(str(Path(__file__).parent.parent.parent))
+from project_logging.db_logger import get_db_logger, log_smile_plot_operation
 
 from volModel.sviFit import fit_svi_slice, svi_smile_iv
 from volModel.sabrFit import fit_sabr_slice, sabr_smile_iv
@@ -61,11 +67,20 @@ def fit_and_plot_smile(
     Plot observed points, model fit, and optional CI on moneyness (K/S).
     
     Supports SVI, SABR, and TPS models with interactive legend toggles.
+    All operations are logged to .txt file via db_logger.
     Returns dict: {params, rmse, T, S, series_map or None}
     """
     
+    # Initialize logging
+    logger = get_db_logger()
+    logger.info(f"=== SMILE PLOT START ===")
+    logger.info(f"Model: {model}, S: {S}, T: {T}")
+    logger.info(f"Input: {len(K)} strikes, IV range: [{np.min(iv):.4f}, {np.max(iv):.4f}]")
+    logger.info(f"Config: ci_level={ci_level}, n_boot={n_boot}, toggles={enable_toggles}")
+    
     # ---- safety check: ensure axes has valid figure
     if ax is None or ax.figure is None:
+        logger.warning("Invalid axes provided - returning empty result")
         return {"params": {}, "rmse": np.nan, "T": float(T), "S": float(S), "series_map": None}
 
     # ---- sanitize
