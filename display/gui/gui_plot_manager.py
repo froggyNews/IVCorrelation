@@ -30,6 +30,12 @@ from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
+from volModel.polyFit import fit_tps_slice
+from analysis.confidence_bands import (
+    svi_confidence_bands,
+    sabr_confidence_bands,
+    tps_confidence_bands,
+)
 
 DEFAULT_ATM_BAND = 0.05
 DEFAULT_WEIGHT_METHOD = "corr"
@@ -459,6 +465,21 @@ class PlotManager:
         IV = dfe["sigma"].to_numpy(float)
         T_used = float(dfe["T"].median())
 
+        m_grid = np.linspace(0.7, 1.3, 121)
+        K_grid = m_grid * S
+        svi_params = fit_svi_slice(S, K, T_used, IV)
+        sabr_params = fit_sabr_slice(S, K, T_used, IV)
+        tps_params = fit_tps_slice(S, K, T_used, IV)
+        fit_params = {"svi": svi_params, "sabr": sabr_params, "tps": tps_params}.get(model, {})
+        bands = None
+        if ci and ci > 0:
+            if model == "svi":
+                bands = svi_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
+            elif model == "sabr":
+                bands = sabr_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
+            else:
+                bands = tps_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
+
         info = fit_and_plot_smile(
             ax,
             S=S,
@@ -466,8 +487,9 @@ class PlotManager:
             T=T_used,
             iv=IV,
             model=model,
+            params=fit_params,
+            bands=bands,
             moneyness_grid=(0.7, 1.3, 121),
-            ci_level=ci,
             show_points=True,
             enable_svi_toggles=(model == "svi"),  # clickable legend toggles in SVI
         )
@@ -478,9 +500,6 @@ class PlotManager:
             expiry_dt = None
             if "expiry" in dfe.columns and not dfe["expiry"].empty:
                 expiry_dt = dfe["expiry"].iloc[0]
-
-            svi_params = fit_svi_slice(S, K, T_used, IV)
-            sabr_params = fit_sabr_slice(S, K, T_used, IV)
 
             dfe2 = dfe.copy()
             dfe2["moneyness"] = dfe2["K"].astype(float) / float(S)
@@ -507,6 +526,14 @@ class PlotManager:
                 asof_date=asof,
                 ticker=target,
                 expiry=str(expiry_dt) if expiry_dt is not None else None,
+                model="tps",
+                params=tps_params,
+                meta={"rmse": tps_params.get("rmse")},
+            )
+            append_params(
+                asof_date=asof,
+                ticker=target,
+                expiry=str(expiry_dt) if expiry_dt is not None else None,
                 model="sens",
                 params=sens_params,
             )
@@ -516,6 +543,7 @@ class PlotManager:
                     "expiry": str(expiry_dt.date()) if expiry_dt is not None else None,
                     "svi": svi_params,
                     "sabr": sabr_params,
+                    "tps": tps_params,
                     "sens": sens_params,
                 }
             }
@@ -748,6 +776,23 @@ class PlotManager:
         fit_map = self._smile_ctx.get("fit_by_expiry", {})
         pre = fit_map.get(T0)
         pre_params = pre.get(model) if isinstance(pre, dict) else None
+        if not pre_params:
+            if model == "svi":
+                pre_params = fit_svi_slice(S, K, T0, IV)
+            elif model == "sabr":
+                pre_params = fit_sabr_slice(S, K, T0, IV)
+            else:
+                pre_params = fit_tps_slice(S, K, T0, IV)
+        bands = None
+        if ci and ci > 0:
+            m_grid = np.linspace(0.7, 1.3, 121)
+            K_grid = m_grid * S
+            if model == "svi":
+                bands = svi_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+            elif model == "sabr":
+                bands = sabr_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+            else:
+                bands = tps_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
         info = fit_and_plot_smile(
             ax,
             S=S,
@@ -756,8 +801,8 @@ class PlotManager:
             iv=IV,
             model=model,
             params=pre_params,
+            bands=bands,
             moneyness_grid=(0.7, 1.3, 121),
-            ci_level=ci,
             show_points=True,
             label=f"{target} {model.upper()}",
             enable_svi_toggles=(model == "svi"),
@@ -906,6 +951,12 @@ class PlotManager:
                 Sp = float(np.nanmedian(S_p[maskp]))
                 Kp = K_p[maskp]
                 IVp = sigma_p[maskp]
+                if model == "svi":
+                    p_params = fit_svi_slice(Sp, Kp, T0p, IVp)
+                elif model == "sabr":
+                    p_params = fit_sabr_slice(Sp, Kp, T0p, IVp)
+                else:
+                    p_params = fit_tps_slice(Sp, Kp, T0p, IVp)
                 fit_and_plot_smile(
                     ax,
                     S=Sp,
@@ -913,8 +964,8 @@ class PlotManager:
                     T=T0p,
                     iv=IVp,
                     model=model,
+                    params=p_params,
                     moneyness_grid=(0.7, 1.3, 121),
-                    ci_level=0,
                     show_points=False,
                     label=p,
                     line_kwargs={"alpha": 0.7},
@@ -965,8 +1016,6 @@ class PlotManager:
             connect=True,
             smooth=True,
             show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
-            ci_level=ci,
-            generate_ci=False,
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
         synth_curve = data.get("synth_curve")
