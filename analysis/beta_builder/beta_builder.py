@@ -5,31 +5,26 @@ from typing import Iterable, Optional, Tuple, Dict, List, Union
 import numpy as np
 import pandas as pd
 
-# Centralized builders & utilities (moved to unified_weights)
-from analysis.unified_weights import (
+# Centralized builders & utilities
+from .unified_weights import (
     atm_feature_matrix as uw_atm_feature_matrix,
     surface_feature_matrix as uw_surface_feature_matrix,
     underlying_returns_matrix as uw_underlying_returns_matrix,
-    cosine_similarity_weights_from_matrix as uw_cosine_from_matrix,
-    corr_weights_from_matrix as uw_corr_from_matrix,
-    pca_regress_weights as uw_pca_regress_weights,
-    _impute_col_median,  # internal helper reused here
 )
+from .cosine import cosine_similarity_weights_from_matrix as uw_cosine_from_matrix
+from .correlation import corr_weights_from_matrix as uw_corr_from_matrix
+from .pca import (
+    pca_regress_weights as uw_pca_regress_weights,
+    pca_market_weights as uw_pca_market_weights,
+)
+from .utils import impute_col_median as _impute_col_median
 
-from analysis.pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
-from analysis.correlation_utils import compute_atm_corr_pillar_free
+from analysis.pillars import DEFAULT_PILLARS_DAYS
 
 
 # =========================
 # Small numeric helpers (lightweight; kept local)
 # =========================
-def _zscore_cols(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    mu = np.nanmean(X, axis=0, keepdims=True)
-    sd = np.nanstd(X, axis=0, ddof=1, keepdims=True)
-    sd = np.where(~np.isfinite(sd) | (sd <= 0), 1.0, sd)
-    return (X - mu) / sd, mu, sd
-
-
 def _safe_var(x: pd.Series) -> float:
     v = x.var()
     return float(v) if (v is not None and np.isfinite(v) and v > 0) else float("nan")
@@ -41,29 +36,6 @@ def _beta(df: pd.DataFrame, x: str, b: str) -> float:
         return float("nan")
     vb = _safe_var(a[b])
     return float(a[x].cov(a[b]) / vb) if np.isfinite(vb) else float("nan")
-
-
-def _first_pc_weights_from_rows(Z: np.ndarray, ridge: float = 1e-6) -> np.ndarray:
-    """
-    Z: rows=samples (tickers), cols=features. PCA on Z Zᵀ (ridge stabilized).
-    Returns non-negative, L1-normalized first PC loadings.
-    """
-    n_feat = max(Z.shape[1] - 1, 1)
-    R = (Z @ Z.T) / n_feat
-    R[np.arange(R.shape[0]), np.arange(R.shape[0])] += float(ridge)
-    vals, vecs = np.linalg.eigh(R)  # symmetric → stable
-    v1 = vecs[:, -1]
-    if v1.sum() < 0:
-        v1 = -v1
-    w = np.clip(v1, 0.0, None)
-    s = w.sum()
-    return w / s if s > 0 else np.full_like(w, 1.0 / len(w))
-
-
-def pca_market_weights(X_peers: np.ndarray, ridge: float = 1e-6) -> np.ndarray:
-    """Market‑mode weights across peer rows via first PC on ridge‑regularized R."""
-    Z, _, _ = _zscore_cols(_impute_col_median(X_peers))
-    return _first_pc_weights_from_rows(Z, ridge=ridge)
 
 
 # =========================
@@ -140,7 +112,7 @@ def pca_weights(
         if "market" in mode:
             # PC1 on peers only
             Xp = X[1:, :]
-            w = pca_market_weights(Xp)
+            w = uw_pca_market_weights(Xp)
         else:
             # regress target on peers
             y = _impute_col_median(atm_df.loc[[target]].to_numpy(float)).ravel()
@@ -158,7 +130,7 @@ def pca_weights(
         if not labels or labels[0] != target or len(labels) < 2:
             return pd.Series(dtype=float)
         if "market" in mode:
-            w = pca_market_weights(X[1:, :])
+            w = uw_pca_market_weights(X[1:, :])
         else:
             w = uw_pca_regress_weights(X[1:, :], X[0, :], k=k, nonneg=True)
         ser = pd.Series(w, index=labels[1:]).clip(lower=0.0)
@@ -171,38 +143,8 @@ def pca_weights(
 """Utilities for building simple correlation/beta metrics."""
 
 
-# =========================
-# Simple correlation builder for underlying prices
-# =========================
-def _underlying_log_returns(conn_fn) -> pd.DataFrame:
-    """
-    DEPRECATED internal path. Prefer unified: uw_underlying_returns_matrix().T
-    Kept for backward-compat in places that pass a conn_fn.
-    """
-    df_rows_by_ticker = uw_underlying_returns_matrix(tickers=[])
-    # unified returns rows=tickers; convert back to time-indexed wide matrix like before
-    return df_rows_by_ticker.T
-
-
-def _underlying_vol_series(
-    conn_fn,
-    window: int = 21,
-    min_obs: int = 10,
-    demean: bool = False,
-) -> pd.DataFrame:
-    """Rolling realized volatility for each underlying ticker."""
-    ret = _underlying_log_returns(conn_fn)
-    if ret is None or ret.empty:
-        return ret
-    vol = ret.rolling(int(window), min_periods=int(min_obs)).std()
-    if demean:
-        vol = vol.sub(vol.mean(), axis=0)
-    return vol.dropna(how="all")
-
-
-def ul_correlations(benchmark: str, conn_fn) -> pd.Series:
+def ul_correlations(benchmark: str) -> pd.Series:
     """Correlation of peer underlying returns vs benchmark returns."""
-    # use unified, then transpose into old shape
     ret_rows = uw_underlying_returns_matrix(tickers=[])
     if ret_rows is None or ret_rows.empty or benchmark.upper() not in ret_rows.index:
         return pd.Series(dtype=float)
@@ -272,29 +214,6 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     for d in base_pillars:
         noise = 1.0 + (int(d) - 30) * 0.001
         out[int(d)] = (mean_corr * noise).rename(f"iv_atm_beta_{int(d)}d")
-    return out
-
-
-def iv_atm_betas_legacy(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS) -> Dict[int, pd.Series]:
-    """Legacy pillar-based IV ATM betas computation (kept for reference)."""
-    atm = load_atm()
-    if atm.empty:
-        return {}
-    piv = nearest_pillars(atm, pillars_days=pillar_days)
-    out: Dict[int, pd.Series] = {}
-    for d in sorted(set(piv["pillar_days"])):
-        sub = piv[piv["pillar_days"] == d]
-        wide = sub.pivot_table(index="asof_date", columns="ticker", values="iv", aggfunc="mean").sort_index()
-        wide = wide.sub(wide.mean(axis=1), axis=0)  # de-mean per day
-        bench = benchmark.upper()
-        if bench not in wide.columns:
-            continue
-        betas = {}
-        for t in wide.columns:
-            if t == bench:
-                continue
-            betas[t] = _beta(wide.rename(columns={t: "x", bench: "b"}), "x", "b")
-        out[int(d)] = pd.Series(betas, name=f"iv_atm_beta_{int(d)}d")
     return out
 
 
@@ -428,8 +347,7 @@ def build_vol_betas(
     """Dispatch to the appropriate beta calculator based on ``mode``."""
     mode = (mode or "").lower()
     if mode in ("ul", "underlying"):
-        from data.db_utils import get_conn
-        return ul_correlations(benchmark.upper(), get_conn)
+        return ul_correlations(benchmark.upper())
     if mode == "iv_atm":
         return iv_atm_betas(benchmark.upper(), pillar_days=pillar_days or DEFAULT_PILLARS_DAYS)
     if mode == "surface":
@@ -600,18 +518,14 @@ def build_peer_weights(
             grids, X, names = surface_feature_matrix([target] + peers_list, asof, tenors=tenors, mny_bins=mny_bins)
             feature_df = pd.DataFrame(X, index=list(grids.keys()), columns=names)
     elif feature == "ul_px":
-        # Use legacy helper to allow monkeypatching in tests
-        ret = _underlying_log_returns(lambda: None)
-        if ret is not None and not ret.empty:
-            cols = [c for c in [target] + peers_list if c in ret.columns]
-            feature_df = ret[cols].T
+        ret_rows = uw_underlying_returns_matrix([target] + peers_list)
+        if ret_rows is not None and not ret_rows.empty:
+            feature_df = ret_rows
     elif feature == "ul_vol":
-        # legacy rolling vol path (kept local)
-        from data.db_utils import get_conn as conn_fn
-        vol = _underlying_vol_series(conn_fn, window=window, min_obs=min_obs)
-        if vol is not None and not vol.empty:
-            req_cols = [c for c in [target] + peers_list if c in vol.columns]
-            feature_df = vol[req_cols].T
+        ret_rows = uw_underlying_returns_matrix([target] + peers_list)
+        if ret_rows is not None and not ret_rows.empty:
+            vol = ret_rows.T.rolling(window, min_periods=min_obs).std().T
+            feature_df = vol
 
     if feature_df is None or feature_df.empty:
         raise ValueError("feature data unavailable for peer weights")
