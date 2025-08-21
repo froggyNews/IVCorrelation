@@ -29,7 +29,9 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
-from analysis.cache_io import compute_or_load, WarmupWorker
+from analysis.compute_or_load import compute_or_load
+
+from analysis.cache_io import  WarmupWorker
 
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
@@ -164,17 +166,22 @@ class PlotManager:
         """Return surface grids for ``tickers`` using cache if available."""
         key = (tuple(sorted(set(tickers))), int(max_expiries))
         if key not in self._surface_cache:
-            try:
-                grids = build_surface_grids(
+            payload = {"tickers": list(key[0]), "max_expiries": key[1]}
+
+            def _builder():
+                return build_surface_grids(
                     tickers=list(key[0]),
                     tenors=None,
                     mny_bins=None,
                     use_atm_only=False,
                     max_expiries=key[1],
                 )
-                self._surface_cache[key] = grids if grids is not None else {}
+
+            try:
+                grids = compute_or_load("surface_grids", payload, _builder)
             except Exception:
-                self._surface_cache[key] = {}
+                grids = _builder()
+            self._surface_cache[key] = grids if grids is not None else {}
         return self._surface_cache.get(key, {})
 
     # -------------------- main entry --------------------
@@ -244,10 +251,16 @@ class PlotManager:
                 )
 
             payload = {
-                "ticker": target.upper(),
+                "target": target,
                 "asof": pd.to_datetime(asof).floor("min").isoformat(),
+                "T_days": float(T_days),
                 "model": model,
-                "params": weights.to_dict() if weights is not None else None,
+                "ci": ci,
+                "overlay_synth": overlay_synth,
+                "peers": sorted(peers),
+                "weights": weights.to_dict() if weights is not None else None,
+                "overlay_peers": overlay_peers,
+                "max_expiries": max_expiries,
             }
 
             def _builder():
@@ -264,8 +277,14 @@ class PlotManager:
                     max_expiries=max_expiries,
                 )
 
-            data = compute_or_load("smile", payload, _builder, db_path="data/calculations.db")
-            self._warm.enqueue("smile", payload, _builder)
+            if hasattr(self, "_warm"):
+                try:
+                    self._warm.enqueue("smile", payload, _builder)
+                except Exception:
+                    pass
+
+            data = compute_or_load("smile", payload, _builder)
+
             if not data:
                 ax.set_title("No data")
                 return
@@ -309,16 +328,36 @@ class PlotManager:
                     pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
                 )
 
-            data = prepare_term_data(
-                target=target,
-                asof=asof,
-                ci=ci,
-                overlay_synth=overlay_synth,
-                peers=peers,
-                weights=weights.to_dict() if weights is not None else None,
-                atm_band=atm_band,
-                max_expiries=max_expiries,
-            )
+            payload = {
+                "target": target,
+                "asof": pd.to_datetime(asof).floor("min").isoformat(),
+                "ci": ci,
+                "overlay_synth": overlay_synth,
+                "peers": sorted(peers),
+                "weights": weights.to_dict() if weights is not None else None,
+                "atm_band": atm_band,
+                "max_expiries": max_expiries,
+            }
+
+            def _builder():
+                return prepare_term_data(
+                    target=target,
+                    asof=asof,
+                    ci=ci,
+                    overlay_synth=overlay_synth,
+                    peers=peers,
+                    weights=weights.to_dict() if weights is not None else None,
+                    atm_band=atm_band,
+                    max_expiries=max_expiries,
+                )
+
+            if hasattr(self, "_warm"):
+                try:
+                    self._warm.enqueue("term", payload, _builder)
+                except Exception:
+                    pass
+
+            data = compute_or_load("term", payload, _builder)
 
             atm_curve = data.get("atm_curve") if data else None
             if atm_curve is None or atm_curve.empty:
