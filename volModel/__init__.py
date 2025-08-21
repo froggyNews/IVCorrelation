@@ -18,7 +18,6 @@ __all__ = [
     "fit_poly",
     "fit_tps_slice",
     "tps_smile_iv",
-
     "fit_term_structure",
     "term_structure_iv",
 ]
