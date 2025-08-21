@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pandas as pd
-from typing import Optional
+from typing import Optional, Sequence
 
 from .model_params_logger import load_model_params
 
@@ -91,3 +91,56 @@ def historical_param_summary(
     grouped = df.groupby(["ticker", "model", "param"])["value"]
     summary = grouped.agg(["count", "mean", "std", "min", "max"]).reset_index()
     return summary
+
+
+def historical_param_panel(
+    model: str,
+    param: str,
+    tickers: Sequence[str] | None = None,
+    df: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """Return a pivoted time series of parameter values across tickers.
+
+    This helper prepares a wide DataFrame with ``asof_date`` index and one
+    column per ticker.  It is useful for peer/spillover analysis that requires
+    aligned parameter histories for multiple securities.
+
+    Parameters
+    ----------
+    model : str
+        Name of the model (case-insensitive).
+    param : str
+        Parameter name (case-insensitive).
+    tickers : Sequence[str], optional
+        Restrict the panel to these ticker symbols.  If ``None`` all available
+        tickers are included.
+    df : Optional[pd.DataFrame]
+        Optional pre-loaded DataFrame.  If not provided,
+        :func:`load_model_params` is used.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Wide DataFrame indexed by ``asof_date`` with ticker columns sorted by
+        date.
+    """
+    if df is None:
+        df = load_model_params()
+
+    sel = (df["model"].str.lower() == model.lower()) & (
+        df["param"].str.lower() == param.lower()
+    )
+    sub = df.loc[sel, ["asof_date", "ticker", "value"]].dropna(subset=["asof_date"])
+
+    if tickers is not None:
+        tickers_up = {t.upper() for t in tickers}
+        sub = sub[sub["ticker"].str.upper().isin(tickers_up)]
+
+    if sub.empty:
+        return pd.DataFrame(columns=tickers or [])
+
+    sub = (
+        sub.groupby(["asof_date", "ticker"], as_index=False)["value"].mean()
+    )
+    panel = sub.pivot(index="asof_date", columns="ticker", values="value")
+    return panel.sort_index()

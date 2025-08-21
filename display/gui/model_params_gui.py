@@ -33,16 +33,22 @@ from typing import Dict, Any, Optional
 
 import pandas as pd
 
-# Attempt to import load_model_params from the analysis package.  If this
-# import fails (for example when running the file stand‑alone for testing),
-# callers must ensure that `load_model_params` is on the PYTHONPATH.
+# Attempt to import analysis helpers.  If these fail (for example when running
+# the file stand‑alone for testing), callers must ensure the analysis package is
+# on the PYTHONPATH.
 try:
     from analysis.model_params_logger import load_model_params
+    from analysis.historical_params import historical_param_panel
 except Exception:
-    # Fallback stub for load_model_params if analysis package is unavailable.
+    # Fallback stubs if analysis package is unavailable.
     def load_model_params() -> pd.DataFrame:  # type: ignore[misc]
         raise ImportError(
             "load_model_params could not be imported; ensure analysis package is available"
+        )
+
+    def historical_param_panel(*args, **kwargs) -> pd.DataFrame:  # type: ignore[misc]
+        raise ImportError(
+            "historical_param_panel could not be imported; ensure analysis package is available"
         )
 
 
@@ -163,12 +169,12 @@ class ModelParamsFrame(ttk.Frame):
         super().__init__(master)
         self.pack(fill=tk.BOTH, expand=True)
 
-        # Controls for selecting ticker, model and as‑of date
+        # Controls for selecting ticker(s), model, parameter and as‑of date
         ctrl = ttk.Frame(self)
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
-        ttk.Label(ctrl, text="Ticker:").grid(row=0, column=0, sticky=tk.W)
-        self.ent_ticker = ttk.Entry(ctrl, width=12)
+        ttk.Label(ctrl, text="Ticker(s):").grid(row=0, column=0, sticky=tk.W)
+        self.ent_ticker = ttk.Entry(ctrl, width=20)
         self.ent_ticker.grid(row=0, column=1, padx=4)
 
         ttk.Label(ctrl, text="Model:").grid(row=0, column=2, sticky=tk.W)
@@ -178,12 +184,16 @@ class ModelParamsFrame(ttk.Frame):
         self.cmb_model.set("svi")
         self.cmb_model.grid(row=0, column=3, padx=4)
 
-        ttk.Label(ctrl, text="As of ≤:").grid(row=0, column=4, sticky=tk.W)
+        ttk.Label(ctrl, text="Param:").grid(row=0, column=4, sticky=tk.W)
+        self.ent_param = ttk.Entry(ctrl, width=10)
+        self.ent_param.grid(row=0, column=5, padx=4)
+
+        ttk.Label(ctrl, text="As of ≤:").grid(row=0, column=6, sticky=tk.W)
         self.ent_asof = ttk.Entry(ctrl, width=12)
-        self.ent_asof.grid(row=0, column=5, padx=4)
+        self.ent_asof.grid(row=0, column=7, padx=4)
 
         btn_plot = ttk.Button(ctrl, text="Plot", command=self._plot)
-        btn_plot.grid(row=0, column=6, padx=4)
+        btn_plot.grid(row=0, column=8, padx=4)
 
         # Matplotlib figure for plotting parameter time series
         self.fig = plt.Figure(figsize=(6, 4))
@@ -196,22 +206,82 @@ class ModelParamsFrame(ttk.Frame):
         self.table.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def _plot(self) -> None:
-        ticker = self.ent_ticker.get().strip().upper()
+        ticker_input = self.ent_ticker.get().strip()
+        tickers = [t.strip().upper() for t in ticker_input.split(",") if t.strip()]
         model = self.cmb_model.get().strip().lower()
+        param = self.ent_param.get().strip().lower()
         asof = self.ent_asof.get().strip()
 
         # Clear existing plot
         self.ax.clear()
-        if not ticker:
+        if not tickers:
             self.ax.text(0.5, 0.5, "Enter ticker", ha="center", va="center")
             self.canvas.draw()
             return
 
+        # When a parameter is specified, use the historical_param_panel helper
+        if param:
+            try:
+                panel = historical_param_panel(model, param, tickers)
+            except Exception as exc:
+                messagebox.showerror("Data error", f"Failed to load parameter panel: {exc}")
+                self.canvas.draw()
+                self.table.update(None)
+                return
+            if asof:
+                try:
+                    cutoff = pd.to_datetime(asof)
+                    panel = panel[panel.index <= cutoff]
+                except Exception:
+                    messagebox.showerror("Input error", "Invalid asof date")
+                    self.canvas.draw()
+                    self.table.update(None)
+                    return
+            if panel.empty:
+                self.ax.text(0.5, 0.5, "No parameter data", ha="center", va="center")
+                self.ax.set_title("Model Parameters")
+                self.canvas.draw()
+                self.table.update(None)
+                return
+            for t in panel.columns:
+                self.ax.plot(panel.index, panel[t], label=t)
+            self.ax.set_xlabel("Date")
+            self.ax.set_ylabel(f"{param} value")
+            self.ax.set_title(f"{model.upper()} {param} trends")
+            self.ax.legend(loc="best", fontsize=8)
+            self.ax.tick_params(axis="x", rotation=45)
+            self.canvas.draw()
+
+            rows = []
+            for t in panel.columns:
+                series = panel[t].dropna()
+                if not series.empty:
+                    rows.append(
+                        {
+                            "model": model.upper(),
+                            "param": f"{param} ({t})",
+                            "value": series.iloc[-1],
+                            "asof_date": series.index[-1],
+                        }
+                    )
+            self.table.update(pd.DataFrame(rows))
+            return
+
+        # Default single-ticker behaviour requires exactly one ticker
+        if len(tickers) != 1:
+            messagebox.showerror(
+                "Input error", "Provide a parameter name when plotting multiple tickers"
+            )
+            self.canvas.draw()
+            self.table.update(None)
+            return
+        ticker = tickers[0]
         try:
             df = load_model_params()
         except Exception as exc:
             messagebox.showerror("Data error", f"Failed to load model parameters: {exc}")
             self.canvas.draw()
+            self.table.update(None)
             return
         # Filter by ticker and model
         df = df[(df["ticker"] == ticker) & (df["model"] == model)]
@@ -223,12 +293,12 @@ class ModelParamsFrame(ttk.Frame):
             except Exception:
                 messagebox.showerror("Input error", "Invalid asof date")
                 self.canvas.draw()
+                self.table.update(None)
                 return
         if df.empty:
             self.ax.text(0.5, 0.5, "No parameter data", ha="center", va="center")
             self.ax.set_title("Model Parameters")
             self.canvas.draw()
-            # Clear the table as well
             self.table.update(None)
             return
         # Sort by date for plotting
