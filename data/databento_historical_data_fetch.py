@@ -281,6 +281,7 @@ def fetch_and_save(API_KEY: str, ticker: str, start: pd.Timestamp, end: pd.Times
 # -----------------------------
 # Demo main
 # -----------------------------
+
 def main():
     load_dotenv()
     API_KEY = os.getenv("DATABENTO_API_KEY")

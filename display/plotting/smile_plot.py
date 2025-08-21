@@ -15,7 +15,7 @@ from .confidence_bands import (
 )
 from display.plotting.anim_utils import  add_legend_toggles
 
-ModelName = Literal["svi", "sabr"]
+ModelName = Literal["svi", "sabr", "tps"]
 
 
 # ------------------
@@ -54,11 +54,13 @@ def fit_and_plot_smile(
     beta: float = 0.5,              # SABR beta
     label: Optional[str] = None,
     line_kwargs: Optional[Dict] = None,
-    enable_svi_toggles: bool = False,   # legend/keyboard toggles (SVI only)
-    use_checkboxes: bool = False,       # keep False by default; legend is primary
+    enable_toggles: bool = True,       # legend/keyboard toggles (all models)
+    use_checkboxes: bool = False,      # keep False by default; legend is primary
 ) -> Dict:
     """
     Plot observed points, model fit, and optional CI on moneyness (K/S).
+    
+    Supports SVI, SABR, and TPS models with interactive legend toggles.
     Returns dict: {params, rmse, T, S, series_map or None}
     """
     
@@ -92,7 +94,7 @@ def fit_and_plot_smile(
     # ---- observed points
     if show_points:
         pts = ax.scatter(K / S, iv, s=20, alpha=0.85, label="Observed")
-        if enable_svi_toggles and model == "svi":
+        if enable_toggles:
             series_map["Observed Points"] = [pts]
 
     # ---- fit + optional CI
@@ -104,27 +106,42 @@ def fit_and_plot_smile(
         y_fit = svi_smile_iv(S, K_grid, T, fit_params)
         if ci_level and ci_level > 0:
             bands = svi_confidence_bands(S, K, T, iv, K_grid, level=float(ci_level), n_boot=int(n_boot))
-    else:
+    elif model == "sabr":
         if not fit_params:
             fit_params = fit_sabr_slice(S, K, T, iv, beta=beta)
         y_fit = sabr_smile_iv(S, K_grid, T, fit_params)
         if ci_level and ci_level > 0:
             bands = sabr_confidence_bands(S, K, T, iv, K_grid, beta=beta, level=float(ci_level), n_boot=int(n_boot))
-
+    else:
+        if model == "tps":
+            from volModel.polyFit import fit_tps_slice, tps_smile_iv
+            if not fit_params:
+                fit_params = fit_tps_slice(S, K, T, iv)
+            y_fit = tps_smile_iv(S, K_grid, T, fit_params)
+            if ci_level and ci_level > 0:
+                bands = _tps_bootstrap_bands(S, K, T, iv, K_grid, level=float(ci_level), n_boot=int(n_boot))
+        else:
+            # Unknown model - fallback to simple polynomial
+            from volModel.polyFit import fit_simple_poly
+            k = np.log(K / S)
+            fit_params = fit_simple_poly(k, iv)
+            # Linear interpolation for grid
+            k_grid = np.log(K_grid / S)
+            y_fit = np.interp(k_grid, k, iv)
     # ---- fit line
     line_kwargs = dict(line_kwargs or {})
     line_kwargs.setdefault("lw", 2 if show_points else 1.6)
     fit_lbl = label or (f"{model.upper()} fit")
     fit_line = ax.plot(K_grid / S, y_fit, label=fit_lbl)
-    if enable_svi_toggles and model == "svi":
-        series_map["SVI Fit"] = list(fit_line)
+    if enable_toggles:
+        series_map[f"{model.upper()} Fit"] = list(fit_line)
 
     # ---- confidence bands
     if bands is not None:
         ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(ci_level*100)}% CI")
         ci_mean = ax.plot(bands.x / S, bands.mean, lw=1, alpha=0.6, linestyle="--")
-        if enable_svi_toggles and model == "svi":
-            series_map["SVI Confidence Interval"] = [ci_fill, *ci_mean]
+        if enable_toggles:
+            series_map[f"{model.upper()} Confidence Interval"] = [ci_fill, *ci_mean]
 
     # ---- ATM marker (not part of toggles / legend)
     ax.axvline(1.0, color="grey", lw=1, ls="--", alpha=0.85, label="_nolegend_")
@@ -139,7 +156,7 @@ def fit_and_plot_smile(
             ax.legend(loc="best", fontsize=8)
 
     # ---- legend-first toggle system (primary), keyboard helpers
-    if enable_svi_toggles and model == "svi" and series_map and ax.figure is not None:
+    if enable_toggles and series_map and ax.figure is not None:
         add_legend_toggles(ax, series_map)  # your improved legend system
         # checkboxes are optional; keep off unless explicitly asked
         if use_checkboxes:
@@ -154,7 +171,7 @@ def fit_and_plot_smile(
         "rmse": rmse,
         "T": float(T),
         "S": float(S),
-        "series_map": series_map if (enable_svi_toggles and model == "svi") else None,
+        "series_map": series_map if enable_toggles else None,
     }
 
 
@@ -217,3 +234,57 @@ def plot_synthetic_etf_smile(
         ax.legend(handles, labels, loc="best", fontsize=8)
 
     return bands
+
+
+def _tps_bootstrap_bands(S: float, K: np.ndarray, T: float, iv: np.ndarray, 
+                        K_grid: np.ndarray, level: float = 0.68, n_boot: int = 200):
+    """
+    Bootstrap confidence bands for TPS model.
+    
+    This is a simple bootstrap implementation for TPS confidence intervals.
+    """
+    try:
+        from .confidence_bands import Bands
+        from volModel.polyFit import fit_tps_slice, tps_smile_iv
+        
+        K = np.asarray(K, dtype=float)
+        iv = np.asarray(iv, dtype=float)
+        K_grid = np.asarray(K_grid, dtype=float)
+        
+        n_points = len(K)
+        iv_boots = []
+        
+        for _ in range(n_boot):
+            # Bootstrap sample
+            idx = np.random.choice(n_points, n_points, replace=True)
+            K_boot = K[idx]
+            iv_boot = iv[idx]
+            
+            try:
+                # Fit TPS to bootstrap sample
+                params_boot = fit_tps_slice(S, K_boot, T, iv_boot)
+                iv_pred = tps_smile_iv(S, K_grid, T, params_boot)
+                iv_boots.append(iv_pred)
+            except Exception:
+                # Skip failed fits
+                continue
+        
+        if len(iv_boots) < 10:  # Need minimum successful bootstraps
+            return None
+            
+        iv_boots = np.array(iv_boots)
+        
+        # Compute percentiles
+        alpha = 1 - level
+        lo_pct = 100 * alpha / 2
+        hi_pct = 100 * (1 - alpha / 2)
+        
+        mean_iv = np.mean(iv_boots, axis=0)
+        lo_iv = np.percentile(iv_boots, lo_pct, axis=0)
+        hi_iv = np.percentile(iv_boots, hi_pct, axis=0)
+        
+        return Bands(x=K_grid, mean=mean_iv, lo=lo_iv, hi=hi_iv, level=level)
+        
+    except ImportError:
+        # Fallback if Bands not available
+        return None

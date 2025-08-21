@@ -469,7 +469,7 @@ class PlotManager:
             moneyness_grid=(0.7, 1.3, 121),
             ci_level=ci,
             show_points=True,
-            enable_svi_toggles=(model == "svi"),  # clickable legend toggles in SVI
+            enable_toggles=True,  # clickable legend toggles for all models
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
 
@@ -760,7 +760,7 @@ class PlotManager:
             ci_level=ci,
             show_points=True,
             label=f"{target} {model.upper()}",
-            enable_svi_toggles=(model == "svi"),
+            enable_toggles=True,
         )
 
         if fit_map:
