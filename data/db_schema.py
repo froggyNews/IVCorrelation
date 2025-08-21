@@ -83,6 +83,17 @@ CREATE TABLE IF NOT EXISTS ticker_interest_rates (
 CREATE INDEX IF NOT EXISTS idx_interest_rates_default ON interest_rates(is_default);
 CREATE INDEX IF NOT EXISTS idx_ticker_rates_ticker ON ticker_interest_rates(ticker);
 CREATE INDEX IF NOT EXISTS idx_ticker_rates_date ON ticker_interest_rates(rate_date);
+
+-- Table for storing engineered features
+CREATE TABLE IF NOT EXISTS feature_table (
+    ts_event    TEXT    NOT NULL,
+    symbol      TEXT    NOT NULL,
+    features    TEXT    NOT NULL,
+    PRIMARY KEY (ts_event, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_table_symbol ON feature_table(symbol);
+CREATE INDEX IF NOT EXISTS idx_feature_table_ts ON feature_table(ts_event);
 """
 
 MIGRATIONS = [
