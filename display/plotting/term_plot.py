@@ -20,8 +20,8 @@ def plot_atm_term_structure(
         ax.text(0.5, 0.5, "No ATM data", ha="center", va="center")
         return
 
-    x = atm_df["T"].to_numpy()
-    y = atm_df["atm_vol"].to_numpy()
+    x = atm_df["T"].to_numpy(float)
+    y = atm_df["atm_vol"].to_numpy(float)
 
     if x_units == "days":
         x_plot = x * 365.25
