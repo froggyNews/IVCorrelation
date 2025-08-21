@@ -18,32 +18,6 @@ def _zscore_changes(df: pd.DataFrame, iv_col: str, lookback: int = 60) -> pd.Dat
     df["zIV"] = df["dIV"] / roll_std
     return df
 
-def _build_peers(df: pd.DataFrame, iv_col: str, lookback: int = 60, top_k: int = 5,
-                 restrict_same_sector: bool = False) -> Dict[str, List[str]]:
-    """
-    Build related set R(i) as top-K correlations of ΔIV over a rolling lookback
-    using the most recent window per ticker.
-    """
-    # compute ΔIV on last L days per ticker
-    last_dates = df["date"].max()
-    window_start = df["date"].sort_values().drop_duplicates().iloc[-lookback]
-    w = df[(df["date"] >= window_start) & (df["date"] <= last_dates)].copy()
-    w = w.sort_values(["ticker","date"])
-    w["dIV"] = w.groupby("ticker")[iv_col].diff()
-    piv = w.pivot(index="date", columns="ticker", values="dIV")
-    corr = piv.corr(min_periods=int(0.5*lookback))  # pairwise corr of ΔIV
-
-    peers: Dict[str, List[str]] = {}
-    for tkr in corr.columns:
-        s = corr[tkr].drop(index=tkr).dropna()
-        if restrict_same_sector and "sector" in df.columns:
-            sector = df.loc[df["ticker"] == tkr, "sector"].mode().iloc[0] if \
-                     (df["ticker"] == tkr).any() else None
-            same = df[df["sector"] == sector]["ticker"].unique().tolist()
-            s = s[s.index.isin(same)]
-        peers[tkr] = s.sort_values(ascending=False).head(top_k).index.tolist()
-    return peers
-
 def _residualize_common_shocks(df: pd.DataFrame, iv_col: str,
                                common_cols: List[str]) -> pd.DataFrame:
     """
