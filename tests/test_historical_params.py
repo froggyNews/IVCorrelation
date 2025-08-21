@@ -3,6 +3,7 @@ import pandas as pd
 from analysis.historical_params import (
     historical_param_timeseries,
     historical_param_summary,
+    historical_param_panel,
 )
 
 
@@ -22,3 +23,10 @@ def test_historical_param_summary_matches_timeseries():
     assert row['mean'] == ts.mean()
     assert row['min'] == ts.min()
     assert row['max'] == ts.max()
+
+
+def test_historical_param_panel_pivot():
+    panel = historical_param_panel('sabr', 'alpha', ['QQQ', 'UNH'])
+    assert not panel.empty
+    assert set(['QQQ', 'UNH']).issubset(panel.columns)
+    assert panel.index.is_monotonic_increasing
