@@ -9,7 +9,6 @@ from pathlib import Path
 
 # Add project root to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from project_logging.db_logger import get_db_logger, log_smile_plot_operation
 
 from volModel.sviFit import svi_smile_iv
 from volModel.sabrFit import sabr_smile_iv
@@ -65,17 +64,9 @@ def fit_and_plot_smile(
     All operations are logged to .txt file via db_logger.
     Returns dict: {params, rmse, T, S, series_map or None}
     """
-    
-    # Initialize logging
-    logger = get_db_logger()
-    logger.info(f"=== SMILE PLOT START ===")
-    logger.info(f"Model: {model}, S: {S}, T: {T}")
-    logger.info(f"Input: {len(K)} strikes, IV range: [{np.min(iv):.4f}, {np.max(iv):.4f}]")
-    logger.info(f"Config: ci_level={ci_level}, n_boot={n_boot}, toggles={enable_toggles}")
-    
+
     # ---- safety check: ensure axes has valid figure
     if ax is None or ax.figure is None:
-        logger.warning("Invalid axes provided - returning empty result")
         return {"params": {}, "rmse": np.nan, "T": float(T), "S": float(S), "series_map": None}
 
     # ---- sanitize
@@ -149,9 +140,7 @@ def fit_and_plot_smile(
     if enable_toggles and series_map and ax.figure is not None:
         add_legend_toggles(ax, series_map)  # your improved legend system
         # checkboxes are optional; keep off unless explicitly asked
-        if use_checkboxes:
-            from display.plotting.anim_utils import add_checkboxes
-            add_checkboxes(ax.figure, series_map)
+
 
     # ---- fit quality
     rmse = float(fit_params.get("rmse", np.nan)) if isinstance(fit_params, dict) else np.nan
@@ -189,55 +178,3 @@ def plot_synthetic_etf_smile(
     return bands
 
 
-def _tps_bootstrap_bands(S: float, K: np.ndarray, T: float, iv: np.ndarray, 
-                        K_grid: np.ndarray, level: float = 0.68, n_boot: int = 200):
-    """
-    Bootstrap confidence bands for TPS model.
-    
-    This is a simple bootstrap implementation for TPS confidence intervals.
-    """
-    try:
-        from .confidence_bands import Bands
-        from volModel.polyFit import fit_tps_slice, tps_smile_iv
-        
-        K = np.asarray(K, dtype=float)
-        iv = np.asarray(iv, dtype=float)
-        K_grid = np.asarray(K_grid, dtype=float)
-        
-        n_points = len(K)
-        iv_boots = []
-        
-        for _ in range(n_boot):
-            # Bootstrap sample
-            idx = np.random.choice(n_points, n_points, replace=True)
-            K_boot = K[idx]
-            iv_boot = iv[idx]
-            
-            try:
-                # Fit TPS to bootstrap sample
-                params_boot = fit_tps_slice(S, K_boot, T, iv_boot)
-                iv_pred = tps_smile_iv(S, K_grid, T, params_boot)
-                iv_boots.append(iv_pred)
-            except Exception:
-                # Skip failed fits
-                continue
-        
-        if len(iv_boots) < 10:  # Need minimum successful bootstraps
-            return None
-            
-        iv_boots = np.array(iv_boots)
-        
-        # Compute percentiles
-        alpha = 1 - level
-        lo_pct = 100 * alpha / 2
-        hi_pct = 100 * (1 - alpha / 2)
-        
-        mean_iv = np.mean(iv_boots, axis=0)
-        lo_iv = np.percentile(iv_boots, lo_pct, axis=0)
-        hi_iv = np.percentile(iv_boots, hi_pct, axis=0)
-        
-        return Bands(x=K_grid, mean=mean_iv, lo=lo_iv, hi=hi_iv, level=level)
-        
-    except ImportError:
-        # Fallback if Bands not available
-        return None
