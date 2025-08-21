@@ -7,6 +7,11 @@ import hashlib
 from pathlib import Path
 from typing import Any, Callable, Dict
 
+import queue
+import threading
+import time
+from typing import Any, Callable, Tuple
+
 TTL_SEC = 900
 ARTIFACT_VERSION: Dict[str, str] = {}
 
@@ -83,3 +88,41 @@ def compute_or_load(kind: str, payload: dict, builder_fn: Callable[[], Any], db_
         return artifact
     finally:
         conn.close()
+
+
+class WarmupWorker:
+    """Simple background worker to warm caches lazily.
+
+    Jobs are enqueued via :meth:`enqueue` and processed sequentially by a
+    dedicated daemon thread. Each job is described by a ``kind`` string, an
+    arbitrary ``payload`` object and a ``builder_fn`` callable. The callable is
+    executed through :func:`compute_or_load` which is responsible for building
+    and populating the cache.
+    """
+
+    def __init__(self, db_path: str = "data/calculations.db"):
+        self.db_path = db_path
+        self._queue: "queue.Queue[Tuple[str, Any, Callable[[Any], Any]]]" = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def enqueue(self, kind: str, payload: Any, builder_fn: Callable[[Any], Any]) -> None:
+        """Add a warmup job to the queue."""
+        self._queue.put((kind, payload, builder_fn))
+
+    # ------------------------------------------------------------------
+    # Internal methods
+    # ------------------------------------------------------------------
+    def _run(self) -> None:
+        while True:
+            kind, payload, builder_fn = self._queue.get()
+            try:
+                compute_or_load(kind, payload, builder_fn)
+            except Exception:
+                # Never let cache warmup failures impact the GUI thread.
+                pass
+            finally:
+                # Mark job done and briefly yield control to keep UI responsive.
+                self._queue.task_done()
+                time.sleep(0.01)
+
