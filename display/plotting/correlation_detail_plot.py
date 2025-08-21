@@ -1,10 +1,10 @@
 """
-Correlation plotting without pillars, with configurable weighting modes.
+Correlation plotting without pillars, rendering a relative weight matrix.
 
-This module computes correlations across implied-volatility surfaces using
-the first few expiries for each ticker (as opposed to fixed pillar days).
-It then provides a heatmap and optional ETF weight annotations.  You can
-specify how weights are computed via the ``weight_mode`` parameter.
+The module builds correlations across implied-volatility surfaces using the
+first few expiries for each ticker (as opposed to fixed pillar days).  The
+resulting correlation matrix is converted into a row‑normalised "relative
+weight" matrix which is visualised as a heatmap.
 """
 
 from __future__ import annotations
@@ -104,32 +104,32 @@ def _corr_by_expiry_rank(
     return atm_rank_df, corr_df
 
 
-def _maybe_compute_weights(
-    target: Optional[str],
-    peers: Optional[Iterable[str]],
+def _relative_weight_matrix(
+    corr_df: pd.DataFrame,
     *,
-    asof: str,
-    weight_mode: str,
-    weight_power: float,
-    clip_negative: bool,
-    **weight_config,
-) -> Optional[pd.Series]:
-    """Compute unified weights if ``target`` and ``peers`` are provided."""
-    if not target or not peers:
-        return None
-    peers_list = list(peers)
-    try:
-        return compute_unified_weights(
-            target=target,
-            peers=peers_list,
-            mode=weight_mode,
-            asof=asof,
-            clip_negative=clip_negative,
-            power=weight_power,
-            **weight_config,
-        )
-    except Exception:
-        return None
+    clip_negative: bool = True,
+    power: float = 1.0,
+) -> pd.DataFrame:
+    """Convert a correlation matrix into a relative weight matrix.
+
+    Each row is normalised to sum to one after optional clipping of negative
+    correlations and application of an exponent (``power``).
+    """
+    if corr_df is None or corr_df.empty:
+        return pd.DataFrame()
+
+    mat = corr_df.to_numpy(dtype=float)
+    if clip_negative:
+        mat = np.clip(mat, 0.0, None)
+    if power is not None and float(power) != 1.0:
+        mat = np.power(mat, float(power))
+
+    np.fill_diagonal(mat, 0.0)
+    row_sums = mat.sum(axis=1, keepdims=True)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mat = np.divide(mat, row_sums, where=row_sums != 0)
+
+    return pd.DataFrame(mat, index=corr_df.index, columns=corr_df.columns)
 
 
 # ---------------------------------------------------------------------------
@@ -152,16 +152,13 @@ def compute_and_plot_correlation(
     max_expiries: int = 6,
     weight_mode: str = "corr",
     **weight_config,
-) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.Series]]:
-    """
-    Compute a correlation matrix and draw a heatmap without relying on pillars.
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Compute correlation and display the derived relative weight matrix.
 
-    Parameters remain compatible with the upstream version but no longer accept
-    pillar-related options.  The ``weight_mode`` is forwarded to
-    :func:`analysis.unified_weights.compute_unified_weights`. Additional weight
-    configuration such as ``weight_power`` and ``clip_negative`` can be
-    supplied, along with any extra keyword arguments understood by the unified
-    weight system.
+    The correlation matrix is still returned for callers that need it, but the
+    plot itself shows row-wise normalised weights derived from that correlation
+    matrix.  Parameters related to ``target``/``peers`` and ``weight_mode`` are
+    retained for backward compatibility but are not used for plotting.
     """
     tickers = [t.upper() for t in tickers]
     payload = {
@@ -182,165 +179,68 @@ def compute_and_plot_correlation(
 
     atm_df, corr_df = compute_or_load("corr", payload, _builder)
 
-    weights = _maybe_compute_weights(
-        target=target,
-        peers=peers,
-        asof=asof,
-        weight_mode=weight_mode,
-        weight_power=weight_power,
-        clip_negative=clip_negative,
-        **weight_config,
+    weight_df = _relative_weight_matrix(
+        corr_df, clip_negative=clip_negative, power=weight_power
     )
+    plot_weight_matrix(ax, weight_df, show_values=show_values)
+    return atm_df, corr_df, weight_df
 
-    plot_correlation_details(ax, corr_df, weights=weights, show_values=show_values)
-    return atm_df, corr_df, weights
 
-
-def plot_correlation_details(
+def plot_weight_matrix(
     ax: plt.Axes,
-    corr_df: pd.DataFrame,
-    weights: Optional[pd.Series] = None,
+    weight_df: pd.DataFrame,
     show_values: bool = True,
 ) -> None:
-    """
-    Heatmap of the correlation matrix; optionally show weights as annotation.
-
-    Adds a data-quality badge and, if supplied, lists the ETF weights on the
-    right.  The heatmap is labelled “per expiries” to emphasize that no
-    pillar selection is used.
-    """
+    """Render a heatmap of relative weights."""
     ax.clear()
-    if corr_df is None or corr_df.empty:
-        ax.text(0.5, 0.5, "No correlation data", ha="center", va="center")
+    if weight_df is None or weight_df.empty:
+        ax.text(0.5, 0.5, "No weight data", ha="center", va="center")
         return
 
-    data = corr_df.to_numpy(dtype=float)
-    finite_count = np.sum(np.isfinite(data))
-    total_elements = data.size
-
-    if finite_count == 0:
-        ax.text(
-            0.5,
-            0.5,
-            "No valid correlations\n(insufficient overlapping data)",
-            ha="center",
-            va="center",
-            fontsize=12,
-        )
-        return
-
-    data_quality = finite_count / total_elements if total_elements > 0 else 0
-    if data_quality < 0.3:
-        dq_msg = f"Poor data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})"
-        dq_color = "red"
-        dq_face = "lightcoral"
-    elif data_quality < 0.7:
-        dq_msg = f"Limited data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})"
-        dq_color = "orange"
-        dq_face = "yellow"
-    else:
-        dq_msg = f"Good data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})"
-        dq_color = "green"
-        dq_face = "lightgreen"
-
-    ax.text(
-        0.5,
-        1.02,
-        dq_msg,
-        ha="center",
-        va="bottom",
-        fontsize=10,
-        color=dq_color,
-        transform=ax.transAxes,
-        bbox=dict(boxstyle="round", facecolor=dq_face, alpha=0.3),
-        clip_on=False,
-    )
-
-    im = ax.imshow(data, vmin=-1.0, vmax=1.0, cmap="coolwarm", interpolation="nearest")
+    data = weight_df.to_numpy(dtype=float)
+    im = ax.imshow(data, vmin=0.0, vmax=1.0, cmap="viridis", interpolation="nearest")
 
     if not hasattr(ax.figure, "_orig_position"):
         ax.figure._orig_position = ax.get_position().bounds
         sp = ax.figure.subplotpars
         ax.figure._orig_subplotpars = (sp.left, sp.right, sp.bottom, sp.top)
 
-    # Add or update correlation-specific colorbar
     if hasattr(ax.figure, "_correlation_colorbar"):
         try:
-            ax.figure._correlation_colorbar.update_normal(im)
+            ax.figure._correlation_colorbar.remove()
         except Exception:
             pass
-        else:
-            ax.figure._correlation_colorbar.set_label("Correlation (\u03c1)")
-    else:
-        try:
-            cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label("Correlation (\u03c1)")
-            ax.figure._correlation_colorbar = cbar
-        except Exception:
-            pass
+        delattr(ax.figure, "_correlation_colorbar")
 
-    ax.set_xticks(range(len(corr_df.columns)))
-    ax.set_yticks(range(len(corr_df.index)))
-    ax.set_xticklabels(corr_df.columns, rotation=45, ha="right", fontsize=9)
-    ax.set_yticklabels(corr_df.index, fontsize=9)
-    ax.set_title("Correlation and Relative Importance (per expiries)")
+    try:
+        cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Relative Weight")
+    except Exception:
+        pass
+
+    ax.set_xticks(range(len(weight_df.columns)))
+    ax.set_yticks(range(len(weight_df.index)))
+    ax.set_xticklabels(weight_df.columns, rotation=45, ha="right", fontsize=9)
+    ax.set_yticklabels(weight_df.index, fontsize=9)
+    ax.set_title("Relative Weight Matrix")
 
     if show_values:
         n, m = data.shape
         for i in range(n):
             for j in range(m):
                 val = data[i, j]
-                if np.isfinite(val):
+                if np.isfinite(val) and val > 0:
                     ax.text(
                         j,
                         i,
-                        f"{val:.2f}",
+                        f"{val:.3f}",
                         ha="center",
                         va="center",
                         fontsize=8,
-                        color=("white" if abs(val) > 0.5 else "black"),
+                        color=("white" if val > 0.5 else "black"),
                         weight="bold",
                     )
-                else:
-                    ax.text(
-                        j,
-                        i,
-                        "N/A",
-                        ha="center",
-                        va="center",
-                        fontsize=7,
-                        color="gray",
-                        style="italic",
-                    )
 
-    if hasattr(ax.figure, "_corr_weight_ax"):
-        try:
-            ax.figure._corr_weight_ax.remove()
-        except Exception:
-            pass
-        delattr(ax.figure, "_corr_weight_ax")
-
-    if weights is not None and not weights.empty:
-        w_sorted = weights.sort_values(ascending=False)
-        bbox = ax.get_position()
-        legend_ax = ax.figure.add_axes(
-            [
-                bbox.x1 + 0.02,
-                bbox.y0,
-                0.2,
-                bbox.height,
-            ]
-        )
-        legend_ax.axis("off")
-        legend_ax.set_title("Relative Importance", fontsize=10)
-        legend_ax.text(
-            0,
-            1,
-            "\n".join([f"{k}: {v:.3f}" for k, v in w_sorted.items()]),
-            va="top",
-            fontsize=9,
-        )
-        ax.figure._corr_weight_ax = legend_ax
 
 
 def scatter_corr_matrix(
