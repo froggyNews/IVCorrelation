@@ -1,30 +1,21 @@
 #!/usr/bin/env python3
 """Precompute cache entries for IVCorrelation.
 
-Given a JSON file describing a list of tasks, compute the corresponding
-artifacts and store them in the ``calc_cache`` SQLite table.  This allows
-warming the cache from the command line ahead of GUI usage.
-
-Example tasks file::
-
-    [
-      {"kind": "smile", "ticker": "AAPL", "asof": "2024-01-10", "T_days": 30, "model": "svi"},
-      {"kind": "corr", "tickers": ["AAPL", "MSFT"], "asof": "2024-01-10"},
-      {"kind": "spill", "tickers": ["AAPL", "MSFT"], "threshold": 0.1}
-    ]
+Given a ticker group name, compute all standard analysis artifacts and store
+them in the ``calc_cache`` SQLite table.  This allows warming the cache ahead
+of GUI usage with a single command.
 
 Run as::
 
-    python scripts/warm_cache.py tasks.json --db-path data/calculations.db
+    python scripts/warm_cache.py "Tech Giants vs SPY"
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 import sys
-from typing import Any, Iterable, List, Dict
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -37,6 +28,8 @@ from data.cache_io import compute_or_load
 from analysis.analysis_pipeline import prepare_smile_data, get_smile_slice
 from display.plotting.correlation_detail_plot import _corr_by_expiry_rank
 from analysis.spillover.vol_spillover import run_spillover, load_iv_data
+from data import load_ticker_group
+from data.db_utils import get_conn, get_most_recent_date
 
 
 def _warm_smile(task: Dict[str, Any], db_path: str) -> None:
@@ -133,24 +126,29 @@ def _warm_spill(task: Dict[str, Any], db_path: str) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Warm calc_cache entries")
-    p.add_argument("tasks", help="JSON file describing tasks")
+    p = argparse.ArgumentParser(description="Warm calc_cache entries for a ticker group")
+    p.add_argument("group", help="Name of ticker group preset")
     p.add_argument("--db-path", default="data/calculations.db", help="Path to cache DB")
     args = p.parse_args()
 
-    with open(args.tasks) as fh:
-        tasks = json.load(fh)
+    group = load_ticker_group(args.group)
+    if not group:
+        print(f"Ticker group '{args.group}' not found")
+        return
 
-    for task in tasks:
-        kind = task.get("kind")
-        if kind == "smile":
-            _warm_smile(task, args.db_path)
-        elif kind == "corr":
-            _warm_corr(task, args.db_path)
-        elif kind == "spill":
-            _warm_spill(task, args.db_path)
-        else:
-            print(f"Unknown task kind: {kind}")
+    tickers: List[str] = [group["target_ticker"]] + list(group["peer_tickers"])
+    conn = get_conn()
+    try:
+        global_asof = get_most_recent_date(conn)
+        for t in tickers:
+            asof_t = get_most_recent_date(conn, t) or global_asof
+            if asof_t:
+                _warm_smile({"ticker": t, "asof": asof_t}, args.db_path)
+        if global_asof:
+            _warm_corr({"tickers": tickers, "asof": global_asof}, args.db_path)
+        _warm_spill({"tickers": tickers}, args.db_path)
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
