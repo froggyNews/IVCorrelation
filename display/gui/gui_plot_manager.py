@@ -1138,7 +1138,8 @@ class PlotManager:
             ax,
             atm_curve,
             x_units=x_units,
-            fit=True,
+            fit_x=data.get("fit_x"),
+            fit_y=data.get("fit_y"),
             show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
