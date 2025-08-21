@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 # Plot helpers
 from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
+    _corr_by_expiry_rank,
 )
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import (
@@ -1078,6 +1079,30 @@ class PlotManager:
         weight_power = settings.get("weight_power", 1.0)
         clip_negative = settings.get("clip_negative", True)
 
+        max_exp = self._current_max_expiries or 6
+
+        payload = {
+            "tickers": sorted(tickers),
+            "asof": pd.to_datetime(asof).floor("min").isoformat(),
+            "atm_band": atm_band,
+            "max_expiries": max_exp,
+        }
+
+        def _builder():
+            return _corr_by_expiry_rank(
+                get_slice=self.get_smile_slice,
+                tickers=tickers,
+                asof=asof,
+                max_expiries=max_exp,
+                atm_band=atm_band,
+            )
+
+        if hasattr(self, "_warm"):
+            try:
+                self._warm.enqueue("corr", payload, _builder)
+            except Exception:
+                pass
+
         atm_df, corr_df, _ = compute_and_plot_correlation(
             ax=ax,
             get_smile_slice=self.get_smile_slice,
@@ -1089,7 +1114,7 @@ class PlotManager:
             weight_power=weight_power,
             target=target,
             peers=peers,
-            max_expiries=self._current_max_expiries or 6,
+            max_expiries=max_exp,
             weight_mode=weight_mode,
         )
 
