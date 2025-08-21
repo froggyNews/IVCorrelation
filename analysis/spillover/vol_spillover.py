@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Iterable, Callable
+import sqlite3
+from typing import List, Dict, Iterable, Callable, Tuple, Optional
+from data.ticker_groups import get_groups_for_target, load_ticker_group
 
 """Tools to detect implied-volatility events and measure spillovers.
 
@@ -28,37 +30,124 @@ def load_iv_data(path: str, use_raw: bool = False) -> pd.DataFrame:
     return df.sort_values(["ticker", "date"])
 
 
-def detect_events(df: pd.DataFrame, threshold: float = 0.10) -> pd.DataFrame:
+def detect_events(df: pd.DataFrame, threshold: float = 0.10, iv_col: str = "atm_iv") -> pd.DataFrame:
     """Flag dates where a ticker's IV changes by ``threshold`` or more.
 
-    Returns a DataFrame with columns ``ticker``, ``date``, ``rel_change`` and
-    ``sign`` (1 or -1).
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Table containing at least ``date``, ``ticker`` and the IV column.
+    threshold : float, default 0.10
+        Minimum absolute percentage change in IV to flag an event.
+    iv_col : str, default "atm_iv"
+        Column in ``df`` containing the implied volatility levels.
+
+    Returns
+    -------
+    pd.DataFrame
+        Table with columns ``ticker``, ``date``, ``rel_change`` and ``sign``
+        (1 or -1).
     """
     df = df.sort_values(["ticker", "date"]).copy()
-    df["rel_change"] = df.groupby("ticker")["atm_iv"].pct_change()
+    df["rel_change"] = df.groupby("ticker")[iv_col].pct_change()
     events = df.loc[df["rel_change"].abs() >= threshold,
                     ["ticker", "date", "rel_change"]].copy()
     events["sign"] = np.sign(events["rel_change"]).astype(int)
     return events.reset_index(drop=True)
 
 
-def select_peers(df: pd.DataFrame, lookback: int = 60, top_k: int = 3) -> Dict[str, List[str]]:
-    """Identify top-K peers for each ticker using rolling correlation of ΔIV."""
-    df = df.sort_values(["ticker", "date"]).copy()
-    df["dIV"] = df.groupby("ticker")["atm_iv"].pct_change()
-    piv = df.pivot(index="date", columns="ticker", values="dIV")
-    peers: Dict[str, List[str]] = {}
-    for t in piv.columns:
-        corr = piv.rolling(lookback).corr(piv[t]).iloc[-1]
-        corr = corr.drop(index=t).dropna().sort_values(ascending=False).head(top_k)
-        peers[t] = list(corr.index)
-    return peers
+def _load_peers_for_target(target: str, conn=None) -> List[str]:
+    """Return peer tickers for a target using stored ticker groups."""
+    groups = get_groups_for_target(target, conn)
+    peers: List[str] = []
+    for name in groups:
+        grp = load_ticker_group(name, conn)
+        if grp:
+            peers.extend(grp.get("peer_tickers", []))
+    # Deduplicate and exclude the target itself
+    uniq = {p.upper() for p in peers if p and p.upper() != target.upper()}
+    return sorted(uniq)
+
+
+def compute_weights_and_regression(
+    df: pd.DataFrame,
+    target: str,
+    window: int = 90,
+    conn: Optional[sqlite3.Connection] = None,
+) -> Tuple[pd.Series, pd.Series]:
+    """Compute peer weights and regression betas from historical IV data.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Table with columns ``date``, ``ticker`` and ``atm_iv``.
+    target : str
+        Ticker for the target security. Peers are looked up via
+        :func:`data.ticker_groups.get_groups_for_target`.
+    window : int, default 90
+        Number of trailing calendar days to use when computing statistics.
+    conn : sqlite3.Connection, optional
+        Connection to the ticker groups database. If ``None`` the default
+        connection from :func:`data.ticker_groups.get_conn` is used.
+
+    Returns
+    -------
+    tuple(pd.Series, pd.Series)
+        ``weights`` : normalised non-negative weights for each peer based on
+        correlation with the target.
+        ``betas`` : regression slopes of peer IV returns on target IV returns.
+
+    Notes
+    -----
+    ``atm_iv`` is converted to log returns before computing correlations and
+    regressions.  Negative weights are clipped to zero prior to normalisation.
+    """
+
+    if df.empty:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    end = df["date"].max()
+    start = end - pd.Timedelta(days=window)
+    df = df[(df["date"] > start) & (df["date"] <= end)]
+
+    piv = df.pivot(index="date", columns="ticker", values="atm_iv").sort_index()
+    piv = piv.replace([np.inf, -np.inf], np.nan)
+    piv = piv.where(piv > 0.0)
+    ivret = np.log(piv).diff().dropna(how="all")
+
+    tgt = target.upper()
+    peer_list = _load_peers_for_target(tgt, conn)
+    if tgt not in ivret.columns:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+
+    x = ivret[tgt]
+    corrs = {}
+    betas = {}
+    for peer in peer_list:
+        if peer not in ivret.columns:
+            continue
+        y = ivret[peer]
+        pair = pd.concat([x, y], axis=1, keys=["x", "y"]).dropna()
+        if len(pair) < 2:
+            continue
+        corrs[peer] = pair["x"].corr(pair["y"])
+        denom = (pair["x"] ** 2).sum()
+        betas[peer] = float(np.dot(pair["x"], pair["y"]) / denom) if denom > 0 else np.nan
+
+    weights = pd.Series(corrs).clip(lower=0.0)
+    if not weights.empty and float(weights.sum()) > 0:
+        weights = weights / float(weights.sum())
+
+    return weights, pd.Series(betas)
 
 
 def compute_responses(df: pd.DataFrame,
                       events: pd.DataFrame,
                       peers: Dict[str, List[str]],
-                      horizons: Iterable[int] = (1, 3, 5)) -> pd.DataFrame:
+                      horizons: Iterable[int] = (1, 3, 5),
+                      iv_col: str = "atm_iv") -> pd.DataFrame:
     """Compute peer responses for each event over given horizons.
 
     Response for peer j at horizon ``h`` is the percentage change in j's IV
@@ -67,6 +156,7 @@ def compute_responses(df: pd.DataFrame,
     day itself.  The previous implementation incorrectly used ``t0+h-1`` which
     shifted all horizons one day earlier and was incompatible with other parts
     of the program that expect horizons to be offset from the event date.
+    ``iv_col`` allows selecting a different IV column (e.g. raw vs synthetic).
     """
     panel = df.set_index(["date", "ticker"]).sort_index()
     dates = panel.index.get_level_values(0).unique()
@@ -81,7 +171,7 @@ def compute_responses(df: pd.DataFrame,
         for j in peers.get(i, []):
             if (t_minus1, j) not in panel.index:
                 continue
-            base = panel.loc[(t_minus1, j), "atm_iv"]
+            base = panel.loc[(t_minus1, j), iv_col]
             for h in horizons:
                 # Use t0 + h to express the response h days after the event.
                 idx_h = idx0 + h
@@ -90,7 +180,7 @@ def compute_responses(df: pd.DataFrame,
                 d_h = dates[idx_h]
                 if (d_h, j) not in panel.index:
                     continue
-                resp = panel.loc[(d_h, j), "atm_iv"]
+                resp = panel.loc[(d_h, j), iv_col]
                 pct = (resp - base) / base
                 rows.append({
                     "ticker": i,
@@ -141,6 +231,7 @@ def run_spillover(
     horizons: Iterable[int] = (1, 3, 5),
     events_path: str = "spill_events.parquet",
     summary_path: str = "spill_summary.parquet",
+    iv_col: str = "atm_iv",
 ) -> Dict[str, pd.DataFrame]:
     """High level helper that runs the full spillover analysis.
 
@@ -150,6 +241,14 @@ def run_spillover(
         Either a preloaded IV data table or a function that yields one.
         This allows callers to supply data from any source (e.g. Parquet,
         database, API) without ``run_spillover`` needing to know the details.
+    lookback : int, optional
+        Retained for backward compatibility; peer selection now relies on
+        pre-defined groups rather than historical correlations.
+    top_k : int, optional
+        Retained for backward compatibility and ignored.
+
+    Peer relationships are obtained from ``data.ticker_groups`` via
+    :func:`get_groups_for_target`.
 
     Returns
     -------
@@ -160,9 +259,10 @@ def run_spillover(
     if tickers is not None:
         tickers = [t.upper() for t in tickers]
         df = df[df["ticker"].str.upper().isin(tickers)]
-    events = detect_events(df, threshold=threshold)
-    peers = select_peers(df, lookback=lookback, top_k=top_k)
-    responses = compute_responses(df, events, peers, horizons=horizons)
+    events = detect_events(df, threshold=threshold, iv_col=iv_col)
+    tick_set = events["ticker"].unique()
+    peers = {t: _load_peers_for_target(t) for t in tick_set}
+    responses = compute_responses(df, events, peers, horizons=horizons, iv_col=iv_col)
     summary = summarise(responses, threshold=threshold)
     persist_events(events, events_path)
     persist_summary(summary, summary_path)

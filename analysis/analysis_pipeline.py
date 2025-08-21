@@ -40,7 +40,7 @@ from .syntheticETFBuilder import (
     build_synthetic_iv as build_synthetic_iv_pillars,
 )
 
-from .beta_builder import (
+from .beta_builder.beta_builder import (
     pca_weights,
     peer_weights_from_correlations,
     build_vol_betas,
@@ -49,11 +49,11 @@ from .beta_builder import (
     build_peer_weights,
     corr_weights_from_matrix,
 )
-from .unified_weights import (
+from .beta_builder.unified_weights import (
     cosine_similarity_weights_from_matrix as cosine_similarity_weights,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm, compute_atm_by_expiry, DEFAULT_PILLARS_DAYS, atm_curve_for_ticker_on_date
-from .correlation_utils import (
+from .beta_builder.correlation_utils import (
     compute_atm_corr_pillar_free,
     corr_weights,
 )
@@ -253,7 +253,7 @@ def compute_peer_weights(
 
     # Unified primary path
     try:
-        from analysis.unified_weights import compute_unified_weights
+        from analysis.beta_builder.unified_weights import compute_unified_weights
         return compute_unified_weights(
             target=target,
             peers=peers,

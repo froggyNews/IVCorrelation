@@ -41,7 +41,7 @@ from analysis.analysis_pipeline import (
     get_most_recent_date_global,
     get_smile_slice,
 )
-from analysis.unified_weights import UnifiedWeightComputer, WeightConfig, FeatureSet, WeightMethod
+from analysis.beta_builder.unified_weights import UnifiedWeightComputer, WeightConfig, FeatureSet, WeightMethod
 from analysis.pillars import compute_atm_by_expiry
 from analysis.syntheticETFBuilder import build_synthetic_iv_by_rank
 

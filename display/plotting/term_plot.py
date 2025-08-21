@@ -6,16 +6,16 @@ import matplotlib.pyplot as plt
 from typing import Optional, Dict
 
 from analysis.confidence_bands import Bands
-from volModel.termFit import fit_term_structure, term_structure_iv
 
 
 def plot_atm_term_structure(
     ax: plt.Axes,
     atm_df: pd.DataFrame,
     x_units: str = "years",   # "years" or "days"
-    fit: bool = True,
+    *,
+    fit_x: Optional[np.ndarray] = None,
+    fit_y: Optional[np.ndarray] = None,
     show_ci: bool = False,    # draw CI bars if present
-    degree: int = 2,
 ) -> None:
     if atm_df is None or atm_df.empty:
         ax.text(0.5, 0.5, "No ATM data", ha="center", va="center")
@@ -42,15 +42,9 @@ def plot_atm_term_structure(
     else:
         ax.scatter(x_plot, y, s=30, alpha=0.9, label="ATM (fit)")
 
-    if fit and len(x) > degree:
-        try:
-            params = fit_term_structure(x, y, degree=degree)
-            grid = np.linspace(x.min(), x.max(), 200)
-            fit_y = term_structure_iv(grid, params)
-            grid_plot = grid * 365.25 if x_units == "days" else grid
-            ax.plot(grid_plot, fit_y, linestyle="--", alpha=0.6, label="Term fit")
-        except Exception:
-            pass
+    if fit_x is not None and fit_y is not None:
+        grid_plot = fit_x * 365.25 if x_units == "days" else fit_x
+        ax.plot(grid_plot, fit_y, linestyle="--", alpha=0.6, label="Term fit")
 
     ax.set_xlabel(x_label)
     ax.set_ylabel("Implied Vol (ATM)")

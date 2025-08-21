@@ -29,9 +29,9 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
-from analysis.compute_or_load import compute_or_load
+from data.compute_or_load import compute_or_load
 
-from analysis.cache_io import  WarmupWorker
+from data.cache_io import  WarmupWorker
 
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
@@ -475,7 +475,7 @@ class PlotManager:
         """
         import numpy as np
         import pandas as pd
-        from analysis.correlation_utils import corr_weights
+        from analysis.beta_builder.correlation_utils import corr_weights
 
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
@@ -484,7 +484,7 @@ class PlotManager:
 
         # 1) Unified weights with signature shims
         try:
-            from analysis.unified_weights import compute_unified_weights
+            from analysis.beta_builder.unified_weights import compute_unified_weights
 
             def _normalize(w: pd.Series) -> pd.Series | None:
                 if w is None or w.empty:
