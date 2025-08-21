@@ -5,15 +5,61 @@ import time
 import zlib
 import hashlib
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Tuple
 
 import queue
 import threading
 import time
-from typing import Any, Callable, Tuple
 
 TTL_SEC = 900
 ARTIFACT_VERSION: Dict[str, str] = {}
+
+
+def _latest_raw_marker(conn: sqlite3.Connection) -> str | None:
+    """Return the latest ``asof_date`` across raw data tables if present."""
+    dates = []
+    for tbl in ("options_quotes", "underlying_prices"):
+        try:
+            row = conn.execute(f"SELECT MAX(asof_date) FROM {tbl}").fetchone()
+            if row and row[0]:
+                dates.append(row[0])
+        except sqlite3.Error:
+            pass
+    return max(dates) if dates else None
+
+
+def save_calc_cache(conn: sqlite3.Connection, key: str, value: Any) -> None:
+    """Persist a calculation cache entry tied to current raw data state."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS calc_cache(
+           key TEXT PRIMARY KEY,
+           value BLOB,
+           created_at INTEGER NOT NULL,
+           raw_marker TEXT)"""
+    )
+    blob = sqlite3.Binary(pickle.dumps(value))
+    marker = _latest_raw_marker(conn)
+    conn.execute(
+        "REPLACE INTO calc_cache(key,value,created_at,raw_marker) VALUES(?,?,strftime('%s','now'),?)",
+        (key, blob, marker),
+    )
+    conn.commit()
+
+
+def load_calc_cache(conn: sqlite3.Connection, key: str) -> Any | None:
+    """Load a cached artifact if raw data has not changed since saving."""
+    row = conn.execute(
+        "SELECT value, raw_marker FROM calc_cache WHERE key=?", (key,)
+    ).fetchone()
+    if not row:
+        return None
+    value_blob, marker = row
+    if marker != _latest_raw_marker(conn):
+        return None
+    try:
+        return pickle.loads(value_blob)
+    except Exception:
+        return None
 
 def _hash_inputs(kind: str, payload: dict) -> str:
     """Create a stable hash for the inputs.

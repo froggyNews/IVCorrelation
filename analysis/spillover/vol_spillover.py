@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Iterable, Callable
+import sqlite3
+from typing import List, Dict, Iterable, Callable, Tuple, Optional
+from data.ticker_groups import get_groups_for_target, load_ticker_group
 
 """Tools to detect implied-volatility events and measure spillovers.
 
@@ -42,17 +44,91 @@ def detect_events(df: pd.DataFrame, threshold: float = 0.10) -> pd.DataFrame:
     return events.reset_index(drop=True)
 
 
-def select_peers(df: pd.DataFrame, lookback: int = 60, top_k: int = 3) -> Dict[str, List[str]]:
-    """Identify top-K peers for each ticker using rolling correlation of ΔIV."""
-    df = df.sort_values(["ticker", "date"]).copy()
-    df["dIV"] = df.groupby("ticker")["atm_iv"].pct_change()
-    piv = df.pivot(index="date", columns="ticker", values="dIV")
-    peers: Dict[str, List[str]] = {}
-    for t in piv.columns:
-        corr = piv.rolling(lookback).corr(piv[t]).iloc[-1]
-        corr = corr.drop(index=t).dropna().sort_values(ascending=False).head(top_k)
-        peers[t] = list(corr.index)
-    return peers
+def _load_peers_for_target(target: str, conn=None) -> List[str]:
+    """Return peer tickers for a target using stored ticker groups."""
+    groups = get_groups_for_target(target, conn)
+    peers: List[str] = []
+    for name in groups:
+        grp = load_ticker_group(name, conn)
+        if grp:
+            peers.extend(grp.get("peer_tickers", []))
+    # Deduplicate and exclude the target itself
+    uniq = {p.upper() for p in peers if p and p.upper() != target.upper()}
+    return sorted(uniq)
+
+
+def compute_weights_and_regression(
+    df: pd.DataFrame,
+    target: str,
+    window: int = 90,
+    conn: Optional[sqlite3.Connection] = None,
+) -> Tuple[pd.Series, pd.Series]:
+    """Compute peer weights and regression betas from historical IV data.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Table with columns ``date``, ``ticker`` and ``atm_iv``.
+    target : str
+        Ticker for the target security. Peers are looked up via
+        :func:`data.ticker_groups.get_groups_for_target`.
+    window : int, default 90
+        Number of trailing calendar days to use when computing statistics.
+    conn : sqlite3.Connection, optional
+        Connection to the ticker groups database. If ``None`` the default
+        connection from :func:`data.ticker_groups.get_conn` is used.
+
+    Returns
+    -------
+    tuple(pd.Series, pd.Series)
+        ``weights`` : normalised non-negative weights for each peer based on
+        correlation with the target.
+        ``betas`` : regression slopes of peer IV returns on target IV returns.
+
+    Notes
+    -----
+    ``atm_iv`` is converted to log returns before computing correlations and
+    regressions.  Negative weights are clipped to zero prior to normalisation.
+    """
+
+    if df.empty:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    end = df["date"].max()
+    start = end - pd.Timedelta(days=window)
+    df = df[(df["date"] > start) & (df["date"] <= end)]
+
+    piv = df.pivot(index="date", columns="ticker", values="atm_iv").sort_index()
+    piv = piv.replace([np.inf, -np.inf], np.nan)
+    piv = piv.where(piv > 0.0)
+    ivret = np.log(piv).diff().dropna(how="all")
+
+    tgt = target.upper()
+    peer_list = _load_peers_for_target(tgt, conn)
+    if tgt not in ivret.columns:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+
+    x = ivret[tgt]
+    corrs = {}
+    betas = {}
+    for peer in peer_list:
+        if peer not in ivret.columns:
+            continue
+        y = ivret[peer]
+        pair = pd.concat([x, y], axis=1, keys=["x", "y"]).dropna()
+        if len(pair) < 2:
+            continue
+        corrs[peer] = pair["x"].corr(pair["y"])
+        denom = (pair["x"] ** 2).sum()
+        betas[peer] = float(np.dot(pair["x"], pair["y"]) / denom) if denom > 0 else np.nan
+
+    weights = pd.Series(corrs).clip(lower=0.0)
+    if not weights.empty and float(weights.sum()) > 0:
+        weights = weights / float(weights.sum())
+
+    return weights, pd.Series(betas)
 
 
 def compute_responses(df: pd.DataFrame,
@@ -150,6 +226,14 @@ def run_spillover(
         Either a preloaded IV data table or a function that yields one.
         This allows callers to supply data from any source (e.g. Parquet,
         database, API) without ``run_spillover`` needing to know the details.
+    lookback : int, optional
+        Retained for backward compatibility; peer selection now relies on
+        pre-defined groups rather than historical correlations.
+    top_k : int, optional
+        Retained for backward compatibility and ignored.
+
+    Peer relationships are obtained from ``data.ticker_groups`` via
+    :func:`get_groups_for_target`.
 
     Returns
     -------
@@ -161,7 +245,8 @@ def run_spillover(
         tickers = [t.upper() for t in tickers]
         df = df[df["ticker"].str.upper().isin(tickers)]
     events = detect_events(df, threshold=threshold)
-    peers = select_peers(df, lookback=lookback, top_k=top_k)
+    tick_set = events["ticker"].unique()
+    peers = {t: _load_peers_for_target(t) for t in tick_set}
     responses = compute_responses(df, events, peers, horizons=horizons)
     summary = summarise(responses, threshold=threshold)
     persist_events(events, events_path)
