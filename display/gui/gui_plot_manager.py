@@ -1074,11 +1074,8 @@ class PlotManager:
             ax,
             atm_curve,
             x_units=x_units,
-            connect=True,
-            smooth=True,
-
+            fit=True,
             show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
- 
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
         synth_bands = data.get("synth_bands")
