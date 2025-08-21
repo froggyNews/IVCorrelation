@@ -7,111 +7,80 @@ import pandas as pd
 import numpy as np
 import databento as db
 from dotenv import load_dotenv
+from scipy.stats import norm
+from scipy.optimize import brentq
 
 # Default if caller doesn't pass a db_path
 DEFAULT_DB_PATH = Path(os.getenv("IV_DB_PATH", "data/iv_data_1m.db"))
 
+
+def _calculate_iv(price: float, S: float, K: float, T: float, cp: str, r: float) -> float:
+    """Compute implied volatility from option *close* price using Brent's method."""
+    if not np.isfinite([price, S, K, T, r]).all() or price <= 0 or S <= 0 or K <= 0 or T <= 0:
+        return np.nan
+
+    intrinsic = max(S - K, 0.0) if cp.upper().startswith("C") else max(K - S, 0.0)
+    if price <= intrinsic + 1e-10:
+        return 1e-6
+
+    def bs_price(sigma: float) -> float:
+        if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+            return intrinsic
+        sqrtT = np.sqrt(T)
+        d1 = (np.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT)
+        d2 = d1 - sigma * sqrtT
+        if cp.upper().startswith("C"):
+            return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+        else:
+            return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+
+    try:
+        return brentq(lambda sig: bs_price(sig) - price, 1e-6, 5.0, maxiter=100, xtol=1e-8)
+    except Exception:
+        return np.nan
+
+
+def _safe_table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    """Safely check for table existence, returning False on errors."""
+    try:
+        result = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+        return result is not None
+    except Exception:
+        return False
+
 # -----------------------------
 # SQLite helpers
 # -----------------------------
-def _ensure_dir(p: Path) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-
 def get_conn(db_path: Path) -> sqlite3.Connection:
-    _ensure_dir(db_path)
+    if not Path(db_path).exists():
+        raise FileNotFoundError(f"Database path not found: {db_path}")
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
-def init_schema(conn: sqlite3.Connection):
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS opra_1m (
-            ticker TEXT NOT NULL,
-            ts_event TEXT NOT NULL,
-            open REAL, high REAL, low REAL, close REAL,
-            volume REAL,
-            symbol TEXT,
-            PRIMARY KEY (ticker, ts_event, symbol)
-        );
-        CREATE INDEX IF NOT EXISTS idx_opra_1m_ts ON opra_1m(ticker, ts_event);
 
-        CREATE TABLE IF NOT EXISTS equity_1m (
-            ticker TEXT NOT NULL,
-            ts_event TEXT NOT NULL,
-            open REAL, high REAL, low REAL, close REAL,
-            volume REAL,
-            symbol TEXT,
-            PRIMARY KEY (ticker, ts_event)
-        );
-        CREATE INDEX IF NOT EXISTS idx_equity_1m_ts ON equity_1m(ticker, ts_event);
+def migrate_schema(conn: sqlite3.Connection) -> None:
+    required = ["opra_1m", "equity_1m", "equity_1h", "merged_1m", "processed_merged_1m", "atm_slices_1m"]
+    for tbl in required:
+        if not _safe_table_exists(conn, tbl):
+            raise RuntimeError(f"Required table missing: {tbl}")
 
-        CREATE TABLE IF NOT EXISTS equity_1h (
-            ticker TEXT NOT NULL,
-            ts_event TEXT NOT NULL,
-            open REAL, high REAL, low REAL, close REAL,
-            volume REAL,
-            PRIMARY KEY (ticker, ts_event)
-        );
-        CREATE INDEX IF NOT EXISTS idx_equity_1h_ts ON equity_1h(ticker, ts_event);
-
-        CREATE TABLE IF NOT EXISTS merged_1m (
-            ticker TEXT NOT NULL,
-            ts_event TEXT NOT NULL,
-            opt_symbol TEXT,
-            stock_symbol TEXT,
-            opt_close REAL,
-            stock_close REAL,
-            opt_volume REAL,
-            stock_volume REAL,
-            PRIMARY KEY (ticker, ts_event, opt_symbol)
-        );
-        CREATE INDEX IF NOT EXISTS idx_merged_1m_ts ON merged_1m(ticker, ts_event);
-
-        CREATE TABLE IF NOT EXISTS processed_merged_1m (
-            ticker TEXT NOT NULL,
-            ts_event TEXT NOT NULL,
-            opt_symbol TEXT,
-            stock_symbol TEXT,
-            opt_close REAL,
-            stock_close REAL,
-            opt_volume REAL,
-            stock_volume REAL,
-            expiry_date TEXT,
-            option_type TEXT,
-            strike_price REAL,
-            time_to_expiry REAL,
-            moneyness REAL,
-            PRIMARY KEY (ticker, ts_event, opt_symbol)
-        );
-        CREATE INDEX IF NOT EXISTS idx_processed_1m_ts  ON processed_merged_1m(ticker, ts_event);
-        CREATE INDEX IF NOT EXISTS idx_processed_1m_exp ON processed_merged_1m(ticker, expiry_date);
-
-        CREATE TABLE IF NOT EXISTS atm_slices_1m (
-            ticker TEXT NOT NULL,
-            ts_event TEXT NOT NULL,
-            expiry_date TEXT NOT NULL,
-            opt_symbol TEXT,
-            stock_symbol TEXT,
-            opt_close REAL,
-            stock_close REAL,
-            opt_volume REAL,
-            stock_volume REAL,
-            option_type TEXT,
-            strike_price REAL,
-            time_to_expiry REAL,
-            moneyness REAL,
-            PRIMARY KEY (ticker, ts_event, expiry_date)
-        );
-        CREATE INDEX IF NOT EXISTS idx_atm_1m_ts  ON atm_slices_1m(ticker, ts_event);
-        CREATE INDEX IF NOT EXISTS idx_atm_1m_exp ON atm_slices_1m(ticker, expiry_date);
-        """
-    )
+    for tbl in ("merged_1m", "processed_merged_1m", "atm_slices_1m"):
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({tbl})")}
+        if "opt_volume" not in cols:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN opt_volume REAL")
+        if "stock_volume" not in cols:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN stock_volume REAL")
     conn.commit()
 
 def populate_atm_slices(conn: sqlite3.Connection, ticker: str):
+    if not _safe_table_exists(conn, "processed_merged_1m"):
+        return
     q = """
     INSERT OR REPLACE INTO atm_slices_1m (
         ticker, ts_event, expiry_date, opt_symbol, stock_symbol,
@@ -267,6 +236,14 @@ def preprocess_and_store(
     )
     merged = merged.dropna(subset=["expiry_date","strike_price","option_type","opt_close","stock_close","time_to_expiry"])
 
+    # Implied volatility from option close price
+    merged["iv"] = merged.apply(
+        lambda r_: _calculate_iv(
+            r_["opt_close"], r_["stock_close"], r_["strike_price"], r_["time_to_expiry"], r_["option_type"], r
+        ),
+        axis=1,
+    )
+
     # persist merged_1m + processed_merged_1m
     merged_db = merged[["ts_event","opt_symbol","stock_symbol","opt_close","stock_close","opt_volume","stock_volume"]].copy()
     merged_db.insert(0, "ticker", ticker)
@@ -296,7 +273,7 @@ def fetch_and_save(API_KEY: str, ticker: str, start: pd.Timestamp, end: pd.Times
                    db_path: Path | str | None = None, force: bool = False) -> Path:
     dbp = Path(db_path) if db_path else DEFAULT_DB_PATH
     conn = get_conn(dbp)
-    init_schema(conn)
+    migrate_schema(conn)
     preprocess_and_store(API_KEY, start, end, ticker, conn, force=force)
     conn.close()
     return dbp
