@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 # Plot helpers
 from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
+    _corr_by_expiry_rank,
 )
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import (
@@ -28,6 +29,7 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
+from analysis.compute_or_load import compute_or_load
 
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
@@ -157,17 +159,22 @@ class PlotManager:
         """Return surface grids for ``tickers`` using cache if available."""
         key = (tuple(sorted(set(tickers))), int(max_expiries))
         if key not in self._surface_cache:
-            try:
-                grids = build_surface_grids(
+            payload = {"tickers": list(key[0]), "max_expiries": key[1]}
+
+            def _builder():
+                return build_surface_grids(
                     tickers=list(key[0]),
                     tenors=None,
                     mny_bins=None,
                     use_atm_only=False,
                     max_expiries=key[1],
                 )
-                self._surface_cache[key] = grids if grids is not None else {}
+
+            try:
+                grids = compute_or_load("surface_grids", payload, _builder)
             except Exception:
-                self._surface_cache[key] = {}
+                grids = _builder()
+            self._surface_cache[key] = grids if grids is not None else {}
         return self._surface_cache.get(key, {})
 
     # -------------------- main entry --------------------
@@ -235,18 +242,40 @@ class PlotManager:
                     target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
                 )
 
-            data = prepare_smile_data(
-                target=target,
-                asof=asof,
-                T_days=T_days,
-                model=model,
-                ci=ci,
-                overlay_synth=overlay_synth,
-                peers=peers,
-                weights=weights.to_dict() if weights is not None else None,
-                overlay_peers=overlay_peers,
-                max_expiries=max_expiries,
-            )
+            payload = {
+                "target": target,
+                "asof": pd.to_datetime(asof).floor("min").isoformat(),
+                "T_days": float(T_days),
+                "model": model,
+                "ci": ci,
+                "overlay_synth": overlay_synth,
+                "peers": sorted(peers),
+                "weights": weights.to_dict() if weights is not None else None,
+                "overlay_peers": overlay_peers,
+                "max_expiries": max_expiries,
+            }
+
+            def _builder():
+                return prepare_smile_data(
+                    target=target,
+                    asof=asof,
+                    T_days=T_days,
+                    model=model,
+                    ci=ci,
+                    overlay_synth=overlay_synth,
+                    peers=peers,
+                    weights=weights.to_dict() if weights is not None else None,
+                    overlay_peers=overlay_peers,
+                    max_expiries=max_expiries,
+                )
+
+            if hasattr(self, "_warm"):
+                try:
+                    self._warm.enqueue("smile", payload, _builder)
+                except Exception:
+                    pass
+
+            data = compute_or_load("smile", payload, _builder)
             if not data:
                 ax.set_title("No data")
                 return
@@ -290,16 +319,36 @@ class PlotManager:
                     pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
                 )
 
-            data = prepare_term_data(
-                target=target,
-                asof=asof,
-                ci=ci,
-                overlay_synth=overlay_synth,
-                peers=peers,
-                weights=weights.to_dict() if weights is not None else None,
-                atm_band=atm_band,
-                max_expiries=max_expiries,
-            )
+            payload = {
+                "target": target,
+                "asof": pd.to_datetime(asof).floor("min").isoformat(),
+                "ci": ci,
+                "overlay_synth": overlay_synth,
+                "peers": sorted(peers),
+                "weights": weights.to_dict() if weights is not None else None,
+                "atm_band": atm_band,
+                "max_expiries": max_expiries,
+            }
+
+            def _builder():
+                return prepare_term_data(
+                    target=target,
+                    asof=asof,
+                    ci=ci,
+                    overlay_synth=overlay_synth,
+                    peers=peers,
+                    weights=weights.to_dict() if weights is not None else None,
+                    atm_band=atm_band,
+                    max_expiries=max_expiries,
+                )
+
+            if hasattr(self, "_warm"):
+                try:
+                    self._warm.enqueue("term", payload, _builder)
+                except Exception:
+                    pass
+
+            data = compute_or_load("term", payload, _builder)
 
             atm_curve = data.get("atm_curve") if data else None
             if atm_curve is None or atm_curve.empty:
@@ -1063,6 +1112,30 @@ class PlotManager:
         weight_power = settings.get("weight_power", 1.0)
         clip_negative = settings.get("clip_negative", True)
 
+        max_exp = self._current_max_expiries or 6
+
+        payload = {
+            "tickers": sorted(tickers),
+            "asof": pd.to_datetime(asof).floor("min").isoformat(),
+            "atm_band": atm_band,
+            "max_expiries": max_exp,
+        }
+
+        def _builder():
+            return _corr_by_expiry_rank(
+                get_slice=self.get_smile_slice,
+                tickers=tickers,
+                asof=asof,
+                max_expiries=max_exp,
+                atm_band=atm_band,
+            )
+
+        if hasattr(self, "_warm"):
+            try:
+                self._warm.enqueue("corr", payload, _builder)
+            except Exception:
+                pass
+
         atm_df, corr_df, _ = compute_and_plot_correlation(
             ax=ax,
             get_smile_slice=self.get_smile_slice,
@@ -1074,7 +1147,7 @@ class PlotManager:
             weight_power=weight_power,
             target=target,
             peers=peers,
-            max_expiries=self._current_max_expiries or 6,
+            max_expiries=max_exp,
             weight_mode=weight_mode,
         )
 
