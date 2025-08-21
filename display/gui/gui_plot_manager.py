@@ -35,6 +35,7 @@ from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from volModel.polyFit import fit_tps_slice
 from analysis.confidence_bands import (
+    generate_term_structure_confidence_bands,
     svi_confidence_bands,
     sabr_confidence_bands,
     tps_confidence_bands,
@@ -1024,12 +1025,12 @@ class PlotManager:
  
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
-
         synth_bands = data.get("synth_bands")
         if synth_bands is not None:
             bands = synth_bands
             if x_units != "days":
-                bands = Bands(
+                # Convert x-axis from days to years for the bands
+                bands = type(synth_bands)(
                     x=synth_bands.x / 365.25,
                     mean=synth_bands.mean,
                     lo=synth_bands.lo,
@@ -1040,9 +1041,7 @@ class PlotManager:
             # restore axis labels overridden by synthetic plot
             ax.set_xlabel("Time to Expiry (days)" if x_units == "days" else "Time to Expiry (years)")
             ax.set_ylabel("Implied Vol (ATM)")
-            title += f" - Synthetic Overlay (N={len(synth_bands.x)})"
-        ax.set_title(title)
-
+            title += f" - Synthetic Overlay (N={len(bands.x)})"
 
     # -------------------- correlation matrix --------------------
     def _plot_corr_matrix(
