@@ -364,6 +364,35 @@ class PlotManager:
             if atm_curve is None or atm_curve.empty:
                 ax.set_title("No data")
                 return
+
+            # Prepare data for parameter summary tab
+            try:
+                fit_map: dict = {}
+                for _, row in atm_curve.iterrows():
+                    T_val = float(row.get("T", np.nan))
+                    if not np.isfinite(T_val):
+                        continue
+                    entry: dict = {}
+                    exp = row.get("expiry")
+                    if pd.notna(exp):
+                        entry["expiry"] = str(exp)
+                    sens = {
+                        k: row[k]
+                        for k in ("atm_vol", "skew", "curv")
+                        if k in row and pd.notna(row[k])
+                    }
+                    if sens:
+                        entry["sens"] = sens
+                    if entry:
+                        fit_map[T_val] = entry
+                self.last_fit_info = {
+                    "ticker": target,
+                    "asof": asof,
+                    "fit_by_expiry": fit_map,
+                }
+            except Exception:
+                self.last_fit_info = None
+
             self._plot_term(
                 ax,
                 data,
