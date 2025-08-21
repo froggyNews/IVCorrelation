@@ -11,6 +11,12 @@ import pandas as pd
 import numpy as np
 from analysis.analysis_pipeline import get_smile_slice, available_dates
 from analysis.correlation_utils import compute_atm_corr_pillar_free
+# One-time manual fix (e.g. run in a script or Python shell)
+import sqlite3
+conn = sqlite3.connect("data/calculations.db")
+conn.execute("DROP TABLE IF EXISTS calc_cache")
+conn.commit()
+conn.close()
 
 def debug_atm_extraction():
     """Debug ATM data extraction to see why only 2 rows are found."""

@@ -31,15 +31,21 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
 from analysis.compute_or_load import compute_or_load
 
+
+from analysis.cache_io import  WarmupWorker
+
+
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from volModel.polyFit import fit_tps_slice
 from analysis.confidence_bands import (
+    generate_term_structure_confidence_bands,
     svi_confidence_bands,
     sabr_confidence_bands,
     tps_confidence_bands,
+    
 )
 
 DEFAULT_ATM_BAND = 0.05
@@ -119,6 +125,9 @@ class PlotManager:
 
         # cache for surface grids: key is (tickers tuple, max_expiries)
         self._surface_cache: dict[tuple[tuple[str, ...], int], dict] = {}
+
+        # background cache warmer
+        self._warm = WarmupWorker("data/calculations.db")
 
     # -------------------- canvas wiring --------------------
     def attach_canvas(self, canvas):
@@ -201,7 +210,8 @@ class PlotManager:
         weight_mode = (
             "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
         )
-        overlay_synth = settings.get("overlay_synth", False)
+        #TODO: Fix setting- marked as always true. 
+        overlay_synth = settings.get("overlay_synth", True)
         overlay_peers = settings.get("overlay_peers", False)
         peers = settings["peers"]
         pillars = settings["pillars"]
@@ -276,6 +286,7 @@ class PlotManager:
                     pass
 
             data = compute_or_load("smile", payload, _builder)
+
             if not data:
                 ax.set_title("No data")
                 return
@@ -328,6 +339,8 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "atm_band": atm_band,
                 "max_expiries": max_expiries,
+
+                "weight_mode": weight_mode,
             }
 
             def _builder():
@@ -354,6 +367,35 @@ class PlotManager:
             if atm_curve is None or atm_curve.empty:
                 ax.set_title("No data")
                 return
+
+            # Prepare data for parameter summary tab
+            try:
+                fit_map: dict = {}
+                for _, row in atm_curve.iterrows():
+                    T_val = float(row.get("T", np.nan))
+                    if not np.isfinite(T_val):
+                        continue
+                    entry: dict = {}
+                    exp = row.get("expiry")
+                    if pd.notna(exp):
+                        entry["expiry"] = str(exp)
+                    sens = {
+                        k: row[k]
+                        for k in ("atm_vol", "skew", "curv")
+                        if k in row and pd.notna(row[k])
+                    }
+                    if sens:
+                        entry["sens"] = sens
+                    if entry:
+                        fit_map[T_val] = entry
+                self.last_fit_info = {
+                    "ticker": target,
+                    "asof": asof,
+                    "fit_by_expiry": fit_map,
+                }
+            except Exception:
+                self.last_fit_info = None
+
             self._plot_term(
                 ax,
                 data,
@@ -1065,19 +1107,16 @@ class PlotManager:
             ax,
             atm_curve,
             x_units=x_units,
-            connect=True,
-            smooth=True,
-
+            fit=True,
             show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
- 
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
-
         synth_bands = data.get("synth_bands")
         if synth_bands is not None:
             bands = synth_bands
             if x_units != "days":
-                bands = Bands(
+                # Convert x-axis from days to years for the bands
+                bands = type(synth_bands)(
                     x=synth_bands.x / 365.25,
                     mean=synth_bands.mean,
                     lo=synth_bands.lo,
@@ -1088,9 +1127,7 @@ class PlotManager:
             # restore axis labels overridden by synthetic plot
             ax.set_xlabel("Time to Expiry (days)" if x_units == "days" else "Time to Expiry (years)")
             ax.set_ylabel("Implied Vol (ATM)")
-            title += f" - Synthetic Overlay (N={len(synth_bands.x)})"
-        ax.set_title(title)
-
+            title += f" - Synthetic Overlay (N={len(bands.x)})"
 
     # -------------------- correlation matrix --------------------
     def _plot_corr_matrix(
