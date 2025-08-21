@@ -337,6 +337,7 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "atm_band": atm_band,
                 "max_expiries": max_expiries,
+                "weight_mode": weight_mode,
             }
 
             def _builder():
