@@ -227,7 +227,7 @@ class PlotManager:
             self._clear_correlation_colorbar(ax)
 
             weights = None
-            if overlay_synth and peers:
+            if peers:
                 weights = self._weights_from_ui_or_matrix(
                     target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
                 )
@@ -278,7 +278,7 @@ class PlotManager:
             self._clear_correlation_colorbar(ax)
 
             weights = None
-            if overlay_synth and peers:
+            if peers:
                 weights = self._weights_from_ui_or_matrix(
                     target,
                     peers,
