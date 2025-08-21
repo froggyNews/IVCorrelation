@@ -54,7 +54,7 @@ DEFAULT_OVERLAY = False
 PLOT_TYPES = (
     "Smile (K/S vs IV)",
     "Term (ATM vs T)",
-    "Corr Matrix",
+    "Relative Weight Matrix",
     "Synthetic Surface (Smile)",
     "ETF Weights",
 )
@@ -70,7 +70,7 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
         return "term"
     if plot_type.startswith("Synthetic Surface"):
         return "surface"
-    if plot_type.startswith("Corr Matrix"):
+    if plot_type.startswith("Relative Weight Matrix"):
         if feature_mode in ("iv_atm", "ul"):
             # decide later based on pillars count
             return "term"
@@ -467,7 +467,7 @@ class InputPanel(ttk.Frame):
             pillars = self.get_pillars()
 
             feature_scope = _derive_feature_scope(plot_type, feature_mode)
-            if plot_type.startswith("Corr Matrix") and feature_mode in ("iv_atm", "ul"):
+            if plot_type.startswith("Relative Weight Matrix") and feature_mode in ("iv_atm", "ul"):
                 feature_scope = "term" if len(pillars) >= 2 else "smile"
 
             self.manager.update(
@@ -503,10 +503,10 @@ class InputPanel(ttk.Frame):
         show_pillars = (
             plot.startswith("Term")
             or plot.startswith("Synthetic Surface")
-            or (plot.startswith("Corr Matrix") and feat.startswith("surface"))
+            or (plot.startswith("Relative Weight Matrix") and feat.startswith("surface"))
         )
 
-        if plot.startswith("Corr Matrix") and feat in ("iv_atm", "ul"):
+        if plot.startswith("Relative Weight Matrix") and feat in ("iv_atm", "ul"):
             show_pillars = len(self.get_pillars()) >= 2
             show_T = not show_pillars
 
