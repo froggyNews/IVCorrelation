@@ -1,21 +1,24 @@
-# display/plotting/confidence_bands.py
+# analysis/confidence_bands.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Tuple, Dict, Optional
+from typing import Callable, Dict, Optional
 import numpy as np
 
 # We reuse your smile fitters
 from volModel.sviFit import fit_svi_slice, svi_smile_iv
 from volModel.sabrFit import fit_sabr_slice, sabr_smile_iv
+from volModel.polyFit import fit_tps_slice, tps_smile_iv
 
 __all__ = [
     "Bands",
-    "bootstrap_bands", 
+    "bootstrap_bands",
     "svi_confidence_bands",
     "sabr_confidence_bands",
+    "tps_confidence_bands",
+    "generate_term_structure_confidence_bands",
     "synthetic_etf_confidence_bands",
-    "synthetic_etf_weight_bands", 
-    "synthetic_etf_pillar_bands"
+    "synthetic_etf_weight_bands",
+    "synthetic_etf_pillar_bands",
 ]
 
 @dataclass
@@ -126,6 +129,97 @@ def sabr_confidence_bands(
         return sabr_smile_iv(S, np.asarray(Kq, float), T, p)
 
     return bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
+
+# -----------------------------
+# TPS helper bands (expects S,K,T)
+# -----------------------------
+def tps_confidence_bands(
+    S: float,
+    K: np.ndarray,
+    T: float,
+    iv: np.ndarray,
+    grid_K: np.ndarray,
+    level: float = 0.68,
+    n_boot: int = 200,
+) -> Bands:
+    K = np.asarray(K, float)
+    iv = np.asarray(iv, float)
+    grid_K = np.asarray(grid_K, float)
+
+    def _fit(K_, iv_):
+        return fit_tps_slice(S, K_, T, iv_)
+
+    def _pred(p, Kq):
+        return tps_smile_iv(S, np.asarray(Kq, float), T, p)
+
+    return bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
+
+# -----------------------------
+# Term structure bootstrap helper
+# -----------------------------
+def _polynomial_fit_fn(x: np.ndarray, y: np.ndarray, degree: int = 2) -> dict:
+    """Fit polynomial to term structure data."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    mask = np.isfinite(x) & np.isfinite(y)
+    if np.sum(mask) < degree + 1:
+        degree = max(1, np.sum(mask) - 1)
+
+    if np.sum(mask) < 2:
+        return {"coeffs": [np.nanmean(y)], "degree": 0}
+
+    try:
+        coeffs = np.polyfit(x[mask], y[mask], degree)
+        return {"coeffs": coeffs, "degree": degree}
+    except Exception:
+        try:
+            coeffs = np.polyfit(x[mask], y[mask], 1)
+            return {"coeffs": coeffs, "degree": 1}
+        except Exception:
+            return {"coeffs": [np.nanmean(y)], "degree": 0}
+
+
+def _polynomial_pred_fn(params: dict, x_grid: np.ndarray) -> np.ndarray:
+    """Predict using polynomial fit."""
+    return np.polyval(params["coeffs"], x_grid)
+
+
+def generate_term_structure_confidence_bands(
+    T: np.ndarray,
+    atm_vol: np.ndarray,
+    level: float = 0.68,
+    n_boot: int = 100,
+    fit_degree: int = 2,
+    grid_points: int = 50,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Generate confidence bands for ATM term structure using bootstrap."""
+    T = np.asarray(T, dtype=float)
+    atm_vol = np.asarray(atm_vol, dtype=float)
+
+    mask = np.isfinite(T) & np.isfinite(atm_vol)
+    if np.sum(mask) < 3:
+        return np.array([]), np.array([]), np.array([])
+
+    T_clean = T[mask]
+    vol_clean = atm_vol[mask]
+
+    T_min, T_max = T_clean.min(), T_clean.max()
+    T_grid = np.linspace(T_min, T_max, grid_points)
+
+    try:
+        bands = bootstrap_bands(
+            x=T_clean,
+            y=vol_clean,
+            fit_fn=lambda x, y: _polynomial_fit_fn(x, y, degree=fit_degree),
+            pred_fn=_polynomial_pred_fn,
+            grid=T_grid,
+            level=level,
+            n_boot=n_boot,
+        )
+        return T_grid, bands.lo, bands.hi
+    except Exception:
+        return np.array([]), np.array([]), np.array([])
 
 # -----------------------------
 # Synthetic ETF specific confidence bands

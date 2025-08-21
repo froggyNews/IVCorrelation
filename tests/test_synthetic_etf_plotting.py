@@ -12,6 +12,10 @@ from display.plotting.display_viewers_synthetic_etf_viewer import (
 
 from display.plotting.smile_plot import plot_synthetic_etf_smile
 from display.plotting.term_plot import plot_synthetic_etf_term_structure
+from analysis.confidence_bands import (
+    synthetic_etf_confidence_bands,
+    synthetic_etf_pillar_bands,
+)
 
 def test_plot_synthetic_etf_smile_runs():
     surfaces = {
@@ -22,7 +26,8 @@ def test_plot_synthetic_etf_smile_runs():
     grid = np.array([0.9, 1.0, 1.1])
 
     fig, ax = plt.subplots()
-    bands = plot_synthetic_etf_smile(ax, surfaces, weights, grid, n_boot=5)
+    bands = synthetic_etf_confidence_bands(surfaces, weights, grid, n_boot=5)
+    bands = plot_synthetic_etf_smile(ax, bands)
     assert bands.mean.shape == grid.shape
     plt.close(fig)
 
@@ -37,7 +42,8 @@ def test_plot_synthetic_etf_smile_adds_to_legend():
     ax.plot(grid, surfaces['A'], label='Target')
     ax.legend()
 
-    plot_synthetic_etf_smile(ax, surfaces, weights, grid, n_boot=5)
+    bands = synthetic_etf_confidence_bands(surfaces, weights, grid, n_boot=5)
+    plot_synthetic_etf_smile(ax, bands)
     legend = ax.get_legend()
     assert legend is not None
     labels = [text.get_text() for text in legend.get_texts()]
@@ -53,7 +59,8 @@ def test_plot_synthetic_etf_term_structure_runs():
     pillar_days = np.array([30, 60, 90])
 
     fig, ax = plt.subplots()
-    bands = plot_synthetic_etf_term_structure(ax, atm_data, weights, pillar_days, n_boot=5)
+    bands = synthetic_etf_pillar_bands(atm_data, weights, pillar_days, n_boot=5)
+    bands = plot_synthetic_etf_term_structure(ax, bands)
     assert bands.mean.shape == pillar_days.shape
     plt.close(fig)
 
@@ -69,7 +76,8 @@ def test_plot_synthetic_etf_term_structure_adds_to_legend():
     ax.plot(pillar_days, atm_data['A'], label='Target')
     ax.legend()
 
-    plot_synthetic_etf_term_structure(ax, atm_data, weights, pillar_days, n_boot=5)
+    bands = synthetic_etf_pillar_bands(atm_data, weights, pillar_days, n_boot=5)
+    plot_synthetic_etf_term_structure(ax, bands)
     legend = ax.get_legend()
     assert legend is not None
     labels = [text.get_text() for text in legend.get_texts()]

@@ -14,6 +14,8 @@ from analysis.analysis_pipeline import get_smile_slice, available_dates
 from analysis.pillars import compute_atm_by_expiry
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
+from volModel.sviFit import fit_svi_slice
+from analysis.confidence_bands import svi_confidence_bands
 
 def test_confidence_intervals():
     """Test that confidence intervals are enabled by default."""
@@ -70,12 +72,17 @@ def test_confidence_intervals():
             
             print(f"   Testing expiry T={T_val:.4f}, S={S:.2f}, {len(K)} options")
             
-            # Plot with CI (should be enabled by default now)
+            # Plot with CI using pre-computed parameters
             fig, ax = plt.subplots(figsize=(8, 6))
+            params = fit_svi_slice(S, K, T_val, iv)
+            m_grid = np.linspace(0.8, 1.2, 121)
+            K_grid = m_grid * S
+            bands = svi_confidence_bands(S, K, T_val, iv, K_grid, level=0.68, n_boot=200)
             result = fit_and_plot_smile(
-                ax, S, K, T_val, iv, 
+                ax, S, K, T_val, iv,
                 model="svi",
-                # ci_level should default to 0.68 now
+                params=params,
+                bands=bands,
             )
             ax.set_title(f"SPY Smile (T={T_val:.4f}, {asof})")
             plt.savefig("test_smile_ci.png", dpi=100, bbox_inches='tight')
