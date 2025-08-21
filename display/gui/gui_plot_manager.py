@@ -201,7 +201,8 @@ class PlotManager:
         weight_mode = (
             "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
         )
-        overlay_synth = settings.get("overlay_synth", False)
+        #TODO: Fix setting- marked as always true. 
+        overlay_synth = settings.get("overlay_synth", True)
         overlay_peers = settings.get("overlay_peers", False)
         peers = settings["peers"]
         pillars = settings["pillars"]
