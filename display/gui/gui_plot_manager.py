@@ -31,7 +31,9 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
 from analysis.compute_or_load import compute_or_load
 
+
 from analysis.cache_io import  WarmupWorker
+
 
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
@@ -337,6 +339,7 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "atm_band": atm_band,
                 "max_expiries": max_expiries,
+
                 "weight_mode": weight_mode,
             }
 
