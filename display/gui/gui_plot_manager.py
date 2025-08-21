@@ -17,7 +17,10 @@ from display.plotting.correlation_detail_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
 )
 from display.plotting.smile_plot import fit_and_plot_smile
-from display.plotting.term_plot import plot_atm_term_structure
+from display.plotting.term_plot import (
+    plot_atm_term_structure,
+    plot_synthetic_etf_term_structure,
+)
 from display.plotting.weights_plot import plot_weights
 
 # Surfaces & synthetic construction
@@ -1015,30 +1018,28 @@ class PlotManager:
             x_units=x_units,
             connect=True,
             smooth=True,
+
             show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
+ 
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
-        synth_curve = data.get("synth_curve")
-        if synth_curve is not None and not synth_curve.empty:
-            x = synth_curve["T"].to_numpy(float)
-            if x_units == "days":
-                x = x * 365.25
-            y = synth_curve["atm_vol"].to_numpy(float)
-            order = np.argsort(x)
-            ax.plot(
-                x[order],
-                y[order],
-                linestyle="--",
-                linewidth=1.6,
-                alpha=0.9,
-                label="Synthetic ATM (corr-matrix)",
-            )
-            ax.scatter(x, y, s=18, alpha=0.8)
-            title = (
-                f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
-                f" - Synthetic Overlay (N={len(synth_curve)})"
-            )
-            ax.legend(loc="best", fontsize=8)
+
+        synth_bands = data.get("synth_bands")
+        if synth_bands is not None:
+            bands = synth_bands
+            if x_units != "days":
+                bands = Bands(
+                    x=synth_bands.x / 365.25,
+                    mean=synth_bands.mean,
+                    lo=synth_bands.lo,
+                    hi=synth_bands.hi,
+                    level=synth_bands.level,
+                )
+            plot_synthetic_etf_term_structure(ax, bands)
+            # restore axis labels overridden by synthetic plot
+            ax.set_xlabel("Time to Expiry (days)" if x_units == "days" else "Time to Expiry (years)")
+            ax.set_ylabel("Implied Vol (ATM)")
+            title += f" - Synthetic Overlay (N={len(synth_bands.x)})"
         ax.set_title(title)
 
 

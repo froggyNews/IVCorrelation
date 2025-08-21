@@ -60,6 +60,7 @@ from .correlation_utils import (
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from .model_params_logger import append_params, load_model_params
+from .confidence_bands import synthetic_etf_pillar_bands
 
 
 # -----------------------------------------------------------------------------
@@ -967,6 +968,7 @@ def prepare_term_data(
     )
 
     synth_curve = None
+
     if peers:
         w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
         if w.sum() <= 0:
@@ -989,55 +991,56 @@ def prepare_term_data(
                 curves[p] = c
 
         if curves:
-            grid_days = np.unique(
-                np.concatenate([c["T"].to_numpy(float) * 365.25 for c in curves.values()])
-            )
-            grid_days.sort()
+            # Determine common expiries across target and peers
+            tol_years = 10.0 / 365.25
+            arrays = [atm_curve["T"].to_numpy(float)] + [c["T"].to_numpy(float) for c in curves.values()]
+            common_T = arrays[0]
+            for arr in arrays[1:]:
+                common_T = np.array([t for t in common_T if np.any(np.abs(arr - t) <= tol_years)], float)
+                if common_T.size == 0:
+                    break
 
-            tol = 10.0
-            out_T, out_iv = [], []
-            for td in grid_days:
-                contrib, wts = [], []
+            if common_T.size > 0:
+                common_T = np.sort(common_T)
+                # Filter target curve to common expiries
+                atm_curve = atm_curve[
+                    atm_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_years))
+                ]
+
+                # Build per-peer ATM arrays aligned to common_T
+                atm_data: Dict[str, np.ndarray] = {}
                 for p, c in curves.items():
-                    arr_days = c["T"].to_numpy(float) * 365.25
-                    if arr_days.size == 0:
-                        continue
-                    j = int(np.argmin(np.abs(arr_days - td)))
-                    if np.abs(arr_days[j] - td) <= tol:
-                        ivp = float(c["atm_vol"].iloc[j])
-                        if np.isfinite(ivp):
-                            wp = float(w.get(p, 0.0))
-                            if wp > 0:
-                                contrib.append(ivp * wp)
-                                wts.append(wp)
-                if wts:
-                    out_T.append(td / 365.25)
-                    out_iv.append(sum(contrib) / sum(wts))
+                    arr_T = c["T"].to_numpy(float)
+                    arr_v = c["atm_vol"].to_numpy(float)
+                    vals = []
+                    for t in common_T:
+                        j = int(np.argmin(np.abs(arr_T - t)))
+                        if np.abs(arr_T[j] - t) <= tol_years:
+                            vals.append(arr_v[j])
+                    if len(vals) == len(common_T):
+                        atm_data[p] = np.array(vals, float)
 
-            if out_T:
-                synth_curve = pd.DataFrame(
-                    {"T": np.array(out_T, float), "atm_vol": np.array(out_iv, float)}
-                ).sort_values("T")
+                if atm_data:
+                    pillar_days = common_T * 365.25
+                    level = float(ci) / 100.0 if ci and ci > 0 else 0.68
+                    n_boot = max(min_boot, 1)
+                    synth_bands = synthetic_etf_pillar_bands(
+                        atm_data,
+                        w.to_dict(),
+                        pillar_days,
+                        level=level,
+                        n_boot=n_boot,
+                    )
+                    synth_curve = pd.DataFrame(
+                        {
+                            "T": common_T,
+                            "atm_vol": synth_bands.mean,
+                            "atm_lo": synth_bands.lo,
+                            "atm_hi": synth_bands.hi,
+                        }
+                    )
 
-                raw_T = atm_curve["T"].to_numpy(float)
-                synth_T = synth_curve["T"].to_numpy(float)
-                tol_days = max(2.0 / 365.25, 0.1 * min(raw_T.min(), synth_T.min()))
-                common_T = []
-                for rt in raw_T:
-                    if np.any(np.abs(synth_T - rt) <= tol_days):
-                        common_T.append(rt)
-                if common_T:
-                    common_T = np.array(sorted(common_T))
-                    atm_curve = atm_curve[
-                        atm_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_days))
-                    ]
-                    synth_curve = synth_curve[
-                        synth_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_days))
-                    ]
-                else:
-                    synth_curve = None
-
-    return {"atm_curve": atm_curve, "synth_curve": synth_curve}
+    return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
 
 
 def fit_smile_for(

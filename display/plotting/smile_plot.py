@@ -7,9 +7,6 @@ import matplotlib.pyplot as plt
 import sys
 from pathlib import Path
 
-# Add project root to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
-
 from volModel.sviFit import svi_smile_iv
 from volModel.sabrFit import sabr_smile_iv
 from volModel.polyFit import tps_smile_iv
