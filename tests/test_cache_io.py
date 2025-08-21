@@ -1,5 +1,5 @@
 import sqlite3
-from analysis.cache_io import save_calc_cache, load_calc_cache
+from data.cache_io import save_calc_cache, load_calc_cache
 
 
 def _setup_db():

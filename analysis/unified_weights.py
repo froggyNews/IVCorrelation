@@ -170,7 +170,7 @@ def _atm_rank_feature_matrix(
 ) -> tuple[pd.DataFrame, list[int]]:
     """Build expiry-rank ATM feature matrix (rows=tickers, cols=ranks)."""
     from analysis.analysis_pipeline import get_smile_slice  # delayed import
-    from analysis.correlation_utils import compute_atm_corr_pillar_free
+    from analysis.beta_builder.correlation_utils import compute_atm_corr_pillar_free
 
     tickers = [t.upper() for t in tickers]
     atm_df, _ = compute_atm_corr_pillar_free(
