@@ -28,6 +28,7 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
+from analysis.cache_io import compute_or_load, WarmupWorker
 
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
@@ -117,6 +118,9 @@ class PlotManager:
 
         # cache for surface grids: key is (tickers tuple, max_expiries)
         self._surface_cache: dict[tuple[tuple[str, ...], int], dict] = {}
+
+        # background cache warmer
+        self._warm = WarmupWorker("data/calculations.db")
 
     # -------------------- canvas wiring --------------------
     def attach_canvas(self, canvas):
@@ -235,18 +239,29 @@ class PlotManager:
                     target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
                 )
 
-            data = prepare_smile_data(
-                target=target,
-                asof=asof,
-                T_days=T_days,
-                model=model,
-                ci=ci,
-                overlay_synth=overlay_synth,
-                peers=peers,
-                weights=weights.to_dict() if weights is not None else None,
-                overlay_peers=overlay_peers,
-                max_expiries=max_expiries,
-            )
+            payload = {
+                "ticker": target.upper(),
+                "asof": pd.to_datetime(asof).floor("min").isoformat(),
+                "model": model,
+                "params": weights.to_dict() if weights is not None else None,
+            }
+
+            def _builder():
+                return prepare_smile_data(
+                    target=target,
+                    asof=asof,
+                    T_days=T_days,
+                    model=model,
+                    ci=ci,
+                    overlay_synth=overlay_synth,
+                    peers=peers,
+                    weights=weights.to_dict() if weights is not None else None,
+                    overlay_peers=overlay_peers,
+                    max_expiries=max_expiries,
+                )
+
+            data = compute_or_load("smile", payload, _builder, db_path="data/calculations.db")
+            self._warm.enqueue("smile", payload, _builder)
             if not data:
                 ax.set_title("No data")
                 return
