@@ -38,7 +38,6 @@ from analysis.confidence_bands import (
     svi_confidence_bands,
     sabr_confidence_bands,
     tps_confidence_bands,
-    Bands,
 )
 
 DEFAULT_ATM_BAND = 0.05
@@ -231,7 +230,7 @@ class PlotManager:
             self._clear_correlation_colorbar(ax)
 
             weights = None
-            if overlay_synth and peers:
+            if peers:
                 weights = self._weights_from_ui_or_matrix(
                     target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
                 )
@@ -282,7 +281,7 @@ class PlotManager:
             self._clear_correlation_colorbar(ax)
 
             weights = None
-            if overlay_synth and peers:
+            if peers:
                 weights = self._weights_from_ui_or_matrix(
                     target,
                     peers,
@@ -495,7 +494,7 @@ class PlotManager:
             bands=bands,
             moneyness_grid=(0.7, 1.3, 121),
             show_points=True,
-            enable_svi_toggles=(model == "svi"),  # clickable legend toggles in SVI
+            enable_toggles=True,  # clickable legend toggles for all models
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
 
@@ -809,7 +808,7 @@ class PlotManager:
             moneyness_grid=(0.7, 1.3, 121),
             show_points=True,
             label=f"{target} {model.upper()}",
-            enable_svi_toggles=(model == "svi"),
+            enable_toggles=True,
         )
 
         if fit_map:
@@ -1019,7 +1018,9 @@ class PlotManager:
             x_units=x_units,
             connect=True,
             smooth=True,
-            show_ci=bool(ci and ci > 0 and {"atm_lo", "atm_hi"}.issubset(atm_curve.columns)),
+
+            show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
+ 
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
 

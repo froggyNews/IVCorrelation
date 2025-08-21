@@ -751,8 +751,9 @@ def prepare_smile_data(
 ) -> Dict[str, Any]:
     """Precompute smile data and fitted parameters for plotting.
 
-    Returns a dictionary with raw quote arrays, optional prebuilt surfaces,
-    peer slices, and a ``fit_info`` mapping suitable for parameter summaries.
+    Returns a dictionary with raw quote arrays, prebuilt target and synthetic
+    surfaces when peers are supplied, peer slices, and a ``fit_info`` mapping
+    suitable for parameter summaries.
     """
     peers = list(peers or [])
 
@@ -888,7 +889,7 @@ def prepare_smile_data(
 
     tgt_surface = None
     syn_surface = None
-    if overlay_synth and peers:
+    if peers:
         try:
             tickers = list({target, *peers})
             surfaces = build_surface_grids(
@@ -899,8 +900,8 @@ def prepare_smile_data(
             if target in surfaces and asof in surfaces[target]:
                 tgt_surface = surfaces[target][asof]
             peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces}
-            if weights:
-                w = dict(weights)
+            if peer_surfaces:
+                w = {p: float(weights.get(p, 1.0)) for p in peer_surfaces} if weights else {p: 1.0 for p in peer_surfaces}
                 synth_by_date = combine_surfaces(peer_surfaces, w)
                 syn_surface = synth_by_date.get(asof)
         except Exception:
@@ -944,11 +945,11 @@ def prepare_term_data(
     atm_band: float = 0.05,
     max_expiries: int = 6,
 ) -> Dict[str, Any]:
-    """Precompute ATM term structure and optional synthetic overlay.
+    """Precompute ATM term structure and synthetic overlay data.
 
-    Returns a dictionary with ``atm_curve`` and (if requested) ``synth_curve``
-    DataFrames ready for plotting, plus ``synth_bands`` when a synthetic
-    overlay is requested.
+    Returns a dictionary with ``atm_curve`` and ``synth_curve`` DataFrames ready
+    for plotting. When peers are supplied, the synthetic curve is always
+    constructed, regardless of whether it will be rendered.
     """
 
     df_all = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
@@ -967,8 +968,8 @@ def prepare_term_data(
     )
 
     synth_curve = None
-    synth_bands = None
-    if overlay_synth and peers:
+
+    if peers:
         w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
         if w.sum() <= 0:
             w = pd.Series({p: 1.0 for p in peers}, dtype=float)
