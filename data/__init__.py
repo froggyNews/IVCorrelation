@@ -25,6 +25,12 @@ from .feature_engineering import (
     build_iv_panel,
     finalize_dataset,
 )
+from data_loader_coordinator import (
+    DataCoordinator,
+    load_cores_with_auto_fetch,
+    validate_cores,
+)
+
 
 __all__ = [
     'save_ticker_group', 'load_ticker_group', 'list_ticker_groups',
@@ -41,4 +47,8 @@ __all__ = [
     'add_all_features',
     'build_iv_panel',
     'finalize_dataset',
+    'DataCoordinator',
+    'load_cores_with_auto_fetch',
+    'validate_cores',
+
 ]
