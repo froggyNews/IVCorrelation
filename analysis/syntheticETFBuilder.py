@@ -303,7 +303,7 @@ def build_synthetic_iv_by_rank(
 ) -> pd.DataFrame:
     """Combine peer ATM vols by expiry rank into synthetic curve for one date."""
     from analysis.analysis_pipeline import get_smile_slice
-    from analysis.correlation_utils import compute_atm_corr_pillar_free
+    from analysis.beta_builder.correlation_utils import compute_atm_corr_pillar_free
 
     weights = {k.upper(): float(v) for k, v in dict(weights).items()}
     total = sum(max(0.0, w) for w in weights.values())

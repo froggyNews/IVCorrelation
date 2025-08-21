@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from analysis.cache_io import compute_or_load
+from data.cache_io import compute_or_load
 from analysis.analysis_pipeline import prepare_smile_data, get_smile_slice
 from display.plotting.correlation_detail_plot import _corr_by_expiry_rank
 from analysis.spillover.vol_spillover import run_spillover, load_iv_data
