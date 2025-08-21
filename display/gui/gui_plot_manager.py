@@ -254,8 +254,6 @@ class PlotManager:
                 "target": target,
                 "asof": pd.to_datetime(asof).floor("min").isoformat(),
                 "T_days": float(T_days),
-                "model": model,
-                "ci": ci,
                 "overlay_synth": overlay_synth,
                 "peers": sorted(peers),
                 "weights": weights.to_dict() if weights is not None else None,
@@ -867,13 +865,16 @@ class PlotManager:
         fit_map = self._smile_ctx.get("fit_by_expiry", {})
         pre = fit_map.get(T0)
         pre_params = pre.get(model) if isinstance(pre, dict) else None
-        if not pre_params:
+        if pre_params is None:
             if model == "svi":
                 pre_params = fit_svi_slice(S, K, T0, IV)
             elif model == "sabr":
                 pre_params = fit_sabr_slice(S, K, T0, IV)
             else:
                 pre_params = fit_tps_slice(S, K, T0, IV)
+            if isinstance(pre, dict):
+                pre[model] = pre_params
+                fit_map[T0] = pre
         bands = None
         if ci and ci > 0:
             m_grid = np.linspace(0.7, 1.3, 121)
