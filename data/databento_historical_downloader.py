@@ -10,8 +10,10 @@ from dotenv import load_dotenv
 from scipy.stats import norm
 from scipy.optimize import brentq
 
+from .db_utils import DB_PATH, get_conn as _get_conn
+
 # Default if caller doesn't pass a db_path
-DEFAULT_DB_PATH = Path(os.getenv("IV_DB_PATH", "data/iv_data_1m.db"))
+DEFAULT_DB_PATH = Path(DB_PATH)
 
 
 def _calculate_iv(price: float, S: float, K: float, T: float, cp: str, r: float) -> float:
@@ -54,15 +56,6 @@ def _safe_table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
 # -----------------------------
 # SQLite helpers
 # -----------------------------
-def get_conn(db_path: Path) -> sqlite3.Connection:
-    if not Path(db_path).exists():
-        raise FileNotFoundError(f"Database path not found: {db_path}")
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.execute("PRAGMA foreign_keys=ON;")
-    return conn
-
 
 def migrate_schema(conn: sqlite3.Connection) -> None:
     required = ["opra_1m", "equity_1m", "equity_1h", "merged_1m", "processed_merged_1m", "atm_slices_1m"]
@@ -272,7 +265,9 @@ def preprocess_and_store(
 def fetch_and_save(API_KEY: str, ticker: str, start: pd.Timestamp, end: pd.Timestamp,
                    db_path: Path | str | None = None, force: bool = False) -> Path:
     dbp = Path(db_path) if db_path else DEFAULT_DB_PATH
-    conn = get_conn(dbp)
+    conn = _get_conn(str(dbp))
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
     migrate_schema(conn)
     preprocess_and_store(API_KEY, start, end, ticker, conn, force=force)
     conn.close()
