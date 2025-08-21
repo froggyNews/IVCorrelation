@@ -31,15 +31,19 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
 from analysis.compute_or_load import compute_or_load
 
+from analysis.cache_io import  WarmupWorker
+
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from volModel.polyFit import fit_tps_slice
 from analysis.confidence_bands import (
+    generate_term_structure_confidence_bands,
     svi_confidence_bands,
     sabr_confidence_bands,
     tps_confidence_bands,
+    
 )
 
 DEFAULT_ATM_BAND = 0.05
@@ -119,6 +123,9 @@ class PlotManager:
 
         # cache for surface grids: key is (tickers tuple, max_expiries)
         self._surface_cache: dict[tuple[tuple[str, ...], int], dict] = {}
+
+        # background cache warmer
+        self._warm = WarmupWorker("data/calculations.db")
 
     # -------------------- canvas wiring --------------------
     def attach_canvas(self, canvas):
@@ -276,6 +283,7 @@ class PlotManager:
                     pass
 
             data = compute_or_load("smile", payload, _builder)
+
             if not data:
                 ax.set_title("No data")
                 return
@@ -1072,12 +1080,12 @@ class PlotManager:
  
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
-
         synth_bands = data.get("synth_bands")
         if synth_bands is not None:
             bands = synth_bands
             if x_units != "days":
-                bands = Bands(
+                # Convert x-axis from days to years for the bands
+                bands = type(synth_bands)(
                     x=synth_bands.x / 365.25,
                     mean=synth_bands.mean,
                     lo=synth_bands.lo,
@@ -1088,9 +1096,7 @@ class PlotManager:
             # restore axis labels overridden by synthetic plot
             ax.set_xlabel("Time to Expiry (days)" if x_units == "days" else "Time to Expiry (years)")
             ax.set_ylabel("Implied Vol (ATM)")
-            title += f" - Synthetic Overlay (N={len(synth_bands.x)})"
-        ax.set_title(title)
-
+            title += f" - Synthetic Overlay (N={len(bands.x)})"
 
     # -------------------- correlation matrix --------------------
     def _plot_corr_matrix(
