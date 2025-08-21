@@ -30,14 +30,26 @@ def load_iv_data(path: str, use_raw: bool = False) -> pd.DataFrame:
     return df.sort_values(["ticker", "date"])
 
 
-def detect_events(df: pd.DataFrame, threshold: float = 0.10) -> pd.DataFrame:
+def detect_events(df: pd.DataFrame, threshold: float = 0.10, iv_col: str = "atm_iv") -> pd.DataFrame:
     """Flag dates where a ticker's IV changes by ``threshold`` or more.
 
-    Returns a DataFrame with columns ``ticker``, ``date``, ``rel_change`` and
-    ``sign`` (1 or -1).
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Table containing at least ``date``, ``ticker`` and the IV column.
+    threshold : float, default 0.10
+        Minimum absolute percentage change in IV to flag an event.
+    iv_col : str, default "atm_iv"
+        Column in ``df`` containing the implied volatility levels.
+
+    Returns
+    -------
+    pd.DataFrame
+        Table with columns ``ticker``, ``date``, ``rel_change`` and ``sign``
+        (1 or -1).
     """
     df = df.sort_values(["ticker", "date"]).copy()
-    df["rel_change"] = df.groupby("ticker")["atm_iv"].pct_change()
+    df["rel_change"] = df.groupby("ticker")[iv_col].pct_change()
     events = df.loc[df["rel_change"].abs() >= threshold,
                     ["ticker", "date", "rel_change"]].copy()
     events["sign"] = np.sign(events["rel_change"]).astype(int)
@@ -134,7 +146,8 @@ def compute_weights_and_regression(
 def compute_responses(df: pd.DataFrame,
                       events: pd.DataFrame,
                       peers: Dict[str, List[str]],
-                      horizons: Iterable[int] = (1, 3, 5)) -> pd.DataFrame:
+                      horizons: Iterable[int] = (1, 3, 5),
+                      iv_col: str = "atm_iv") -> pd.DataFrame:
     """Compute peer responses for each event over given horizons.
 
     Response for peer j at horizon ``h`` is the percentage change in j's IV
@@ -143,6 +156,7 @@ def compute_responses(df: pd.DataFrame,
     day itself.  The previous implementation incorrectly used ``t0+h-1`` which
     shifted all horizons one day earlier and was incompatible with other parts
     of the program that expect horizons to be offset from the event date.
+    ``iv_col`` allows selecting a different IV column (e.g. raw vs synthetic).
     """
     panel = df.set_index(["date", "ticker"]).sort_index()
     dates = panel.index.get_level_values(0).unique()
@@ -157,7 +171,7 @@ def compute_responses(df: pd.DataFrame,
         for j in peers.get(i, []):
             if (t_minus1, j) not in panel.index:
                 continue
-            base = panel.loc[(t_minus1, j), "atm_iv"]
+            base = panel.loc[(t_minus1, j), iv_col]
             for h in horizons:
                 # Use t0 + h to express the response h days after the event.
                 idx_h = idx0 + h
@@ -166,7 +180,7 @@ def compute_responses(df: pd.DataFrame,
                 d_h = dates[idx_h]
                 if (d_h, j) not in panel.index:
                     continue
-                resp = panel.loc[(d_h, j), "atm_iv"]
+                resp = panel.loc[(d_h, j), iv_col]
                 pct = (resp - base) / base
                 rows.append({
                     "ticker": i,
@@ -217,6 +231,7 @@ def run_spillover(
     horizons: Iterable[int] = (1, 3, 5),
     events_path: str = "spill_events.parquet",
     summary_path: str = "spill_summary.parquet",
+    iv_col: str = "atm_iv",
 ) -> Dict[str, pd.DataFrame]:
     """High level helper that runs the full spillover analysis.
 
@@ -244,10 +259,10 @@ def run_spillover(
     if tickers is not None:
         tickers = [t.upper() for t in tickers]
         df = df[df["ticker"].str.upper().isin(tickers)]
-    events = detect_events(df, threshold=threshold)
+    events = detect_events(df, threshold=threshold, iv_col=iv_col)
     tick_set = events["ticker"].unique()
     peers = {t: _load_peers_for_target(t) for t in tick_set}
-    responses = compute_responses(df, events, peers, horizons=horizons)
+    responses = compute_responses(df, events, peers, horizons=horizons, iv_col=iv_col)
     summary = summarise(responses, threshold=threshold)
     persist_events(events, events_path)
     persist_summary(summary, summary_path)

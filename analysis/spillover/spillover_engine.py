@@ -142,25 +142,27 @@ def compute_spillovers(df: pd.DataFrame,
     response_iv_col lets you choose 'atm_iv' (synthetic) vs a raw/bumpy column.
     """
     iv_resp = response_iv_col or iv_col
-    panel = df.set_index(["date","ticker"]).sort_index()
+    panel = df.set_index(["date", "ticker"]).sort_index()
+    dates = panel.index.get_level_values(0).unique()
 
     rows = []
     for _, e in events.iterrows():
-        t0 = e["date"]; i = e["ticker"]
+        t0 = e["date"]
+        i = e["ticker"]
+        idx0 = dates.searchsorted(t0)
+        if idx0 == 0:
+            continue  # need t-1 for a baseline
+        t_minus1 = dates[idx0 - 1]
         j_peers = peers.get(i, [])
-        # base levels at t0-1 (or earliest available)
-        t_minus1 = panel.loc[: (t0,), :].index.get_level_values(0).max()
         for j in j_peers:
-            try:
-                base = panel.loc[(t_minus1, j), iv_resp]
-            except KeyError:
+            if (t_minus1, j) not in panel.index:
                 continue
+            base = panel.loc[(t_minus1, j), iv_resp]
             for h in horizons:
-                t_h = panel.index.get_level_values(0).unique().searchsorted(t0) + h
-                dates = panel.index.get_level_values(0).unique()
-                if t_h >= len(dates):
+                idx_h = idx0 + h
+                if idx_h >= len(dates):
                     continue
-                d_h = dates[t_h]
+                d_h = dates[idx_h]
                 if (d_h, j) not in panel.index:
                     continue
                 resp = panel.loc[(d_h, j), iv_resp] - base
@@ -171,7 +173,7 @@ def compute_spillovers(df: pd.DataFrame,
                     "h": h,
                     "trigger_dIV": e["dIV_trigger"],
                     "trigger_z": e["z_trigger"],
-                    "resp_dIV": resp
+                    "resp_dIV": resp,
                 })
     return pd.DataFrame(rows)
 
