@@ -23,6 +23,13 @@ import logging
 import numpy as np
 import pandas as pd
 
+from .utils import impute_col_median as _impute_col_median, zscore_cols as _zscore_cols
+from .correlation import corr_weights_from_matrix
+from .cosine import cosine_similarity_weights_from_matrix
+from .pca import pca_regress_weights
+from .open_interest import open_interest_weights
+from .equal import equal_weights
+
 # Delayed imports to avoid circular dependencies
 # from analysis.analysis_pipeline import get_smile_slice, available_dates
 from analysis.pillars import build_atm_matrix, DEFAULT_PILLARS_DAYS
@@ -47,7 +54,7 @@ class WeightMethod(Enum):
     PCA = "pca"
     COSINE = "cosine"
     EQUAL = "equal"
-    OPEN_INTEREST = "oi"   # implemented via _open_interest_weights
+    OPEN_INTEREST = "oi"
 
 class FeatureSet(Enum):
     ATM = "iv_atm"                    # options ATM features
@@ -120,20 +127,6 @@ class WeightConfig:
 # -----------------------------------------------------------------------------
 # Centralized feature builders (reusable; no circular imports)
 # -----------------------------------------------------------------------------
-def _impute_col_median(X: np.ndarray) -> np.ndarray:
-    X = np.asarray(X, float).copy()
-    med = np.nanmedian(X, axis=0, keepdims=True)
-    mask = ~np.isfinite(X)
-    if mask.any():
-        X[mask] = np.broadcast_to(med, X.shape)[mask]
-    return X
-
-def _zscore_cols(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    mu = np.nanmean(X, axis=0, keepdims=True)
-    sd = np.nanstd(X, axis=0, ddof=1, keepdims=True)
-    sd = np.where(~np.isfinite(sd) | (sd <= 0), 1.0, sd)
-    return (X - mu) / sd, mu, sd
-
 
 def atm_feature_matrix(
     tickers: Iterable[str],
@@ -290,87 +283,6 @@ def underlying_returns_matrix(tickers: Iterable[str]) -> pd.DataFrame:
 
 
 # -----------------------------------------------------------------------------
-# Public similarity/weight utilities (reused by beta_builder)
-# -----------------------------------------------------------------------------
-def cosine_similarity_weights_from_matrix(
-    feature_df: pd.DataFrame,
-    target: str,
-    peers: list[str],
-    *,
-    clip_negative: bool = True,
-    power: float = 1.0,
-) -> pd.Series:
-    target = target.upper()
-    peers = [p.upper() for p in peers]
-    if target not in feature_df.index:
-        raise ValueError(f"target {target} not in feature matrix")
-
-    df = feature_df.apply(pd.to_numeric, errors="coerce")
-    X = _impute_col_median(df.to_numpy(float))
-    tickers = list(df.index)
-    t_idx = tickers.index(target)
-    t_vec = X[t_idx]
-    t_norm = float(np.linalg.norm(t_vec))
-
-    sims: dict[str, float] = {}
-    for i, peer in enumerate(tickers):
-        if peer == target or peer not in peers:
-            continue
-        p_vec = X[i]
-        denom = t_norm * float(np.linalg.norm(p_vec))
-        sims[peer] = float(np.dot(t_vec, p_vec) / denom) if denom > 0 else 0.0
-
-    ser = pd.Series(sims, dtype=float)
-    if clip_negative:
-        ser = ser.clip(lower=0.0)
-    if power is not None and float(power) != 1.0:
-        ser = ser.pow(float(power))
-    total = float(ser.sum())
-    if not np.isfinite(total) or total <= 0:
-        raise ValueError("cosine similarity weights sum to zero")
-    return (ser / total).reindex(peers).fillna(0.0)
-
-
-def corr_weights_from_matrix(
-    feature_df: pd.DataFrame,
-    target: str,
-    peers: list[str],
-    *,
-    clip_negative: bool = True,
-    power: float = 1.0,
-) -> pd.Series:
-    target = target.upper()
-    peers = [p.upper() for p in peers]
-    corr_df = feature_df.T.corr()
-    s = corr_df.reindex(index=peers, columns=[target]).iloc[:, 0]
-    s = s.apply(pd.to_numeric, errors="coerce")
-    if clip_negative:
-        s = s.clip(lower=0.0)
-    if power is not None and float(power) != 1.0:
-        s = s.pow(float(power))
-    total = float(s.sum())
-    if not np.isfinite(total) or total <= 0:
-        raise ValueError("correlation weights sum to zero")
-    return (s / total).reindex(peers).fillna(0.0)
-
-
-def pca_regress_weights(
-    X_peers: np.ndarray, y_target: np.ndarray, k: Optional[int] = None, *, nonneg: bool = True
-) -> np.ndarray:
-    """min_w || Xᵀ w − y || via SVD truncation."""
-    Z, _, _ = _zscore_cols(_impute_col_median(X_peers))
-    U, s, Vt = np.linalg.svd(Z, full_matrices=False)
-    if k is None or k <= 0 or k > len(s):
-        k = len(s)
-    Uk, sk, Vk = U[:, :k], s[:k], Vt[:k, :].T
-    w = Uk @ ((y_target @ Vk) / np.where(sk > 1e-12, sk, 1.0))
-    if nonneg:
-        w = np.clip(w, 0.0, None)
-    ssum = float(w.sum())
-    return w / ssum if ssum > 0 else np.full_like(w, 1.0 / max(len(w), 1))
-
-
-# -----------------------------------------------------------------------------
 # Engine
 # -----------------------------------------------------------------------------
 class UnifiedWeightComputer:
@@ -446,12 +358,11 @@ class UnifiedWeightComputer:
 
         # Equal weights
         if config.method == WeightMethod.EQUAL:
-            w = 1.0 / len(peers_list)
-            return pd.Series(w, index=peers_list, dtype=float)
+            return equal_weights(peers_list)
 
         # Open interest method
         if config.method == WeightMethod.OPEN_INTEREST:
-            return self._open_interest_weights(peers_list, config.asof)
+            return open_interest_weights(peers_list, config.asof)
 
         # Pick as-of only for options features
         asof = None
@@ -477,11 +388,11 @@ class UnifiedWeightComputer:
                 feature_df = self._build_feature_matrix(target, peers_list, None, ul_cfg)
                 if feature_df is None or feature_df.empty:
                     logger.warning("Underlying returns also unavailable; using equal weights")
-                    return self._fallback_equal(peers_list)
+                    return equal_weights(peers_list)
                 config = ul_cfg
             else:
                 logger.warning("Underlying return features empty; using equal weights")
-                return self._fallback_equal(peers_list)
+                return equal_weights(peers_list)
 
         # Dispatch by method
         try:
@@ -511,7 +422,7 @@ class UnifiedWeightComputer:
             raise ValueError(f"Unsupported method: {config.method}")
         except Exception as e:
             logger.warning("Weight computation failed (%s); using equal weights", e)
-            return self._fallback_equal(peers_list)
+            return equal_weights(peers_list)
 
     # ---- feature assembly ----
     def _build_feature_matrix(
@@ -563,43 +474,6 @@ class UnifiedWeightComputer:
             return df
         return None
 
-    # ---- OI method ----
-    def _open_interest_weights(self, peers_list: list[str], asof: Optional[str]) -> pd.Series:
-        from data.db_utils import get_conn
-        if not peers_list:
-            return pd.Series(dtype=float)
-        conn = get_conn()
-        # choose date if missing
-        if asof is None:
-            row = conn.execute(
-                "SELECT MAX(asof_date) FROM options_quotes WHERE ticker IN ({})".format(
-                    ",".join("?" * len(peers_list))
-                ),
-                peers_list,
-            ).fetchone()
-            asof = row[0] if row and row[0] else None
-            if asof is None:
-                return self._fallback_equal(peers_list)
-
-        q = (
-            "SELECT ticker, SUM(open_interest) AS oi FROM options_quotes "
-            "WHERE asof_date = ? AND ticker IN ({}) GROUP BY ticker"
-        ).format(",".join("?" * len(peers_list)))
-        df = pd.read_sql_query(q, conn, params=[asof] + peers_list)
-        if df.empty:
-            return self._fallback_equal(peers_list)
-        s = pd.Series(df["oi"].values, index=df["ticker"].str.upper())
-        total = float(s.sum())
-        if not np.isfinite(total) or total <= 0:
-            return self._fallback_equal(peers_list)
-        return (s / total).reindex(peers_list).fillna(0.0)
-
-    @staticmethod
-    def _fallback_equal(peers_list: list[str]) -> pd.Series:
-        if not peers_list:
-            return pd.Series(dtype=float)
-        w = 1.0 / len(peers_list)
-        return pd.Series(w, index=peers_list, dtype=float)
 
 
 # Global instance
@@ -653,3 +527,18 @@ def compute_peer_weights_unified(
         mny_bins=tuple(mny_bins),
         max_expiries=max_expiries,
     )
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Compute peer weights")
+    parser.add_argument("target", help="Target ticker")
+    parser.add_argument("peers", nargs="+", help="Peer tickers")
+    parser.add_argument("--mode", default="corr_iv_atm", help="Weight mode, e.g. corr_iv_atm")
+    parser.add_argument("--asof", default=None, help="As-of date for options features")
+    args = parser.parse_args()
+
+    cfg = WeightConfig.from_legacy_mode(args.mode, asof=args.asof)
+    weights = compute_unified_weights(args.target, args.peers, cfg)
+    print(weights.to_string())
