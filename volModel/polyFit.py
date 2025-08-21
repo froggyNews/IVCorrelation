@@ -277,5 +277,81 @@ def _finite_diff(f: Callable[[float], float], x0: float, h: float = 1e-3) -> Tup
     return float(first), float(second)
 
 
+def fit_tps_slice(S: float, K: np.ndarray, T: float, iv: np.ndarray,
+                 weights: Optional[np.ndarray] = None,
+                 smoothing: float = 1e-2) -> Dict[str, float]:
+    """
+    Fit TPS to a single expiry slice for smile plotting.
+    
+    This is a wrapper around fit_tps that matches the interface used by
+    SVI and SABR slice fitting functions.
+    
+    Parameters:
+    -----------
+    S : float
+        Spot price (used for log-moneyness calculation)
+    K : np.ndarray
+        Strike prices
+    T : float
+        Time to expiry (not used in TPS but kept for interface compatibility)
+    iv : np.ndarray
+        Implied volatility values
+    weights : Optional[np.ndarray]
+        Optional weights for fitting
+    smoothing : float
+        Smoothing parameter for TPS
+        
+    Returns:
+    --------
+    Dict with TPS parameters and interpolator function
+    """
+    # Convert strikes to log-moneyness
+    K = np.asarray(K, dtype=float)
+    k = np.log(K / S)
+    
+    # Fit TPS using existing function
+    result = fit_tps(k, iv, weights, smoothing)
+    
+    # Add the original spot price for use in prediction
+    result["S"] = float(S)
+    result["T"] = float(T)
+    
+    return result
+
+
+def tps_smile_iv(S: float, K_grid: np.ndarray, T: float, fit_params: Dict) -> np.ndarray:
+    """
+    Evaluate TPS model at given strikes to generate smile curve.
+    
+    Parameters:
+    -----------
+    S : float
+        Spot price
+    K_grid : np.ndarray
+        Strike prices where to evaluate the model
+    T : float
+        Time to expiry (not used but kept for interface compatibility)
+    fit_params : Dict
+        Parameters from fit_tps_slice containing the interpolator
+        
+    Returns:
+    --------
+    np.ndarray
+        Implied volatility values at the grid points
+    """
+    if "interpolator" not in fit_params:
+        # Fallback: return constant ATM vol if interpolator not available
+        atm_vol = fit_params.get("atm_vol", 0.2)
+        return np.full_like(K_grid, atm_vol, dtype=float)
+    
+    # Convert strikes to log-moneyness
+    K_grid = np.asarray(K_grid, dtype=float)
+    k_grid = np.log(K_grid / S)
+    
+    # Use the interpolator from fit_params
+    interpolator = fit_params["interpolator"]
+    iv_grid = interpolator(k_grid)
+    
+    return np.asarray(iv_grid, dtype=float)
 # Backward compatibility aliases
 _local_poly_fit_atm = fit_simple_poly
