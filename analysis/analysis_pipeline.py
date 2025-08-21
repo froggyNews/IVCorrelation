@@ -31,6 +31,7 @@ from data.db_utils import get_conn
 from data.interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 from data.data_pipeline import enrich_quotes
 from volModel.volModel import VolModel
+from volModel.termFit import fit_term_structure, term_structure_iv
 
 from .syntheticETFBuilder import (
     build_surface_grids,
@@ -967,7 +968,19 @@ def prepare_term_data(
         ci_level=ci,
     )
 
+    # Precompute polynomial term-structure fit for plotting
+    fit_x = fit_y = None
+    try:
+        x = atm_curve["T"].to_numpy(float)
+        y = atm_curve["atm_vol"].to_numpy(float)
+        if len(x) > 2:
+            params = fit_term_structure(x, y, degree=2)
+            fit_x = np.linspace(x.min(), x.max(), 200)
+            fit_y = term_structure_iv(fit_x, params)
+    except Exception:
+        pass
     synth_curve = None
+    synth_bands = None
 
     if peers:
         w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
@@ -1040,7 +1053,13 @@ def prepare_term_data(
                         }
                     )
 
-    return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
+    return {
+        "atm_curve": atm_curve,
+        "synth_curve": synth_curve,
+        "synth_bands": synth_bands,
+        "fit_x": fit_x,
+        "fit_y": fit_y,
+    }
 
 
 def fit_smile_for(
