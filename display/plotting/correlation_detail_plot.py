@@ -16,6 +16,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from analysis.unified_weights import compute_unified_weights
+from analysis.compute_or_load import compute_or_load
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,34 @@ def _corr_by_expiry_rank(
     return atm_rank_df, corr_df
 
 
+def _maybe_compute_weights(
+    target: Optional[str],
+    peers: Optional[Iterable[str]],
+    *,
+    asof: str,
+    weight_mode: str,
+    weight_power: float,
+    clip_negative: bool,
+    **weight_config,
+) -> Optional[pd.Series]:
+    """Compute unified weights if ``target`` and ``peers`` are provided."""
+    if not target or not peers:
+        return None
+    peers_list = list(peers)
+    try:
+        return compute_unified_weights(
+            target=target,
+            peers=peers_list,
+            mode=weight_mode,
+            asof=asof,
+            clip_negative=clip_negative,
+            power=weight_power,
+            **weight_config,
+        )
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Correlation: compute and plot (optionally show weights)
 # ---------------------------------------------------------------------------
@@ -135,29 +164,33 @@ def compute_and_plot_correlation(
     weight system.
     """
     tickers = [t.upper() for t in tickers]
-    atm_df, corr_df = _corr_by_expiry_rank(
-        get_slice=get_smile_slice,
-        tickers=tickers,
-        asof=asof,
-        max_expiries=max_expiries,
-        atm_band=atm_band,
-    )
+    payload = {
+        "tickers": sorted(tickers),
+        "asof": pd.to_datetime(asof).floor("min").isoformat(),
+        "atm_band": atm_band,
+        "max_expiries": max_expiries,
+    }
 
-    weights: Optional[pd.Series] = None
-    if target and peers:
-        peers_list = list(peers)
-        try:
-            weights = compute_unified_weights(
-                target=target,
-                peers=peers_list,
-                mode=weight_mode,
-                asof=asof,
-                clip_negative=clip_negative,
-                power=weight_power,
-                **weight_config,
-            )
-        except Exception:
-            weights = None
+    def _builder() -> Tuple[pd.DataFrame, pd.DataFrame]:
+        return _corr_by_expiry_rank(
+            get_slice=get_smile_slice,
+            tickers=tickers,
+            asof=asof,
+            max_expiries=max_expiries,
+            atm_band=atm_band,
+        )
+
+    atm_df, corr_df = compute_or_load("corr", payload, _builder)
+
+    weights = _maybe_compute_weights(
+        target=target,
+        peers=peers,
+        asof=asof,
+        weight_mode=weight_mode,
+        weight_power=weight_power,
+        clip_negative=clip_negative,
+        **weight_config,
+    )
 
     plot_correlation_details(ax, corr_df, weights=weights, show_values=show_values)
     return atm_df, corr_df, weights
