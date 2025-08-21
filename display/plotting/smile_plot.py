@@ -11,14 +11,10 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from project_logging.db_logger import get_db_logger, log_smile_plot_operation
 
-from volModel.sviFit import fit_svi_slice, svi_smile_iv
-from volModel.sabrFit import fit_sabr_slice, sabr_smile_iv
-from .confidence_bands import (
-    svi_confidence_bands,
-    sabr_confidence_bands,
-    synthetic_etf_confidence_bands,
-    Bands,
-)
+from volModel.sviFit import svi_smile_iv
+from volModel.sabrFit import sabr_smile_iv
+from volModel.polyFit import tps_smile_iv
+from analysis.confidence_bands import Bands
 from display.plotting.anim_utils import  add_legend_toggles
 
 ModelName = Literal["svi", "sabr", "tps"]
@@ -52,10 +48,9 @@ def fit_and_plot_smile(
     iv: np.ndarray,
     *,
     model: ModelName = "svi",
-    params: Optional[Dict] = None,
+    params: Dict,
+    bands: Optional[Bands] = None,
     moneyness_grid: Tuple[float, float, int] = (0.8, 1.2, 121),
-    ci_level: float = 0.68,         # confidence level (0 disables CI)
-    n_boot: int = 200,              # used only if ci_level > 0
     show_points: bool = True,
     beta: float = 0.5,              # SABR beta
     label: Optional[str] = None,
@@ -113,36 +108,16 @@ def fit_and_plot_smile(
             series_map["Observed Points"] = [pts]
 
     # ---- fit + optional CI
-    bands: Optional[Bands] = None
-    fit_params = params or {}
+    if not params:
+        raise ValueError("fit parameters must be provided")
+    fit_params = params
     if model == "svi":
-        if not fit_params:
-            fit_params = fit_svi_slice(S, K, T, iv)
         y_fit = svi_smile_iv(S, K_grid, T, fit_params)
-        if ci_level and ci_level > 0:
-            bands = svi_confidence_bands(S, K, T, iv, K_grid, level=float(ci_level), n_boot=int(n_boot))
     elif model == "sabr":
-        if not fit_params:
-            fit_params = fit_sabr_slice(S, K, T, iv, beta=beta)
         y_fit = sabr_smile_iv(S, K_grid, T, fit_params)
-        if ci_level and ci_level > 0:
-            bands = sabr_confidence_bands(S, K, T, iv, K_grid, beta=beta, level=float(ci_level), n_boot=int(n_boot))
     else:
-        if model == "tps":
-            from volModel.polyFit import fit_tps_slice, tps_smile_iv
-            if not fit_params:
-                fit_params = fit_tps_slice(S, K, T, iv)
-            y_fit = tps_smile_iv(S, K_grid, T, fit_params)
-            if ci_level and ci_level > 0:
-                bands = _tps_bootstrap_bands(S, K, T, iv, K_grid, level=float(ci_level), n_boot=int(n_boot))
-        else:
-            # Unknown model - fallback to simple polynomial
-            from volModel.polyFit import fit_simple_poly
-            k = np.log(K / S)
-            fit_params = fit_simple_poly(k, iv)
-            # Linear interpolation for grid
-            k_grid = np.log(K_grid / S)
-            y_fit = np.interp(k_grid, k, iv)
+        y_fit = tps_smile_iv(S, K_grid, T, fit_params)
+
     # ---- fit line
     line_kwargs = dict(line_kwargs or {})
     line_kwargs.setdefault("lw", 2 if show_points else 1.6)
@@ -153,7 +128,7 @@ def fit_and_plot_smile(
 
     # ---- confidence bands
     if bands is not None:
-        ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(ci_level*100)}% CI")
+        ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(bands.level*100)}% CI")
         ci_mean = ax.plot(bands.x / S, bands.mean, lw=1, alpha=0.6, linestyle="--")
         if enable_toggles:
             series_map[f"{model.upper()} Confidence Interval"] = [ci_fill, *ci_mean]
@@ -192,50 +167,14 @@ def fit_and_plot_smile(
 
 def plot_synthetic_etf_smile(
     ax: plt.Axes,
-    surfaces: Dict[str, np.ndarray],
-    weights: Dict[str, float],
-    grid: np.ndarray,
+    bands: Bands,
     *,
-    level: float = 0.68,
-    n_boot: int = 200,
     label: Optional[str] = "Synthetic ETF",
     line_kwargs: Optional[Dict] = None,
 ) -> Bands:
-    """Plot synthetic ETF smile with confidence bands.
+    """Plot synthetic ETF smile using pre-computed confidence bands."""
 
-    Parameters
-    ----------
-    ax : plt.Axes
-        Axis to render on.
-    surfaces : dict
-        ``{ticker -> iv_array}`` aligned to ``grid``.
-    weights : dict
-        ``{ticker -> weight}`` for the synthetic combination.
-    grid : np.ndarray
-        Strike or moneyness grid.
-    level : float, optional
-        Confidence level for the bands.
-    n_boot : int, optional
-        Number of bootstrap samples.
-    label : str, optional
-        Legend label for the mean line.
-    line_kwargs : dict, optional
-        Extra kwargs for the mean line.
-
-    Returns
-    -------
-    Bands
-        Bootstrap bands for the synthetic smile.
-    """
-    bands = synthetic_etf_confidence_bands(
-        surfaces=surfaces,
-        weights=weights,
-        grid_K=np.asarray(grid, float),
-        level=level,
-        n_boot=n_boot,
-    )
-
-    ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(level*100)}%)")
+    ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(bands.level*100)}%)")
 
     line_kwargs = dict(line_kwargs or {})
     line_kwargs.setdefault("lw", 1.8)
@@ -243,7 +182,6 @@ def plot_synthetic_etf_smile(
 
     ax.set_xlabel("Strike / Moneyness")
     ax.set_ylabel("Implied Vol")
-    # Always refresh the legend so newly added synthetic curves appear
     handles, labels = ax.get_legend_handles_labels()
     if handles and labels:
         ax.legend(handles, labels, loc="best", fontsize=8)

@@ -17,6 +17,14 @@ try:
 except ImportError:
     _HAS_SCIPY = False
 
+__all__ = [
+    "fit_simple_poly",
+    "fit_tps",
+    "fit_poly",
+    "fit_tps_slice",
+    "tps_smile_iv",
+]
+
 
 def fit_simple_poly(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None,
                    band: float = 0.25) -> Dict[str, float]:
@@ -178,6 +186,81 @@ def fit_poly(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None
         return fit_tps(k, iv, weights, **kwargs)
     else:
         return fit_simple_poly(k, iv, weights, **kwargs)
+
+
+def fit_tps_slice(
+    S: float,
+    K: np.ndarray,
+    T: float,
+    iv: np.ndarray,
+    weights: Optional[np.ndarray] = None,
+    smoothing: float = 1e-2,
+) -> Dict[str, float]:
+    """Fit a TPS-based smile slice in strike space.
+
+    Parameters
+    ----------
+    S : float
+        Spot price used to normalize strikes.
+    K : np.ndarray
+        Strike prices for the slice.
+    T : float
+        Expiry in years (unused but kept for API compatibility).
+    iv : np.ndarray
+        Observed implied volatilities.
+    weights : Optional[np.ndarray]
+        Optional weights for the fit.
+    smoothing : float
+        Smoothing parameter for TPS fitting.
+
+    Returns
+    -------
+    dict
+        Output of :func:`fit_poly` using the ``tps`` method.
+    """
+
+    K = np.asarray(K, dtype=float)
+    iv = np.asarray(iv, dtype=float)
+    k = np.log(np.clip(K, 1e-12, None) / float(S))
+    return fit_poly(k, iv, weights=weights, method="tps", smoothing=smoothing)
+
+
+def tps_smile_iv(
+    S: float,
+    K: np.ndarray,
+    T: float,
+    params: Dict[str, float],
+) -> np.ndarray:
+    """Evaluate a TPS/polynomial smile on strike grid ``K``.
+
+    Parameters
+    ----------
+    S : float
+        Spot price for log-moneyness conversion.
+    K : np.ndarray
+        Strike prices to evaluate.
+    T : float
+        Expiry in years (unused, for API symmetry).
+    params : dict
+        Parameters returned by :func:`fit_tps_slice`.
+
+    Returns
+    -------
+    np.ndarray
+        Implied volatilities at the strikes ``K``.
+    """
+
+    K = np.asarray(K, dtype=float)
+    k = np.log(np.clip(K, 1e-12, None) / float(S))
+    if params.get("model") == "tps" and "interpolator" in params:
+        try:
+            return np.asarray(params["interpolator"](k), dtype=float)
+        except Exception:
+            pass
+    a = params.get("atm_vol", np.nan)
+    b = params.get("skew", 0.0)
+    c2 = params.get("curv", 0.0) / 2.0
+    return a + b * k + c2 * k * k
 
 
 def _finite_diff(f: Callable[[float], float], x0: float, h: float = 1e-3) -> Tuple[float, float]:

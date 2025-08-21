@@ -761,7 +761,7 @@ def prepare_smile_data(
         params_cache = params_cache[
             (params_cache["ticker"] == target)
             & (params_cache["asof_date"] == asof_ts)
-            & (params_cache["model"].isin(["svi", "sabr", "sens"]))
+            & (params_cache["model"].isin(["svi", "sabr", "tps", "sens"]))
         ]
     except Exception:
         params_cache = pd.DataFrame()
@@ -841,6 +841,16 @@ def prepare_smile_data(
             except Exception:
                 pass
 
+        tps_params = _cached("tps")
+        if not tps_params:
+            try:
+                from volModel.polyFit import fit_tps_slice
+                tps_params = fit_tps_slice(S, K, T_val, IV)
+                exp_str = str(expiry_dt) if expiry_dt is not None else None
+                append_params(asof, target, exp_str, "tps", tps_params, meta={"rmse": tps_params.get("rmse")})
+            except Exception:
+                tps_params = {}
+
         sens_params = _cached("sens")
         if not sens_params:
             dfe = df[mask].copy()
@@ -859,6 +869,7 @@ def prepare_smile_data(
         fit_by_expiry[T_val] = {
             "svi": svi_params,
             "sabr": sabr_params,
+            "tps": tps_params,
             "sens": sens_params,
             "expiry": str(expiry_dt) if expiry_dt is not None else None,
         }
@@ -870,6 +881,7 @@ def prepare_smile_data(
         "expiry": fit_entry.get("expiry"),
         "svi": fit_entry.get("svi", {}),
         "sabr": fit_entry.get("sabr", {}),
+        "tps": fit_entry.get("tps", {}),
         "sens": fit_entry.get("sens", {}),
     }
 
