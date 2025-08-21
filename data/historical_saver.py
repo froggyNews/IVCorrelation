@@ -25,12 +25,7 @@ def save_for_tickers(
         if enriched is None or enriched.empty:
             print(f"No enriched rows for {t}")
             continue
-
-        # ``pandas.DataFrame.to_dict`` silently drops duplicate columns which
-        # can happen if the enrichment pipeline produces overlapping keys.  The
-        # emitted warning is noisy and, more importantly, the resulting records
-        # may not contain the intended values.  Proactively drop duplicated
-        # columns so the database always receives a clean mapping.
+        
         if enriched.columns.duplicated().any():
             enriched = enriched.loc[:, ~enriched.columns.duplicated()].copy()
 
