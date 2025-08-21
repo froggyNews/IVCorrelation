@@ -3,7 +3,8 @@ import pandas as pd
 from typing import Iterable, List, Optional, Tuple
 from dataclasses import dataclass
 
-from analysis.pillars import build_atm_matrix, detect_available_pillars, EXTENDED_PILLARS_DAYS
+
+from ..pillars import build_atm_matrix, detect_available_pillars, EXTENDED_PILLARS_DAYS
 
 
 @dataclass

@@ -5,6 +5,7 @@ from typing import Iterable, Optional, Tuple, Dict, List, Union
 import numpy as np
 import pandas as pd
 
+
 # Centralized builders & utilities
 from .unified_weights import (
     atm_feature_matrix as uw_atm_feature_matrix,
@@ -20,6 +21,7 @@ from .pca import (
 from .utils import impute_col_median as _impute_col_median
 
 from analysis.pillars import DEFAULT_PILLARS_DAYS
+
 
 
 # =========================
@@ -164,7 +166,7 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     """
     from data.db_utils import get_conn
     from analysis.analysis_pipeline import get_smile_slice
-    from analysis.correlation_utils import compute_atm_corr_pillar_free
+    from analysis.beta_builder.correlation_utils import compute_atm_corr_pillar_free
 
     conn = get_conn()
     date_df = pd.read_sql_query(

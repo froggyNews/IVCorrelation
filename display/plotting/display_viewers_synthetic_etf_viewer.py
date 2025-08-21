@@ -8,8 +8,8 @@ Features:
 - Optional save to disk
 
 Usage:
-    from analysis.synthetic_etf import SyntheticETFBuilder, SyntheticETFConfig
-    from display.viewers.synthetic_etf_viewer import show_synthetic_etf
+    from analysis.analysis_synthetic_etf import SyntheticETFBuilder, SyntheticETFConfig
+    from display.plotting.display_viewers_synthetic_etf_viewer import show_synthetic_etf
 
     cfg = SyntheticETFConfig(target="SPY", peers=("QQQ","IWM"))
     builder = SyntheticETFBuilder(cfg)
@@ -25,7 +25,10 @@ import pandas as pd
 from typing import Optional
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  # needed for 3D plotting
 
-from analysis.analysis_synthetic_etf import SyntheticETFArtifacts
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - used only for type hints
+    from analysis.analysis_synthetic_etf import SyntheticETFArtifacts
 
 
 def _as_float_index(idx) -> list[float]:
@@ -39,7 +42,7 @@ def _as_float_index(idx) -> list[float]:
 
 
 def _extract_latest(
-    artifacts: SyntheticETFArtifacts, target: str
+    artifacts: 'SyntheticETFArtifacts', target: str
 ) -> tuple[
     Optional[pd.DataFrame],
     Optional[pd.DataFrame],
@@ -101,7 +104,7 @@ def _plot_surface(ax, df: pd.DataFrame, title: str, cmap="viridis"):
 
 
 def show_synthetic_etf(
-    artifacts: SyntheticETFArtifacts,
+    artifacts: 'SyntheticETFArtifacts',
     target: Optional[str] = None,
     save_path: Optional[str] = None,
     show_diff: bool = True,
