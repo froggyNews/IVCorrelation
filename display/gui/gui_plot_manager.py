@@ -337,6 +337,7 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "atm_band": atm_band,
                 "max_expiries": max_expiries,
+                "weight_mode": weight_mode,
             }
 
             def _builder():
@@ -1074,11 +1075,8 @@ class PlotManager:
             ax,
             atm_curve,
             x_units=x_units,
-            connect=True,
-            smooth=True,
-
+            fit=True,
             show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
- 
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
         synth_bands = data.get("synth_bands")
