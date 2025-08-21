@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from typing import Iterable, Optional
+import json
 
 import pandas as pd
 
@@ -100,6 +101,33 @@ def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
         )
     check_db_health(conn)
     return len(rows)
+
+
+def insert_features(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
+    """Insert engineered feature rows into feature_table.
+
+    Each row should at minimum contain ``ts_event`` and ``symbol``. All other
+    key/value pairs are stored as a JSON blob in the ``features`` column.
+    """
+    prepared = []
+    for r in rows:
+        ts = r.get("ts_event")
+        if hasattr(ts, "strftime"):
+            ts = ts.isoformat()
+        symbol = r.get("symbol")
+        payload = {k: v for k, v in r.items() if k not in ("ts_event", "symbol")}
+        prepared.append((ts, symbol, json.dumps(payload, default=float)))
+
+    if not prepared:
+        return 0
+
+    with conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO feature_table (ts_event, symbol, features) VALUES (?, ?, ?)",
+            prepared,
+        )
+    check_db_health(conn)
+    return len(prepared)
 
 
 def get_most_recent_date(conn: sqlite3.Connection, ticker: Optional[str] = None) -> Optional[str]:
