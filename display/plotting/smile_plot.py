@@ -7,10 +7,6 @@ import matplotlib.pyplot as plt
 import sys
 from pathlib import Path
 
-# Add project root to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from project_logging.db_logger import get_db_logger, log_smile_plot_operation
-
 from volModel.sviFit import svi_smile_iv
 from volModel.sabrFit import sabr_smile_iv
 from volModel.polyFit import tps_smile_iv
