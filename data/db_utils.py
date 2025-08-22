@@ -21,8 +21,25 @@ DB_PATH = os.getenv(
 
 
 def get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
+    """Return a SQLite connection with sensible defaults.
+
+    The GUI spins up background threads (for example when rendering animated
+    plots) that may access the same database connection.  The default
+    ``sqlite3`` behaviour restricts connections to the thread where they were
+    created which triggered ``ProgrammingError`` exceptions on those workers.
+
+    Setting ``check_same_thread=False`` relaxes this restriction so the
+    connection can be safely shared across threads.  All current uses of this
+    helper perform read-heavy operations, so the relaxed check is acceptable
+    here.
+    """
+
     path = db_path or DB_PATH
-    conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
+    conn = sqlite3.connect(
+        path,
+        detect_types=sqlite3.PARSE_DECLTYPES,
+        check_same_thread=False,
+    )
     conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
