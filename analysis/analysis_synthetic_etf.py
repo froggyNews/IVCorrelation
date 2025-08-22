@@ -23,7 +23,7 @@ NOTE: For call/put separated surfaces you would extend build_surface_grids
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Iterable, Dict, Optional, Tuple, Literal
+from typing import Iterable, Dict, Optional, Tuple
 import pandas as pd
 import numpy as np
 import os
@@ -45,7 +45,7 @@ from analysis.unified_weights import UnifiedWeightComputer, WeightConfig, Featur
 from analysis.pillars import compute_atm_by_expiry
 from analysis.syntheticETFBuilder import build_synthetic_iv_by_rank
 
-WeightMode = Literal["corr", "pca", "cosine", "equal", "custom"]
+WeightMode = str
 
 
 @dataclass
@@ -57,7 +57,7 @@ class SyntheticETFConfig:
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS
     tolerance_days: float = 7.0
     lookback: int = 60
-    weight_mode: WeightMode = "corr"
+    weight_mode: WeightMode = "corr_iv_atm"
     weight_power: float = 1.0
     clip_negative: bool = True
     use_atm_only_surface: bool = False
@@ -111,7 +111,7 @@ class SyntheticETFBuilder:
             w = pd.Series(custom_weights, dtype=float)
             return w / w.sum()
 
-        cfg = WeightConfig.from_legacy_mode(
+        cfg = WeightConfig.from_mode(
             self.cfg.weight_mode,
             tenors=self.cfg.tenors,
             mny_bins=self.cfg.mny_bins,
@@ -304,7 +304,7 @@ class SyntheticETFBuilder:
 def build_synthetic_etf(
     target: str,
     peers: Iterable[str],
-    weight_mode: WeightMode = "corr",
+    weight_mode: WeightMode = "corr_iv_atm",
     custom_weights: Optional[Dict[str, float]] = None,
     **kwargs,
 ) -> SyntheticETFArtifacts:

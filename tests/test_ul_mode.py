@@ -4,10 +4,10 @@
 from analysis.unified_weights import WeightConfig
 
 def test_ul_mode_conversion():
-    """Test the from_legacy_mode conversion for 'ul'."""
-    print("Testing 'ul' mode conversion...")
-    
-    config = WeightConfig.from_legacy_mode("ul")
+    """Test the canonical 'corr_ul' mode conversion."""
+    print("Testing 'corr_ul' mode conversion...")
+
+    config = WeightConfig.from_mode("corr_ul")
     print(f"Method: {config.method}")
     print(f"Feature set: {config.feature_set}")
     print(f"Expected: CORRELATION method with UNDERLYING_PX features")
@@ -19,7 +19,7 @@ def test_ul_mode_conversion():
     cfg = SyntheticETFConfig(
         target="SPY",
         peers=("QQQ", "IWM"),
-        weight_mode="ul"
+        weight_mode="corr_ul"
     )
     
     builder = SyntheticETFBuilder(cfg)

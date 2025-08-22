@@ -34,7 +34,7 @@ def test_ul_weight_mode_uses_correlation(monkeypatch):
     monkeypatch.setattr("data.db_utils.get_conn", lambda db_path=None: conn)
 
     weights = compute_unified_weights(
-        target="TGT", peers=["AAA", "BBB"], mode="ul", asof="2024-01-04"
+        target="TGT", peers=["AAA", "BBB"], mode="corr_ul", asof="2024-01-04"
     )
 
     df = pd.DataFrame(

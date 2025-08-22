@@ -25,7 +25,7 @@ def test_auto_update():
     
     print(f"\n3. Testing 'ul' weight mode with auto-update...")
     try:
-        config = WeightConfig.from_legacy_mode("ul")
+        config = WeightConfig.from_mode("corr_ul")
         computer = UnifiedWeightComputer()
         
         # This should trigger auto-update in underlying_returns_matrix

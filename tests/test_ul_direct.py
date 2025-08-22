@@ -7,8 +7,7 @@ from analysis.unified_weights import UnifiedWeightComputer, WeightConfig
 
 def test_ul_weight_mode():
     """Test that ul weight mode works correctly."""
-    # Test legacy mode conversion
-    config = WeightConfig.from_legacy_mode("ul")
+    config = WeightConfig.from_mode("corr_ul")
     
     # Test with real data
     computer = UnifiedWeightComputer()

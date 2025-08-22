@@ -275,29 +275,6 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     return out
 
 
-def iv_atm_betas_legacy(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS) -> Dict[int, pd.Series]:
-    """Legacy pillar-based IV ATM betas computation (kept for reference)."""
-    atm = load_atm()
-    if atm.empty:
-        return {}
-    piv = nearest_pillars(atm, pillars_days=pillar_days)
-    out: Dict[int, pd.Series] = {}
-    for d in sorted(set(piv["pillar_days"])):
-        sub = piv[piv["pillar_days"] == d]
-        wide = sub.pivot_table(index="asof_date", columns="ticker", values="iv", aggfunc="mean").sort_index()
-        wide = wide.sub(wide.mean(axis=1), axis=0)  # de-mean per day
-        bench = benchmark.upper()
-        if bench not in wide.columns:
-            continue
-        betas = {}
-        for t in wide.columns:
-            if t == bench:
-                continue
-            betas[t] = _beta(wide.rename(columns={t: "x", bench: "b"}), "x", "b")
-        out[int(d)] = pd.Series(betas, name=f"iv_atm_beta_{int(d)}d")
-    return out
-
-
 def surface_betas(
     benchmark: str,
     tenors: Iterable[int] = (7, 30, 60, 90, 180, 365),
