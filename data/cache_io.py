@@ -4,8 +4,9 @@ import sqlite3
 import time
 import zlib
 import hashlib
+import os
 from pathlib import Path
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple, Optional
 
 import queue
 import threading
@@ -13,6 +14,11 @@ import time
 
 TTL_SEC = 900
 ARTIFACT_VERSION: Dict[str, str] = {}
+
+
+def _get_default_db_path() -> str:
+    """Get database path from environment or use default."""
+    return os.getenv("DB_PATH", "data/iv_data.db")
 
 
 def _latest_raw_marker(conn: sqlite3.Connection) -> str | None:
@@ -77,7 +83,7 @@ def _hash_inputs(kind: str, payload: dict) -> str:
     hasher.update(payload_json.encode())
     return hasher.hexdigest()
 
-def compute_or_load(kind: str, payload: dict, builder_fn: Callable[[], Any], db_path: str) -> Any:
+def compute_or_load(kind: str, payload: dict, builder_fn: Callable[[], Any], db_path: Optional[str] = None) -> Any:
     """Compute an artifact or load it from cache.
 
     Parameters
@@ -88,9 +94,13 @@ def compute_or_load(kind: str, payload: dict, builder_fn: Callable[[], Any], db_
         Inputs used to build the artifact. Must be JSON serializable.
     builder_fn : Callable[[], Any]
         Function that builds the artifact when cache miss occurs.
-    db_path : str
+    db_path : Optional[str]
         Path to the SQLite database file used for caching.
+        If None, uses DB_PATH environment variable or defaults to 'data/iv_data.db'.
     """
+    if db_path is None:
+        db_path = _get_default_db_path()
+    
     key = _hash_inputs(kind, payload)
     now = int(time.time())
     db_file = Path(db_path)
@@ -146,8 +156,8 @@ class WarmupWorker:
     and populating the cache.
     """
 
-    def __init__(self, db_path: str = "data/calculations.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or _get_default_db_path()
         self._queue: "queue.Queue[Tuple[str, Any, Callable[[Any], Any]]]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -163,7 +173,7 @@ class WarmupWorker:
         while True:
             kind, payload, builder_fn = self._queue.get()
             try:
-                compute_or_load(kind, payload, builder_fn)
+                compute_or_load(kind, payload, builder_fn, self.db_path)
             except Exception:
                 # Never let cache warmup failures impact the GUI thread.
                 pass
@@ -171,4 +181,3 @@ class WarmupWorker:
                 # Mark job done and briefly yield control to keep UI responsive.
                 self._queue.task_done()
                 time.sleep(0.01)
-
