@@ -26,10 +26,10 @@ import logging
 import numpy as np
 import pandas as pd
 import os
-from data.historical_saver import save_for_tickers
+from data.data_downloader import save_for_tickers
 from data.db_utils import get_conn
 from data.interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
-from data.data_pipeline import enrich_quotes
+
 from volModel.volModel import VolModel
 
 from .syntheticETFBuilder import (

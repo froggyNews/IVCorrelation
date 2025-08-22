@@ -29,7 +29,7 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
-from data.compute_or_load import compute_or_load
+from data.cache_io import compute_or_load
 
 from data.cache_io import  WarmupWorker
 
