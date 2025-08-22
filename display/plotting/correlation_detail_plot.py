@@ -16,7 +16,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from analysis.beta_builder.unified_weights import compute_unified_weights
-from data.cache_io import compute_or_load
+from analysis.model_params_logger import compute_or_load
 
 
 # ---------------------------------------------------------------------------

@@ -29,9 +29,7 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
-from data.cache_io import compute_or_load
-
-from data.cache_io import  WarmupWorker
+from analysis.model_params_logger import compute_or_load, WarmupWorker
 
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
@@ -126,7 +124,7 @@ class PlotManager:
         self._surface_cache: dict[tuple[tuple[str, ...], int], dict] = {}
 
         # background cache warmer
-        self._warm = WarmupWorker("data/calculations.db")
+        self._warm = WarmupWorker()
 
     # -------------------- canvas wiring --------------------
     def attach_canvas(self, canvas):

@@ -122,7 +122,7 @@ def _atm_rank_feature_matrix(
     atm_band: float = 0.05,
 ) -> tuple[pd.DataFrame, list[int]]:
     from analysis.analysis_pipeline import get_smile_slice
-    from analysis.beta_builder.correlation import compute_atm_corr_pillar_free
+    from .correlation import compute_atm_corr_pillar_free
     tickers = [t.upper() for t in tickers]
     atm_df, _ = compute_atm_corr_pillar_free(
         get_smile_slice=get_smile_slice,

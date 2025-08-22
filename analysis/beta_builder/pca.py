@@ -3,7 +3,6 @@ import numpy as np
 from .utils import impute_col_median, zscore_cols
 from typing import Tuple, Optional, Iterable, List, Dict
 import pandas as pd
-from feature_matrices import atm_feature_matrix, surface_feature_matrix
 
 __all__ = ["pca_market_weights", "pca_regress_weights"]
 
@@ -66,6 +65,8 @@ def pca_weights(
       pca_surface_market  → PC1 on surface grid across peers
       pca_surface_regress → PCA‑regress target surface grid on peers
     """
+    from .feature_matrices import atm_feature_matrix, surface_feature_matrix
+
     target = (target or "").upper()
     peers = [p.upper() for p in peers]
     mode = (mode or "").lower().strip()

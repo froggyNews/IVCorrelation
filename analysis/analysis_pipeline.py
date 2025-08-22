@@ -55,7 +55,7 @@ from .confidence_bands import (
     sabr_confidence_bands,
     tps_confidence_bands,
 )
-from beta_builder.unified_weights import compute_unified_weights
+from .beta_builder.unified_weights import compute_unified_weights
 
 # -----------------------------------------------------------------------------
 # Logging

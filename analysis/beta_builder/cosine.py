@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 from .utils import impute_col_median
 from typing import Iterable, Tuple, List
-from beta_builder.beta_builder import build_peer_weights
 __all__ = ["cosine_similarity_weights_from_matrix"]
 
 def cosine_similarity_weights_from_matrix(
@@ -66,6 +65,7 @@ def cosine_similarity_weights(
     feature = mode[len("cosine_") :]
     if feature == "ul":
         feature = "ul_px"
+    from .beta_builder import build_peer_weights
     return build_peer_weights(
         "cosine",
         feature,
