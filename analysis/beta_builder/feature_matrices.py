@@ -1,14 +1,14 @@
 from __future__ import annotations
 from typing import Iterable, Tuple, Dict, List
-
 import numpy as np
 import pandas as pd
 
 from .unified_weights import (
-    atm_feature_matrix as uw_atm_feature_matrix,
-    surface_feature_matrix as uw_surface_feature_matrix,
+    atm_feature_matrix as _atm_feature_matrix,
+    surface_feature_matrix as _surface_feature_matrix,
 )
 
+__all__ = ["atm_feature_matrix", "surface_feature_matrix"]
 
 def atm_feature_matrix(
     get_smile_slice,
@@ -19,8 +19,8 @@ def atm_feature_matrix(
     tol_days: float = 10.0,
     standardize: bool = True,
 ) -> Tuple[pd.DataFrame, np.ndarray, List[str]]:
-    """Wrapper around unified weights ATM builder."""
-    return uw_atm_feature_matrix(
+    """Rows=tickers, cols=pillars for a single as-of."""
+    return _atm_feature_matrix(
         tickers=[t.upper() for t in tickers],
         asof=asof,
         pillars_days=pillars_days,
@@ -29,7 +29,6 @@ def atm_feature_matrix(
         standardize=standardize,
     )
 
-
 def surface_feature_matrix(
     tickers: Iterable[str],
     asof: str,
@@ -37,8 +36,8 @@ def surface_feature_matrix(
     mny_bins: Iterable[Tuple[float, float]] | None = None,
     standardize: bool = True,
 ) -> Tuple[Dict[str, Dict[pd.Timestamp, pd.DataFrame]], np.ndarray, List[str]]:
-    """Wrapper around unified weights surface builder."""
-    return uw_surface_feature_matrix(
+    """Rows=tickers, cols=flattened (tenor×moneyness) grid for a single as-of."""
+    return _surface_feature_matrix(
         tickers=[t.upper() for t in tickers],
         asof=asof,
         tenors=tenors,

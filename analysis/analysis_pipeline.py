@@ -1,16 +1,18 @@
 # analysis/analysis_pipeline.py
 """
-GUI-ready analysis orchestrator.
+GUI-ready analysis orchestrator (modern, slim).
 
 This module wires together:
-- ingest + enrich (data.historical_saver)
+- ingest (download + persist)
 - surface grid building
-- synthetic ETF surface construction (surface & ATM pillars)
-- vol betas (UL, IV-ATM, Surface)
-- lightweight snapshot/smile helpers for GUI
+- synthetic ETF surface & ATM-pillar curves
+- unified peer-weight computation
+- lightweight smile/term helpers for GUI
 
-All public functions are fast to call from a GUI. Heavy work is cached
-in-memory and can optionally be dumped to disk (parquet) for fast reloads.
+Design:
+- No legacy modes / tuple dispatch
+- Single weight entrypoint -> unified_weights.compute_unified_weights
+- Small, dependency-light file
 """
 
 from __future__ import annotations
@@ -22,10 +24,10 @@ from typing import Any, Dict, Iterable, Optional, Tuple, List, Mapping, Union
 
 import json
 import logging
-
+import os
 import numpy as np
 import pandas as pd
-import os
+
 from data.data_downloader import save_for_tickers
 from data.db_utils import get_conn
 from data.interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
@@ -39,31 +41,13 @@ from .syntheticETFBuilder import (
     combine_surfaces,
     build_synthetic_iv as build_synthetic_iv_pillars,
 )
-from .synthetic import build_synthetic_iv_series
-from .relative_value import (
-    relative_value_atm_report_corrweighted,
-    latest_relative_snapshot_corrweighted,
+from .pillars import (
+    load_atm,
+    DEFAULT_PILLARS_DAYS,
+    _fit_smile_get_atm,
+    compute_atm_by_expiry,
+    atm_curve_for_ticker_on_date,
 )
-
-from .beta_builder.beta_builder import (
-    pca_weights,
-    peer_weights_from_correlations,
-    build_vol_betas,
-    save_correlations,
-    build_peer_weights,
-    corr_weights_from_matrix,
-)
-from .beta_builder.unified_weights import (
-    cosine_similarity_weights_from_matrix as cosine_similarity_weights,
-)
-from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm, compute_atm_by_expiry, DEFAULT_PILLARS_DAYS, atm_curve_for_ticker_on_date
-from .beta_builder.correlation_utils import (
-    compute_atm_corr_pillar_free,
-    corr_weights,
-)
-from volModel.sviFit import fit_svi_slice
-from volModel.sabrFit import fit_sabr_slice
-from .model_params_logger import append_params, load_model_params
 from .confidence_bands import (
     Bands,
     synthetic_etf_pillar_bands,
@@ -71,7 +55,7 @@ from .confidence_bands import (
     sabr_confidence_bands,
     tps_confidence_bands,
 )
-
+from beta_builder.unified_weights import compute_unified_weights
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -98,14 +82,12 @@ class PipelineConfig:
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS
     pillar_days: Tuple[int, ...] = tuple(DEFAULT_PILLARS_DAYS)
     use_atm_only: bool = False
-    max_expiries: Optional[int] = None  # Limit number of expiries in smiles/surfaces
+    max_expiries: Optional[int] = None  # Limit expiries in smiles/surfaces (perf)
     cache_dir: str = "data/cache"       # Optional disk cache for GUI speed
 
     def ensure_cache_dir(self) -> None:
-        """Ensure the on-disk cache directory exists."""
-        p = Path(self.cache_dir)
-        if self.cache_dir and not p.is_dir():
-            p.mkdir(parents=True, exist_ok=True)
+        if self.cache_dir:
+            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
 
 # -----------------------------------------------------------------------------
 # Ingest
@@ -127,10 +109,9 @@ def ingest_and_process(
 @lru_cache(maxsize=16)
 def get_surface_grids_cached(
     cfg: PipelineConfig,
-    tickers_key: str,  # lru_cache needs hashables → pass a joined string of tickers
+    tickers_key: str,  # joined string of tickers; lru_cache wants hashables
 ) -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
     tickers = tickers_key.split(",") if tickers_key else None
-    logger.debug("Building surface grids (cached), tickers=%s", tickers_key)
     return build_surface_grids(
         tickers=tickers,
         tenors=cfg.tenors,
@@ -139,44 +120,29 @@ def get_surface_grids_cached(
         max_expiries=cfg.max_expiries,
     )
 
-
 def build_surfaces(
     tickers: Iterable[str] | None = None,
     cfg: PipelineConfig = PipelineConfig(),
     most_recent_only: bool = False,
 ) -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
-    """
-    Return dict[ticker][date] -> IV grid DataFrame.
-
-    Parameters
-    ----------
-    tickers : Iterable[str] | None
-        List of tickers to build surfaces for.
-    cfg : PipelineConfig
-        Configuration for surface building.
-    most_recent_only : bool
-        If True, only return surfaces for each ticker's most recent date
-        (prefers global most recent if present for that ticker).
-    """
+    """Return dict[ticker][date] -> IV grid DataFrame."""
     key = ",".join(sorted([t.upper() for t in tickers])) if tickers else ""
     all_surfaces = get_surface_grids_cached(cfg, key)
 
     if most_recent_only and all_surfaces:
-        # Prefer the most recent global date; fall back to each ticker's last date
+        # Prefer global most recent; fallback to each ticker's latest available date
         most_recent = get_most_recent_date_global()
-        filtered: Dict[str, Dict[pd.Timestamp, pd.DataFrame]] = {}
         if most_recent:
             most_recent_ts = pd.to_datetime(most_recent)
+            filtered: Dict[str, Dict[pd.Timestamp, pd.DataFrame]] = {}
             for ticker, date_dict in all_surfaces.items():
                 if most_recent_ts in date_dict:
                     filtered[ticker] = {most_recent_ts: date_dict[most_recent_ts]}
-                else:
-                    if date_dict:
-                        latest = max(date_dict.keys())
-                        filtered[ticker] = {latest: date_dict[latest]}
+                elif date_dict:
+                    latest = max(date_dict.keys())
+                    filtered[ticker] = {latest: date_dict[latest]}
             return filtered
     return all_surfaces
-
 
 def list_surface_dates(
     surfaces: Dict[str, Dict[pd.Timestamp, pd.DataFrame]]
@@ -187,7 +153,6 @@ def list_surface_dates(
         dates.update(dct.keys())
     return sorted(dates)
 
-
 def surface_to_frame_for_date(
     surfaces: Dict[str, Dict[pd.Timestamp, pd.DataFrame]],
     date: pd.Timestamp,
@@ -196,262 +161,76 @@ def surface_to_frame_for_date(
     return {t: dct[date] for t, dct in surfaces.items() if date in dct}
 
 # -----------------------------------------------------------------------------
-# Synthetic ETF (surface & ATM pillars)
+# Weights (new unified only)
+# -----------------------------------------------------------------------------
+def compute_peer_weights(
+    target: str,
+    peers: Iterable[str],
+    *,
+    weight_mode: str = "corr_iv_atm",
+    asof: str | None = None,
+    pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
+    tenor_days: Iterable[int] = DEFAULT_TENORS,
+    mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
+) -> pd.Series:
+    """
+    Compute normalized peer weights via the unified engine.
+
+    weight_mode examples:
+      "corr_iv_atm", "cosine_iv_atm", "pca_iv_atm",
+      "corr_surface", "cosine_surface", "pca_surface_grid",
+      "ul", "equal", "oi"
+    """
+    target = target.upper()
+    peer_list = [p.upper() for p in peers]
+    return compute_unified_weights(
+        target=target,
+        peers=peer_list,
+        mode=weight_mode,
+        asof=asof,
+        pillars_days=tuple(pillar_days),
+        tenors=tuple(tenor_days),
+        mny_bins=tuple(mny_bins),
+    )
+
+# -----------------------------------------------------------------------------
+# Synthetic ETF constructions
 # -----------------------------------------------------------------------------
 def build_synthetic_surface(
     weights: Mapping[str, float],
     cfg: PipelineConfig = PipelineConfig(),
-    most_recent_only: bool = True,  # default to True for performance
+    most_recent_only: bool = True,
 ) -> Dict[pd.Timestamp, pd.DataFrame]:
     """Create a synthetic ETF surface from ticker grids + weights."""
     w = {k.upper(): float(v) for k, v in weights.items()}
     surfaces = build_surfaces(tickers=list(w.keys()), cfg=cfg, most_recent_only=most_recent_only)
     return combine_surfaces(surfaces, w)
 
-
-# -----------------------------------------------------------------------------
-# Weights (modern unified first, legacy fallback kept)
-# -----------------------------------------------------------------------------
-def compute_peer_weights(
-    target: str,
-    peers: Iterable[str],
-    weight_mode: Union[str, Tuple[str, str]] = ("corr", "iv_atm"),
-    asof: str | None = None,
-    pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
-    tenor_days: Iterable[int] = DEFAULT_TENORS,
-    mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
-) -> pd.Series:
-    """
-    Compute portfolio weights.
-
-    For legacy tuple ``weight_mode`` inputs or the special ``"surface_grid"`` mode,
-    this function dispatches to classic helpers so tests can intercept those calls.
-    Otherwise it delegates to :func:`analysis.unified_weights.compute_unified_weights`.
-    """
-    target = target.upper()
-    peers = [p.upper() for p in peers]
-
-    # Legacy tuple path
-    if isinstance(weight_mode, tuple):
-        method, feature = weight_mode
-        return build_peer_weights(
-            method, feature, target, peers,
-            asof=asof,
-            pillar_days=pillar_days,
-            tenor_days=tenor_days,
-            mny_bins=mny_bins,
-        )
-
-    # Explicit surface_grid legacy path
-    if weight_mode == "surface_grid":
-        return build_vol_betas(
-            mode=weight_mode,
-            benchmark=target,
-            tenor_days=tenor_days,
-            pillar_days=pillar_days,
-            mny_bins=mny_bins,
-        ).iloc[0]
-
-    # Unified primary path
-    try:
-        from analysis.beta_builder.unified_weights import compute_unified_weights
-        return compute_unified_weights(
-            target=target,
-            peers=peers,
-            mode=weight_mode,
-            asof=asof,
-            pillars_days=pillar_days,
-            tenors=tenor_days,
-            mny_bins=mny_bins,
-        )
-    except Exception as e:
-        logger.warning("Unified weights failed (%s). Falling back to legacy.", e)
-        return _compute_peer_weights_legacy(
-            target, peers, weight_mode, asof, pillar_days, tenor_days, mny_bins
-        )
-
-
-def _compute_peer_weights_legacy(
-    target: str,
-    peers: Iterable[str],
-    weight_mode: Union[str, Tuple[str, str]] = ("corr", "iv_atm"),
-    asof: str | None = None,
-    pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
-    tenor_days: Iterable[int] = DEFAULT_TENORS,
-    mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
-) -> pd.Series:
-    """Legacy weight computation system (for fallback during transition)."""
-    target = target.upper()
-    peers = [p.upper() for p in peers]
-
-    if isinstance(weight_mode, tuple):
-        method, feature = weight_mode
-    else:
-        mode = (weight_mode or "corr_iv_atm").lower()
-        if mode == "surface_grid":
-            return build_vol_betas(
-                mode=mode,
-                benchmark=target,
-                tenor_days=tenor_days,
-                mny_bins=mny_bins,
-            )
-        if "_" in mode:
-            method, feature = mode.split("_", 1)
-        else:
-            method, feature = mode, "iv_atm"
-
-        # Legacy mappings
-        if method == "iv":
-            method, feature = "corr", "iv_atm"
-        elif method == "surface":
-            method, feature = "corr", "surface"
-        elif method == "ul":
-            method, feature = "corr", "ul"
-
-
-
-        # PCA surface
-        if feature in ("surface",) and method.startswith("pca"):
-            if asof is None:
-                dates = available_dates(ticker=target, most_recent_only=True)
-                asof = dates[0] if dates else None
-            if asof is None:
-                return pd.Series(dtype=float)
-            return pca_weights(
-                get_smile_slice=get_smile_slice,
-                mode="pca_surface_market",
-                target=target,
-                peers=peers,
-                asof=asof,
-                pillars_days=pillar_days,
-                tenors=tenor_days,
-                mny_bins=mny_bins,
-            )
-
-        # PCA ATM
-        if feature == "iv_atm" and method.startswith("pca"):
-            if asof is None:
-                dates = available_dates(ticker=target, most_recent_only=True)
-                asof = dates[0] if dates else None
-            if asof is None:
-                return pd.Series(dtype=float)
-            return pca_weights(
-                get_smile_slice=get_smile_slice,
-                mode="pca_atm_market",
-                target=target,
-                peers=peers,
-                asof=asof,
-                pillars_days=pillar_days,
-                tenors=tenor_days,
-                mny_bins=mny_bins,
-            )
-
-        # Cosine
-        if method.startswith("cosine") and feature in ("iv_atm", "surface", "ul"):
-            if asof is None:
-                dates = available_dates(ticker=target, most_recent_only=True)
-                asof = dates[0] if dates else None
-            if asof is None:
-                return pd.Series(dtype=float)
-            mode = f"cosine_{feature}" if feature != "iv_atm" else "cosine_atm"
-            return cosine_similarity_weights(
-                get_smile_slice=get_smile_slice,
-                mode=mode,
-                target=target,
-                peers=peers,
-                asof=asof,
-                pillars_days=pillar_days,
-                tenors=tenor_days,
-                mny_bins=mny_bins,
-            )
-
-
-    
-# -----------------------------------------------------------------------------
-# Betas
-# -----------------------------------------------------------------------------
-def build_synthetic_surface_corrweighted(
-    target: str,
-    peers: Iterable[str],
-    weight_mode: str = "iv_atm",
-    cfg: PipelineConfig = PipelineConfig(),
-    most_recent_only: bool = True,
-    asof: str | None = None,
-) -> Tuple[Dict[pd.Timestamp, pd.DataFrame], pd.Series]:
-    """Build synthetic surface where peer weights derive from correlation/PCA metrics."""
-    w = compute_peer_weights(
-        target=target,
-        peers=peers,
-        weight_mode=weight_mode,
-        asof=asof,
-        pillar_days=cfg.pillar_days,
-        tenor_days=cfg.tenors,
-        mny_bins=cfg.mny_bins,
-    )
-    surfaces = build_surfaces(tickers=list(w.index), cfg=cfg, most_recent_only=most_recent_only)
-    synth = combine_surfaces(surfaces, w.to_dict())
-    return synth, w
-
+def build_synthetic_iv_series_weighted(
+    weights: Mapping[str, float],
+    *,
+    pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLARS_DAYS,
+    tolerance_days: float = 7.0,
+) -> pd.DataFrame:
+    """Build a weighted synthetic ATM pillar IV series (no weights computation here)."""
+    return build_synthetic_iv_pillars({k.upper(): float(v) for k, v in weights.items()},
+                                      pillar_days=pillar_days, tolerance_days=tolerance_days)
 
 def build_synthetic_iv_series_corrweighted(
     target: str,
     peers: Iterable[str],
-    weight_mode: str = "iv_atm",
+    *,
+    weight_mode: str = "corr_iv_atm",
     pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLARS_DAYS,
     tolerance_days: float = 7.0,
     asof: str | None = None,
 ) -> Tuple[pd.DataFrame, pd.Series]:
-    """Build correlation/PCA-weighted synthetic ATM pillar IV series."""
+    """Build correlation/PCA/cosine/OI‑weighted synthetic ATM pillar IV series."""
     w = compute_peer_weights(
-        target=target,
-        peers=peers,
-        weight_mode=weight_mode,
-        asof=asof,
-        pillar_days=pillar_days,
+        target=target, peers=peers, weight_mode=weight_mode, asof=asof, pillar_days=pillar_days
     )
     df = build_synthetic_iv_pillars(w.to_dict(), pillar_days=pillar_days, tolerance_days=tolerance_days)
     return df, w
-
-
-def compute_betas(
-    mode: str,  # 'ul' | 'iv_atm' | 'surface'
-    benchmark: str,
-    cfg: PipelineConfig = PipelineConfig(),
-):
-    """Compute vol betas per requested mode (GUI can show table/heatmap)."""
-    if mode in ("surface", "surface_grid"):
-        return build_vol_betas(
-            mode=mode, benchmark=benchmark,
-            tenor_days=cfg.tenors, mny_bins=cfg.mny_bins
-        )
-    if mode == "iv_atm":
-        return build_vol_betas(mode=mode, benchmark=benchmark, pillar_days=cfg.pillar_days)
-    return build_vol_betas(mode=mode, benchmark=benchmark)
-
-
-def save_betas(
-    mode: str,
-    benchmark: str,
-    base_path: str = "data",
-    cfg: PipelineConfig = PipelineConfig(),
-) -> list[str]:
-    """Persist betas to Parquet files."""
-    base = Path(base_path)
-    base.mkdir(parents=True, exist_ok=True)
-
-    if mode == "surface":
-        res = build_vol_betas(
-            mode=mode, benchmark=benchmark,
-            tenor_days=cfg.tenors, mny_bins=cfg.mny_bins
-        )
-        filename = f"betas_{mode}_vs_{benchmark}.parquet"
-        p = os.path.join(base_path, filename)
-        df = res.sort_index().to_frame(name="beta").reset_index().rename(columns={"index": "ticker"})
-        df.to_parquet(p, index=False)
-        return [p]
-    return save_correlations(mode=mode, benchmark=benchmark, base_path=base_path)
-# =========================
-# Relative value helpers reside in ``analysis.relative_value``
 
 # -----------------------------------------------------------------------------
 # Basic DB helpers + caches
@@ -462,12 +241,10 @@ def _get_ro_conn():
         _RO_CONN = get_conn()
     return _RO_CONN
 
-
 @lru_cache(maxsize=8)
 def get_atm_pillars_cached() -> pd.DataFrame:
     """Tidy ATM rows from DB (asof_date, ticker, expiry, ttm_years, iv, spot, moneyness, delta, pillar_days, ...)"""
     return load_atm()
-
 
 @lru_cache(maxsize=1)
 def available_tickers() -> List[str]:
@@ -477,42 +254,40 @@ def available_tickers() -> List[str]:
         "SELECT DISTINCT ticker FROM options_quotes ORDER BY 1", conn
     )["ticker"].tolist()
 
-
 @lru_cache(maxsize=None)
 def available_dates(ticker: Optional[str] = None, most_recent_only: bool = False) -> List[str]:
     """Get available asof_date strings (globally or for a ticker)."""
     conn = _get_ro_conn()
-
     if most_recent_only:
         from data.db_utils import get_most_recent_date
         recent = get_most_recent_date(conn, ticker)
         return [recent] if recent else []
-
     base = "SELECT DISTINCT asof_date FROM options_quotes"
     if ticker:
-        df = pd.read_sql_query(
-            f"{base} WHERE ticker = ? ORDER BY 1", conn, params=[ticker]
-        )
+        df = pd.read_sql_query(f"{base} WHERE ticker = ? ORDER BY 1", conn, params=[ticker])
     else:
         df = pd.read_sql_query(f"{base} ORDER BY 1", conn)
     return df["asof_date"].tolist()
 
-
-def invalidate_cache() -> None:
-    """Clear cached ticker/date queries and reset shared connection."""
-    clear_all_caches()
-
-
-def invalidate_config_caches() -> None:
-    """Clear only configuration-dependent caches (lighter operation)."""
-    clear_config_dependent_caches()
-
-
 def get_most_recent_date_global() -> Optional[str]:
-    """Get the most recent date across all tickers."""
+    """Most recent asof_date across all tickers."""
     conn = _get_ro_conn()
     from data.db_utils import get_most_recent_date
     return get_most_recent_date(conn)
+
+def invalidate_cache() -> None:
+    """Clear all in-memory caches and reset shared connection."""
+    get_surface_grids_cached.cache_clear()
+    get_atm_pillars_cached.cache_clear()
+    available_tickers.cache_clear()
+    available_dates.cache_clear()
+    global _RO_CONN
+    if _RO_CONN is not None:
+        try:
+            _RO_CONN.close()
+        except Exception:
+            pass
+        _RO_CONN = None
 
 # -----------------------------------------------------------------------------
 # Smile helpers (GUI plotting)
@@ -522,13 +297,12 @@ def get_smile_slice(
     asof_date: Optional[str] = None,
     T_target_years: float | None = None,
     call_put: Optional[str] = None,  # 'C' or 'P' or None for both
-    nearest_by: str = "T",           # 'T' or 'moneyness' (reserved; not used here)
     max_expiries: Optional[int] = None,  # Limit number of expiries
 ) -> pd.DataFrame:
     """
     Return a slice of quotes for plotting a smile (one date, one ticker).
     If asof_date is None, uses the most recent date for the ticker.
-    If T_target_years is given, returns the nearest expiry; otherwise returns all expiries that day.
+    If T_target_years is given, returns only the nearest expiry; otherwise returns all expiries that day.
     Optionally filter by call_put ('C'/'P').
     """
     conn = get_conn()
@@ -571,7 +345,6 @@ def get_smile_slice(
 
     return df.sort_values(["call_put", "T", "moneyness", "K"]).reset_index(drop=True)
 
-
 def prepare_smile_data(
     target: str,
     asof: str,
@@ -584,16 +357,12 @@ def prepare_smile_data(
     overlay_peers: bool = False,
     max_expiries: int = 6,
 ) -> Dict[str, Any]:
-    """Precompute smile data and fitted parameters for plotting.
-
-    Returns a dictionary with raw quote arrays, prebuilt target and synthetic
-    surfaces when peers are supplied, peer slices, and a ``fit_info`` mapping
-    suitable for parameter summaries.
-    """
+    """Precompute smile data and fitted parameters for plotting."""
     peers = list(peers or [])
 
     asof_ts = pd.to_datetime(asof).normalize()
     try:
+        from .model_params_logger import append_params, load_model_params
         params_cache = load_model_params()
         params_cache = params_cache[
             (params_cache["ticker"] == target)
@@ -601,6 +370,7 @@ def prepare_smile_data(
             & (params_cache["model"].isin(["svi", "sabr", "tps", "sens"]))
         ]
     except Exception:
+        append_params = None  # type: ignore
         params_cache = pd.DataFrame()
 
     df = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
@@ -619,6 +389,7 @@ def prepare_smile_data(
     idx0 = int(np.argmin(np.abs(Ts * 365.25 - float(T_days))))
     T0 = float(Ts[idx0])
 
+    # fit per-expiry
     fit_by_expiry: Dict[float, Dict[str, Any]] = {}
     for T_val in Ts:
         mask = np.isclose(T_arr, T_val)
@@ -627,7 +398,6 @@ def prepare_smile_data(
             mask = (T_arr >= T_val - tol) & (T_arr <= T_val + tol)
         if not np.any(mask):
             continue
-
 
         S = float(np.nanmedian(S_arr[mask])) if np.any(mask) else float("nan")
         K = K_arr[mask]
@@ -638,56 +408,53 @@ def prepare_smile_data(
             try:
                 expiry_dt = pd.to_datetime(expiry_arr[mask][0])
             except Exception:
-                expiry_dt = None
+                pass
 
-        tenor_d = None
-        if expiry_dt is not None:
-            try:
-                tenor_d = int((expiry_dt - asof_ts).days)
-            except Exception:
-                tenor_d = None
-        if tenor_d is None:
-            tenor_d = int(round(float(T_val) * 365.25))
+        tenor_d = int((expiry_dt - asof_ts).days) if expiry_dt is not None else int(round(float(T_val) * 365.25))
 
         def _cached(model: str) -> Optional[Dict[str, float]]:
             if params_cache.empty:
                 return None
-            sub = params_cache[
-                (params_cache["tenor_d"] == tenor_d)
-                & (params_cache["model"] == model)
-            ]
-            if sub.empty:
-                return None
-            return sub.set_index("param")["value"].to_dict()
+            sub = params_cache[(params_cache["tenor_d"] == tenor_d) & (params_cache["model"] == model)]
+            return None if sub.empty else sub.set_index("param")["value"].to_dict()
 
+        # SVI
         svi_params = _cached("svi")
         if not svi_params:
+            from volModel.sviFit import fit_svi_slice
             svi_params = fit_svi_slice(S, K, T_val, IV)
-            try:
-                exp_str = str(expiry_dt) if expiry_dt is not None else None
-                append_params(asof, target, exp_str, "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
-            except Exception:
-                pass
+            if append_params:
+                try:
+                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None, "svi", svi_params,
+                                  meta={"rmse": svi_params.get("rmse")})
+                except Exception:
+                    pass
 
+        # SABR
         sabr_params = _cached("sabr")
         if not sabr_params:
+            from volModel.sabrFit import fit_sabr_slice
             sabr_params = fit_sabr_slice(S, K, T_val, IV)
-            try:
-                exp_str = str(expiry_dt) if expiry_dt is not None else None
-                append_params(asof, target, exp_str, "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
-            except Exception:
-                pass
+            if append_params:
+                try:
+                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None, "sabr", sabr_params,
+                                  meta={"rmse": sabr_params.get("rmse")})
+                except Exception:
+                    pass
 
+        # TPS (optional)
         tps_params = _cached("tps")
         if not tps_params:
             try:
                 from volModel.polyFit import fit_tps_slice
                 tps_params = fit_tps_slice(S, K, T_val, IV)
-                exp_str = str(expiry_dt) if expiry_dt is not None else None
-                append_params(asof, target, exp_str, "tps", tps_params, meta={"rmse": tps_params.get("rmse")})
+                if append_params:
+                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None, "tps", tps_params,
+                                  meta={"rmse": tps_params.get("rmse")})
             except Exception:
                 tps_params = {}
 
+        # simple sensitivities
         sens_params = _cached("sens")
         if not sens_params:
             dfe = df[mask].copy()
@@ -697,12 +464,13 @@ def prepare_smile_data(
                 dfe["moneyness"] = np.nan
             sens = _fit_smile_get_atm(dfe, model="auto")
             sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
-            try:
-                exp_str = str(expiry_dt) if expiry_dt is not None else None
-                append_params(asof, target, exp_str, "sens", sens_params)
-            except Exception:
-                pass
+            if append_params:
+                try:
+                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None, "sens", sens_params)
+                except Exception:
+                    pass
 
+        # optional CI bands at requested level
         bands_map: Dict[str, Bands] = {}
         if ci and ci > 0:
             m_grid = np.linspace(0.7, 1.3, 121)
@@ -720,7 +488,7 @@ def prepare_smile_data(
             except Exception:
                 pass
 
-        fit_by_expiry[T_val] = {
+        entry = {
             "svi": svi_params,
             "sabr": sabr_params,
             "tps": tps_params,
@@ -728,7 +496,8 @@ def prepare_smile_data(
             "expiry": str(expiry_dt) if expiry_dt is not None else None,
         }
         if bands_map:
-            fit_by_expiry[T_val]["bands"] = bands_map
+            entry["bands"] = bands_map
+        fit_by_expiry[T_val] = entry
 
     fit_entry = fit_by_expiry.get(T0, {})
     fit_info = {
@@ -741,19 +510,16 @@ def prepare_smile_data(
         "sens": fit_entry.get("sens", {}),
     }
 
+    # optional overlays
     tgt_surface = None
     syn_surface = None
     if peers:
         try:
             tickers = list({target, *peers})
-            surfaces = build_surface_grids(
-                tickers=tickers,
-                use_atm_only=False,
-                max_expiries=max_expiries,
-            )
+            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False, max_expiries=max_expiries)
             if target in surfaces and asof in surfaces[target]:
                 tgt_surface = surfaces[target][asof]
-            peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces}
+            peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces and asof in surfaces[p]}
             if peer_surfaces:
                 w = {p: float(weights.get(p, 1.0)) for p in peer_surfaces} if weights else {p: 1.0 for p in peer_surfaces}
                 synth_by_date = combine_surfaces(peer_surfaces, w)
@@ -793,19 +559,12 @@ def prepare_term_data(
     target: str,
     asof: str,
     ci: float = 68.0,
-    overlay_synth: bool = False,
     peers: Iterable[str] | None = None,
     weights: Optional[Mapping[str, float]] = None,
     atm_band: float = 0.05,
     max_expiries: int = 6,
 ) -> Dict[str, Any]:
-    """Precompute ATM term structure and synthetic overlay data.
-
-    Returns a dictionary with ``atm_curve`` and ``synth_curve`` DataFrames ready
-    for plotting. When peers are supplied, the synthetic curve is always
-    constructed, regardless of whether it will be rendered.
-    """
-
+    """Precompute ATM term structure and (optional) synthetic overlay for plotting."""
     df_all = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
     if df_all is None or df_all.empty:
         return {}
@@ -822,13 +581,14 @@ def prepare_term_data(
     )
 
     synth_curve = None
+    synth_bands = None
 
     if peers:
         w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
         if w.sum() <= 0:
             w = pd.Series({p: 1.0 for p in peers}, dtype=float)
         w = (w / w.sum()).astype(float)
-        peers = [p for p in w.index if p in peers]
+        peers = [p for p in w.index if p in (peers or [])]
 
         curves: Dict[str, pd.DataFrame] = {}
         for p in peers:
@@ -845,7 +605,7 @@ def prepare_term_data(
                 curves[p] = c
 
         if curves:
-            # Determine common expiries across target and peers
+            # Align common expiries across target and peers (tolerance = 10d)
             tol_years = 10.0 / 365.25
             arrays = [atm_curve["T"].to_numpy(float)] + [c["T"].to_numpy(float) for c in curves.values()]
             common_T = arrays[0]
@@ -856,10 +616,7 @@ def prepare_term_data(
 
             if common_T.size > 0:
                 common_T = np.sort(common_T)
-                # Filter target curve to common expiries
-                atm_curve = atm_curve[
-                    atm_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_years))
-                ]
+                atm_curve = atm_curve[atm_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_years))]
 
                 # Build per-peer ATM arrays aligned to common_T
                 atm_data: Dict[str, np.ndarray] = {}
@@ -896,199 +653,8 @@ def prepare_term_data(
 
     return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
 
-
-def fit_smile_for(
-    ticker: str,
-    asof_date: Optional[str] = None,
-    model: str = "svi",             # "svi" or "sabr"
-    min_quotes_per_expiry: int = 3, # skip super sparse expiries
-    beta: float = 0.5,              # SABR beta (fixed)
-    max_expiries: Optional[int] = None,  # Limit number of expiries
-) -> VolModel:
-    """
-    Fit a volatility smile model (SVI, SABR, or polynomial) for one day/ticker using all expiries available that day.
-    If asof_date is None, uses the most recent date for the ticker.
-
-    Returns a VolModel you can query/plot from the GUI:
-      vm.available_expiries() -> list of T (years)
-      vm.predict_iv(K, T)     -> IV at (K, T) using nearest fitted expiry
-      vm.smile(Ks, T)         -> vectorized IVs across Ks at nearest fitted expiry
-      vm.plot(T)              -> quick plot (if matplotlib installed)
-    """
-    conn = get_conn()
-    ticker = ticker.upper()
-
-    if asof_date is None:
-        from data.db_utils import get_most_recent_date
-        asof_date = get_most_recent_date(conn, ticker)
-        if asof_date is None:
-            return VolModel(model=model)
-
-    q = """
-        SELECT spot AS S, strike AS K, ttm_years AS T, iv AS sigma
-        FROM options_quotes
-        WHERE asof_date = ? AND ticker = ?
-    """
-    df = pd.read_sql_query(q, conn, params=[asof_date, ticker])
-    if df.empty:
-        return VolModel(model=model)
-
-    # Median spot for the day
-    S = float(df["S"].median())
-
-    # Drop junk, enforce per-expiry density
-    df = df.dropna(subset=["K", "T", "sigma"]).copy()
-    if df.empty:
-        return VolModel(model=model)
-
-    if max_expiries is not None and max_expiries > 0:
-        unique_T = df.groupby("T")["T"].first().sort_values()
-        limited_T = unique_T.head(max_expiries).values
-        df = df[df["T"].isin(limited_T)]
-        if df.empty:
-            return VolModel(model=model)
-
-    counts = df.groupby("T").size()
-    good_T = counts[counts >= max(1, int(min_quotes_per_expiry))].index
-    df = df[df["T"].isin(good_T)]
-    if df.empty:
-        return VolModel(model=model)
-
-    Ks = df["K"].to_numpy()
-    Ts = df["T"].to_numpy()
-    IVs = df["sigma"].to_numpy()
-
-    vm = VolModel(model=model).fit(S, Ks, Ts, IVs, beta=beta)
-    return vm
-
-
-def sample_smile_curve(
-    ticker: str,
-    asof_date: Optional[str] = None,
-    T_target_years: float = 30 / 365.25,  # ~30 days
-    model: str = "svi",
-    moneyness_grid: tuple[float, float, int] = (0.6, 1.4, 81),  # (lo, hi, n)
-    beta: float = 0.5,
-    max_expiries: Optional[int] = None,  # Limit number of expiries
-) -> pd.DataFrame:
-    """
-    Convenience: fit a smile then return a tidy curve at the nearest expiry to T_target_years.
-
-    Returns DataFrame with columns:
-      ['asof_date','ticker','model','T_used','moneyness','K','IV']
-    """
-    ticker = ticker.upper()
-    actual_date = asof_date
-    if actual_date is None:
-        conn = get_conn()
-        from data.db_utils import get_most_recent_date
-        actual_date = get_most_recent_date(conn, ticker)
-
-    vm = fit_smile_for(ticker, asof_date, model=model, beta=beta, max_expiries=max_expiries)
-    if not vm.available_expiries() or vm.S is None:
-        return pd.DataFrame(columns=["asof_date", "ticker", "model", "T_used", "moneyness", "K", "IV"])
-
-    Ts = np.array(vm.available_expiries(), dtype=float)
-    T_used = float(Ts[np.argmin(np.abs(Ts - float(T_target_years)))])
-
-    lo, hi, n = moneyness_grid
-    m_grid = np.linspace(float(lo), float(hi), int(n))
-    K_grid = m_grid * vm.S
-    iv = vm.smile(K_grid, T_used)
-
-    return pd.DataFrame(
-        {
-            "asof_date": actual_date,
-            "ticker": ticker,
-            "model": model.upper(),
-            "T_used": T_used,
-            "moneyness": m_grid,
-            "K": K_grid,
-            "IV": iv,
-        }
-    )
-
 # -----------------------------------------------------------------------------
-# Enhanced cache management
-# -----------------------------------------------------------------------------
-def get_cache_info() -> dict:
-    """Get information about current cache state."""
-    s = get_surface_grids_cached.cache_info()
-    a = get_atm_pillars_cached.cache_info()
-    t = available_tickers.cache_info()
-    d = available_dates.cache_info()
-    return {
-        "surface_grids_cache": {"size": s.currsize, "hits": s.hits, "misses": s.misses, "maxsize": s.maxsize},
-        "atm_pillars_cache": {"size": a.currsize, "hits": a.hits, "misses": a.misses, "maxsize": a.maxsize},
-        "available_tickers_cache": {"size": t.currsize, "hits": t.hits, "misses": t.misses, "maxsize": t.maxsize},
-        "available_dates_cache": {"size": d.currsize, "hits": d.hits, "misses": d.misses, "maxsize": d.maxsize},
-    }
-
-
-def clear_all_caches() -> None:
-    """Clear all in-memory caches and reset shared connection."""
-    get_surface_grids_cached.cache_clear()
-    get_atm_pillars_cached.cache_clear()
-    available_tickers.cache_clear()
-    available_dates.cache_clear()
-    global _RO_CONN
-    if _RO_CONN is not None:
-        try:
-            _RO_CONN.close()
-        except Exception:
-            pass
-        _RO_CONN = None
-
-
-def clear_config_dependent_caches() -> None:
-    """Clear caches that depend on configuration settings."""
-    get_surface_grids_cached.cache_clear()
-    get_atm_pillars_cached.cache_clear()
-
-
-def get_disk_cache_info(cfg: PipelineConfig) -> dict:
-    """Get information about disk cache files."""
-    base = Path(cfg.cache_dir)
-    if not base.exists():
-        return {"exists": False, "files": []}
-
-    files = []
-    for p in base.iterdir():
-        if p.suffix.lower() in (".parquet", ".json"):
-            files.append(
-                {
-                    "name": p.name,
-                    "size": p.stat().st_size,
-                    "modified": pd.Timestamp(p.stat().st_mtime, unit="s").strftime("%Y-%m-%d %H:%M:%S"),
-                }
-            )
-    return {"exists": True, "files": files}
-
-
-def cleanup_disk_cache(cfg: PipelineConfig, max_age_days: int = 30) -> list[str]:
-    """Clean up old disk cache files."""
-    base = Path(cfg.cache_dir)
-    if not base.exists():
-        return []
-
-    import time
-    now = time.time()
-    cutoff = max_age_days * 86400
-    removed: list[str] = []
-
-    for p in base.iterdir():
-        if p.suffix.lower() not in (".parquet", ".json"):
-            continue
-        if now - p.stat().st_mtime > cutoff:
-            try:
-                p.unlink()
-                removed.append(p.name)
-            except OSError:
-                pass
-    return removed
-
-# -----------------------------------------------------------------------------
-# Lightweight disk cache (enhanced)
+# Disk cache helpers (optional, tiny)
 # -----------------------------------------------------------------------------
 def dump_surface_to_cache(
     surfaces: Dict[str, Dict[pd.Timestamp, pd.DataFrame]],
@@ -1115,10 +681,8 @@ def dump_surface_to_cache(
     else:
         pd.concat(rows, ignore_index=True).to_parquet(path, index=False)
 
-    # Save config next to it
     (base / f"surfaces_{tag}.json").write_text(json.dumps(asdict(cfg), indent=2, default=list))
     return str(path)
-
 
 def load_surface_from_cache(path: str) -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
     """Reload cached surfaces (for GUI cold start)."""
@@ -1134,36 +698,26 @@ def load_surface_from_cache(path: str) -> Dict[str, Dict[pd.Timestamp, pd.DataFr
         out.setdefault(t, {})[pd.to_datetime(date)] = grid
     return out
 
-
 def is_cache_valid(cfg: PipelineConfig, tag: str = "default") -> bool:
     """Check if disk cache is valid for the given configuration."""
     base = Path(cfg.cache_dir)
     cache_path = base / f"surfaces_{tag}.parquet"
     config_path = base / f"surfaces_{tag}.json"
-
     if not (cache_path.is_file() and config_path.is_file()):
         return False
-
     try:
         cached_config = json.loads(config_path.read_text())
         current_config = asdict(cfg)
-
-        # Normalize tuples -> lists for comparison
         def _normalize(v):
             if isinstance(v, tuple):
                 return [_normalize(x) for x in v]
             if isinstance(v, list):
                 return [_normalize(x) for x in v]
             return v
-
         fields = ["tenors", "mny_bins", "pillar_days", "use_atm_only", "max_expiries"]
-        for f in fields:
-            if _normalize(cached_config.get(f)) != _normalize(current_config.get(f)):
-                return False
-        return True
+        return all(_normalize(cached_config.get(f)) == _normalize(current_config.get(f)) for f in fields)
     except Exception:
         return False
-
 
 def load_surface_from_cache_if_valid(cfg: PipelineConfig, tag: str = "default") -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
     """Load cached surfaces only if the cache is valid for the current configuration."""
@@ -1172,71 +726,17 @@ def load_surface_from_cache_if_valid(cfg: PipelineConfig, tag: str = "default") 
     return load_surface_from_cache(str(Path(cfg.cache_dir) / f"surfaces_{tag}.parquet"))
 
 # -----------------------------------------------------------------------------
-# __main__ demo path (safe, optional)
+# __main__ demo (optional)
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     cfg = PipelineConfig()
-
-    print("=== IVCorrelation Analysis Pipeline Demo ===\n")
-
-    # Cache info
-    print("Cache Status:")
-    cache_info = get_cache_info()
-    for name, info in cache_info.items():
-        print(f"  {name}: {info['size']}/{info['maxsize']} entries, {info['hits']} hits")
-    print()
-
-    # 1) Ingest (optional)
+    print("=== IVCorrelation Analysis Pipeline (modern) ===")
     try:
-        inserted = ingest_and_process(["SPY", "QQQ"], max_expiries=6)
-        print(f"Data ingestion: {inserted} rows inserted")
+        surfaces = build_surfaces(["SPY", "QQQ"], cfg=cfg, most_recent_only=True)
+        print("Built surfaces:", [k for k in surfaces.keys()])
+        weights = compute_peer_weights("SPY", ["QQQ"], weight_mode="corr_iv_atm")
+        print("Weights:\n", weights)
+        synth, w = build_synthetic_iv_series_corrweighted("SPY", ["QQQ"], weight_mode="corr_iv_atm")
+        print("Synthetic ATM pillars len:", len(synth))
     except Exception as e:
-        print(f"Data ingestion skipped: {e}")
-
-    # 2) Surfaces + cache
-    try:
-        surfaces = build_surfaces(["SPY", "QQQ"], cfg=cfg)
-        cache_path = dump_surface_to_cache(surfaces, cfg, tag="spyqqq")
-        print(f"Surface cache created: {Path(cache_path).name}")
-    except Exception as e:
-        print(f"Surface building skipped: {e}")
-
-    # 3) Betas
-    try:
-        paths = save_betas(mode="iv_atm", benchmark="SPY", base_path="data", cfg=cfg)
-        print(f"Betas saved to: {[Path(p).name for p in paths]} (Parquet format)")
-    except Exception as e:
-        print(f"Beta computation skipped: {e}")
-
-    # 4) Quick smile slice
-    try:
-        dates = available_dates("SPY")
-        if dates:
-            d = dates[-1]
-            df_smile = get_smile_slice("SPY", asof_date=d, T_target_years=30 / 365.25, call_put="C")
-            print(f"Smile data: {len(df_smile)} quotes for SPY on {d}")
-        else:
-            print("No dates available for SPY")
-    except Exception as e:
-        print(f"Smile data skipped: {e}")
-
-    # 5) Disk cache info
-    print("\nDisk Cache Information:")
-    disk_info = get_disk_cache_info(cfg)
-    if disk_info["exists"] and disk_info["files"]:
-        for fi in disk_info["files"]:
-            print(f"  {fi['name']}: {fi['size']:,} bytes")
-    else:
-        print("  No disk cache files found")
-
-    # Optional: smile modeling
-    try:
-        dates = available_dates("SPY")
-        if dates:
-            d = dates[-1]
-            vm = fit_smile_for("SPY", d, model="svi")
-            print(f"\nFitted expiries for SPY on {d}: {vm.available_expiries()}")
-            curve = sample_smile_curve("SPY", d, T_target_years=30 / 365.25, model="svi")
-            print(f"Smile curve data points: {len(curve)}")
-    except Exception as e:
-        print(f"Smile modeling skipped: {e}")
+        print("Demo error:", e)

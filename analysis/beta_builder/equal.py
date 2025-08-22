@@ -1,5 +1,7 @@
+from __future__ import annotations
 import pandas as pd
 
+__all__ = ["equal_weights"]
 
 def equal_weights(peers_list: list[str]) -> pd.Series:
     """Return equal weights for the provided peers."""

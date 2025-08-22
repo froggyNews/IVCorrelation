@@ -1,7 +1,10 @@
+from __future__ import annotations
 import numpy as np
 import pandas as pd
 from .utils import impute_col_median
-
+from typing import Iterable, Tuple, List
+from beta_builder.beta_builder import build_peer_weights
+__all__ = ["cosine_similarity_weights_from_matrix"]
 
 def cosine_similarity_weights_from_matrix(
     feature_df: pd.DataFrame,
@@ -38,3 +41,37 @@ def cosine_similarity_weights_from_matrix(
     if not np.isfinite(total) or total <= 0:
         raise ValueError("cosine similarity weights sum to zero")
     return (ser / total).reindex(peers).fillna(0.0)
+
+
+# ------------------------
+# Small convenience wrapper for cosine “modes”
+# ------------------------
+def cosine_similarity_weights(
+    get_smile_slice,
+    mode: str,
+    target: str,
+    peers: Iterable[str],
+    *,
+    asof: str | None = None,
+    **kwargs,
+) -> pd.Series:
+    """
+    Convenience helper that lets you call things like:
+      cosine_similarity_weights(..., mode="cosine_atm", ...)
+      cosine_similarity_weights(..., mode="cosine_surface", ...)
+      cosine_similarity_weights(..., mode="cosine_ul", ...)  # alias for ul_px
+    """
+    if not mode.startswith("cosine_"):
+        raise ValueError("mode must start with 'cosine_'")
+    feature = mode[len("cosine_") :]
+    if feature == "ul":
+        feature = "ul_px"
+    return build_peer_weights(
+        "cosine",
+        feature,
+        target,
+        peers,
+        get_smile_slice=get_smile_slice,
+        asof=asof,
+        **kwargs,
+    )

@@ -1,8 +1,10 @@
+from __future__ import annotations
 from typing import Optional, List
 import numpy as np
 import pandas as pd
 from .equal import equal_weights
 
+__all__ = ["open_interest_weights"]
 
 def open_interest_weights(peers_list: List[str], asof: Optional[str]) -> pd.Series:
     """Compute weights proportional to open interest on ``asof`` date."""

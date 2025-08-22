@@ -475,7 +475,7 @@ class PlotManager:
         """
         import numpy as np
         import pandas as pd
-        from analysis.beta_builder.correlation_utils import corr_weights
+        from analysis.beta_builder.correlation import corr_weights
 
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]

@@ -4,7 +4,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Dict
 
-from analysis.analysis_background_tasks import (
+from analysis.spillover.analysis_background_tasks import (
     SpilloverConfig, build_spillover_last_90d, ensure_spillover_table
 )
 
