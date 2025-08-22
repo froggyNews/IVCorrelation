@@ -8,8 +8,6 @@ import pandas as pd
 
 # Centralized builders & utilities
 from .unified_weights import (
-    atm_feature_matrix as uw_atm_feature_matrix,
-    surface_feature_matrix as uw_surface_feature_matrix,
     underlying_returns_matrix as uw_underlying_returns_matrix,
 )
 from .cosine import cosine_similarity_weights_from_matrix as uw_cosine_from_matrix
@@ -18,66 +16,15 @@ from .pca import (
     pca_regress_weights as uw_pca_regress_weights,
     pca_market_weights as uw_pca_market_weights,
 )
-from .utils import impute_col_median as _impute_col_median
+from .utils import (
+    impute_col_median as _impute_col_median,
+    safe_var as _safe_var,
+    beta as _beta,
+)
+from .feature_matrices import atm_feature_matrix, surface_feature_matrix
 
 from analysis.pillars import DEFAULT_PILLARS_DAYS
 
-
-
-# =========================
-# Small numeric helpers (lightweight; kept local)
-# =========================
-def _safe_var(x: pd.Series) -> float:
-    v = x.var()
-    return float(v) if (v is not None and np.isfinite(v) and v > 0) else float("nan")
-
-
-def _beta(df: pd.DataFrame, x: str, b: str) -> float:
-    a = df[[x, b]].dropna()
-    if len(a) < 5:
-        return float("nan")
-    vb = _safe_var(a[b])
-    return float(a[x].cov(a[b]) / vb) if np.isfinite(vb) else float("nan")
-
-
-# =========================
-# Centralized feature matrix shims
-# =========================
-def atm_feature_matrix(
-    get_smile_slice,
-    tickers: Iterable[str],
-    asof: str,
-    pillars_days: Iterable[int],
-    atm_band: float = 0.08,
-    tol_days: float = 10.0,
-    standardize: bool = True,
-) -> Tuple[pd.DataFrame, np.ndarray, List[str]]:
-    """Rows=tickers, cols=pillars. Delegates to unified_weights."""
-    return uw_atm_feature_matrix(
-        tickers=[t.upper() for t in tickers],
-        asof=asof,
-        pillars_days=pillars_days,
-        atm_band=atm_band,
-        tol_days=tol_days,
-        standardize=standardize,
-    )
-
-
-def surface_feature_matrix(
-    tickers: Iterable[str],
-    asof: str,
-    tenors: Iterable[int] | None = None,
-    mny_bins: Iterable[Tuple[float, float]] | None = None,
-    standardize: bool = True,
-) -> Tuple[Dict[str, Dict[pd.Timestamp, pd.DataFrame]], np.ndarray, List[str]]:
-    """Rows=tickers, cols=flattened (tenor × moneyness). Delegates to unified_weights."""
-    return uw_surface_feature_matrix(
-        tickers=[t.upper() for t in tickers],
-        asof=asof,
-        tenors=tenors,
-        mny_bins=mny_bins,
-        standardize=standardize,
-    )
 
 
 # =========================
