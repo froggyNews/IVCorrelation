@@ -10,7 +10,7 @@ from .ticker_groups import (
     delete_ticker_group, create_default_groups
 )
 from .db_utils import get_conn, ensure_initialized, ensure_indexes, insert_features
-from .historical_saver import save_for_tickers
+from .data_downloader import save_for_tickers
 from .underlying_prices import update_underlying_prices
 from .interest_rates import (
     save_interest_rate, load_interest_rate, get_default_interest_rate,

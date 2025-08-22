@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from .db_utils import get_conn, ensure_initialized, insert_quotes, insert_features
-from .data_downloader import download_raw_option_data
 from .data_pipeline import enrich_quotes
 from .interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 from .feature_engineering import add_all_features
