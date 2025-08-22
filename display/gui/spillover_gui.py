@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import pandas as pd
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +64,27 @@ class SpilloverFrame(ttk.Frame):
         self.tree.heading("ticker", text="Ticker")
         self.tree.heading("chg", text="Rel Change")
         self.tree.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        self.tree.bind("<<TreeviewSelect>>", self._on_event_select)
+        self._event_rows: dict[str, pd.Series] = {}
+
+        # Summary table
+        cols = ("ticker", "peer", "h", "hit", "sign", "resp", "elast", "n")
+        self.tree_sum = ttk.Treeview(
+            self, columns=cols, show="headings", height=8
+        )
+        headings = {
+            "ticker": "Ticker",
+            "peer": "Peer",
+            "h": "H",
+            "hit": "Hit %",
+            "sign": "Sign %",
+            "resp": "Med Resp",
+            "elast": "Med Elast",
+            "n": "N",
+        }
+        for col in cols:
+            self.tree_sum.heading(col, text=headings[col])
+        self.tree_sum.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
         # Plot
         self.fig = plt.Figure(figsize=(6, 4))
@@ -99,19 +121,45 @@ class SpilloverFrame(ttk.Frame):
             horizons=horizons,
         )
         self._populate_events()
+        self._populate_summary()
         self._plot_response()
 
     def _populate_events(self):
+        self._event_rows.clear()
         for i in self.tree.get_children():
             self.tree.delete(i)
         events = (
             self.results["events"].sort_values("date", ascending=False).head(20)
         )
         for _, row in events.iterrows():
-            self.tree.insert(
+            iid = self.tree.insert(
                 "",
                 tk.END,
                 values=(row["date"].date(), row["ticker"], f"{row['rel_change']:.2%}"),
+            )
+            self._event_rows[iid] = row
+
+    def _populate_summary(self):
+        for i in self.tree_sum.get_children():
+            self.tree_sum.delete(i)
+        summary = self.results["summary"].copy()
+        if summary.empty:
+            return
+        summary = summary.sort_values(["hit_rate"], ascending=False).head(50)
+        for _, row in summary.iterrows():
+            self.tree_sum.insert(
+                "",
+                tk.END,
+                values=(
+                    row["ticker"],
+                    row["peer"],
+                    row["h"],
+                    f"{row['hit_rate']:.0%}",
+                    f"{row['sign_concord']:.0%}",
+                    f"{row['median_resp']:.2%}",
+                    f"{row['median_elasticity']:.2f}",
+                    int(row["n"]),
+                ),
             )
 
     def _plot_response(self):
@@ -123,6 +171,30 @@ class SpilloverFrame(ttk.Frame):
         # average peer response across tickers
         grp = summary.groupby("h")["median_resp"].mean()
         self.ax.plot(grp.index, grp.values, marker="o", label="Median resp")
+        self.ax.set_xlabel("Horizon (days)")
+        self.ax.set_ylabel("Peer IV change")
+        self.ax.axhline(0, color="black", linewidth=0.5)
+        self.ax.legend()
+        self.canvas.draw()
+
+    def _on_event_select(self, _):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        row = self._event_rows.get(sel[0])
+        if row is not None:
+            self._plot_event_response(row["ticker"], row["date"])
+
+    def _plot_event_response(self, ticker: str, date):
+        self.ax.clear()
+        df = self.results["responses"]
+        mask = (df["ticker"] == ticker) & (df["t0"] == date)
+        subset = df.loc[mask]
+        if subset.empty:
+            self.canvas.draw()
+            return
+        for peer, grp in subset.groupby("peer"):
+            self.ax.plot(grp["h"], grp["peer_pct"], marker="o", label=peer)
         self.ax.set_xlabel("Horizon (days)")
         self.ax.set_ylabel("Peer IV change")
         self.ax.axhline(0, color="black", linewidth=0.5)

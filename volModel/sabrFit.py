@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional, Dict, Iterable, Tuple
 import math
 import numpy as np
+from functools import lru_cache
 
 # Optional SciPy; we fall back to a tiny Nelder–Mead if missing
 try:
@@ -24,6 +25,62 @@ except Exception:
 
 def _safe(val: float, lo: float = 1e-16) -> float:
     return float(val) if val > lo else float(lo)
+@lru_cache(maxsize=2048)
+def _hagan_logn_terms_cached(
+    F: float,
+    K: float,
+    T: float,
+    alpha: float,
+    beta: float,
+    rho: float,
+    nu: float,
+) -> Tuple[float, float, float, float, float]:
+    """Internal cached core of Hagan's lognormal SABR approximation."""
+    F = _safe(float(F))
+    K = _safe(float(K))
+    T = max(float(T), 1e-10)
+    alpha = max(float(alpha), 1e-10)
+    beta = float(np.clip(beta, 0.0, 1.0))
+    rho = float(np.clip(rho, -0.999, 0.999))
+    nu = max(float(nu), 1e-10)
+
+    L = math.log(F / K)  # log-moneyness
+    one_minus_b = 1.0 - beta
+    FK_pow = (F * K) ** (0.5 * one_minus_b)
+    L2 = L * L
+    L4 = L2 * L2
+    D = 1.0 + (one_minus_b**2 / 24.0) * L2 + (one_minus_b**4 / 1920.0) * L4
+
+    term1 = (alpha / (_safe(FK_pow))) / D
+
+    if abs(L) < 1e-14:
+        zx = 1.0
+    else:
+        z = (nu / alpha) * FK_pow * L
+        sqrt_arg = max(1.0 - 2.0 * rho * z + z * z, 1e-16)
+        num = math.sqrt(sqrt_arg) + z - rho
+        den = 1.0 - rho
+        xz = math.log(max(num / _safe(den), 1e-16))
+        if abs(z) < 1e-8:
+            zx = 1.0 - 0.5 * rho * z
+        else:
+            zx = z / _safe(xz)
+
+    term2 = zx
+    A = (one_minus_b**2 / 24.0) * (alpha * alpha) / (_safe((F * K) ** (one_minus_b)))
+    B = (rho * beta * nu * alpha) / (4.0 * _safe(FK_pow))
+    C = ((2.0 - 3.0 * rho * rho) / 24.0) * (nu * nu)
+    term3 = 1.0 + T * (A + B + C)
+
+    iv = term1 * term2 * term3
+    return (
+        float(term1),
+        float(term2),
+        float(term3),
+        float(iv),
+        float(L),
+    )
+
 
 def hagan_logn_terms(
     F: float,
@@ -34,61 +91,25 @@ def hagan_logn_terms(
     rho: float,
     nu: float,
 ) -> Dict[str, float]:
-    """Return the three multiplicative components (term1, term2, term3) + iv."""
-    F = _safe(float(F))
-    K = _safe(float(K))
-    T = max(float(T), 1e-10)
-    alpha = max(float(alpha), 1e-10)
-    beta = float(np.clip(beta, 0.0, 1.0))
-    rho  = float(np.clip(rho, -0.999, 0.999))
-    nu   = max(float(nu), 1e-10)
+    """Return the three multiplicative components (term1, term2, term3) + iv.
 
-    L = math.log(F / K)  # log-moneyness
-    one_minus_b = 1.0 - beta
-    FK_pow = (F * K) ** (0.5 * one_minus_b)
-    # Denominator D(L) for curvature near ATM
-    L2 = L * L
-    L4 = L2 * L2
-    D = 1.0 + (one_minus_b**2 / 24.0) * L2 + (one_minus_b**4 / 1920.0) * L4
-
-    # ---- term1 ----
-    term1 = (alpha / (_safe(FK_pow))) / D
-
-    # ---- term2: z/x(z) with stable small-z handling ----
-    if abs(L) < 1e-14:
-        zx = 1.0
-    else:
-        z = (nu / alpha) * FK_pow * L
-        # x(z)
-        sqrt_arg = max(1.0 - 2.0 * rho * z + z * z, 1e-16)
-        num = math.sqrt(sqrt_arg) + z - rho
-        den = 1.0 - rho
-        xz = math.log(max(num / _safe(den), 1e-16))
-
-        if abs(z) < 1e-8:
-            # series limit z/x(z) → 1, keep first correction
-            zx = 1.0 - 0.5 * rho * z
-        else:
-            zx = z / _safe(xz)
-
-    term2 = zx
-
-    # ---- term3: time correction ----
-    A = (one_minus_b**2 / 24.0) * (alpha * alpha) / (_safe((F * K) ** (one_minus_b)))
-    B = (rho * beta * nu * alpha) / (4.0 * _safe(FK_pow))
-    C = ((2.0 - 3.0 * rho * rho) / 24.0) * (nu * nu)
-    term3 = 1.0 + T * (A + B + C)
-
-    iv = term1 * term2 * term3
+    A small ``lru_cache`` accelerates repeated evaluations for identical
+    parameters which show up during grid searches and plotting.  The cached
+    core returns plain tuples to avoid accidental mutation of cached results;
+    this thin wrapper materialises them as a dictionary for callers."""
+    term1, term2, term3, iv, L = _hagan_logn_terms_cached(
+        float(F), float(K), float(T), float(alpha), float(beta), float(rho), float(nu)
+    )
     return {
-        "term1": float(term1),
-        "term2": float(term2),
-        "term3": float(term3),
-        "iv": float(iv),
-        "L": float(L),
+        "term1": term1,
+        "term2": term2,
+        "term3": term3,
+        "iv": iv,
+        "L": L,
     }
 
 
+@lru_cache(maxsize=4096)
 def hagan_logn_vol(
     F: float,
     K: float,
@@ -98,8 +119,13 @@ def hagan_logn_vol(
     rho: float,
     nu: float,
 ) -> float:
-    """Convenience: only implied vol (product of terms)."""
-    return hagan_logn_terms(F, K, T, alpha, beta, rho, nu)["iv"]
+    """Convenience: only implied vol (product of terms).
+
+    The function itself is cached as SABR evaluations are often repeated with
+    identical arguments when building smiles or during optimisation."""
+    return _hagan_logn_terms_cached(
+        float(F), float(K), float(T), float(alpha), float(beta), float(rho), float(nu)
+    )[3]
 
 
 def sabr_smile_iv(
