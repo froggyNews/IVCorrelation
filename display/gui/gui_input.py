@@ -499,7 +499,7 @@ class InputPanel(ttk.Frame):
         feat = self.get_feature_mode()
         plot = self.get_plot_type()
 
-        show_T = plot.startswith("Smile")
+        show_T = plot.startswith("Smile") or plot.startswith("Synthetic Surface")
         show_pillars = (
             plot.startswith("Term")
             or plot.startswith("Synthetic Surface")
