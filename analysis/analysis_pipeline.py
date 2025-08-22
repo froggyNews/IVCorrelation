@@ -312,18 +312,7 @@ def _compute_peer_weights_legacy(
         elif method == "ul":
             method, feature = "corr", "ul"
 
-        # Corr-based quick paths
-        if feature in ("iv_atm", "surface", "ul") and method == "corr":
-            return peer_weights_from_correlations(
-                benchmark=target,
-                peers=peers,
-                mode=feature if feature != "ul" else "ul",
-                pillar_days=pillar_days,
-                tenor_days=tenor_days,
-                mny_bins=mny_bins,
-                clip_negative=True,
-                power=1.0,
-            )
+
 
         # PCA surface
         if feature in ("surface",) and method.startswith("pca"):
@@ -380,50 +369,8 @@ def _compute_peer_weights_legacy(
                 mny_bins=mny_bins,
             )
 
-    # New unified-style helpers for corr paths (ATM/Surface matrix)
-    if feature == "atm" and method == "corr":
-        if asof is None:
-            dates = available_dates(ticker=target, most_recent_only=True)
-            asof = dates[0] if dates else None
-        if asof is None:
-            return pd.Series(dtype=float)
-        atm_df, corr_df = compute_atm_corr_pillar_free(
-            get_smile_slice=get_smile_slice,
-            tickers=[target] + peers,
-            asof=asof,
-            max_expiries=6,
-            atm_band=0.05,
-        )
-        return corr_weights(corr_df, target, peers)
 
-    if feature == "surface_vector" and method == "corr":
-        if asof is None:
-            dates = available_dates(ticker=target, most_recent_only=True)
-            asof = dates[0] if dates else None
-        if asof is None:
-            return pd.Series(dtype=float)
-        grids, X, names = surface_feature_matrix(
-            [target] + peers, asof, tenors=tenor_days, mny_bins=mny_bins
-        )
-        df = pd.DataFrame(X, index=list(grids.keys()), columns=names)
-        return corr_weights_from_matrix(df, target, peers)
-
-    # Default legacy builder
-    if asof is None and feature in ("atm", "surface_vector"):
-        dates = available_dates(ticker=target, most_recent_only=True)
-        asof = dates[0] if dates else None
-    return build_peer_weights(
-        method,
-        feature,
-        target,
-        peers,
-        get_smile_slice=get_smile_slice,
-        asof=asof,
-        pillars_days=pillar_days,
-        tenors=tenor_days,
-        mny_bins=mny_bins,
-    )
-
+    
 # -----------------------------------------------------------------------------
 # Betas
 # -----------------------------------------------------------------------------
