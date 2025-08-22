@@ -38,6 +38,7 @@ from analysis.pillars import _fit_smile_get_atm
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from volModel.polyFit import fit_tps_slice
+from volModel.termFit import fit_term_structure, term_structure_iv
 from analysis.confidence_bands import (
     generate_term_structure_confidence_bands,
     svi_confidence_bands,
@@ -1101,12 +1102,36 @@ class PlotManager:
     def _plot_term(self, ax, data, target, asof, x_units, ci):
         """Plot precomputed ATM term structure and optional synthetic overlay."""
         atm_curve = data.get("atm_curve")
+
+        fit_x = fit_y = None
+        if atm_curve is not None and not atm_curve.empty:
+            try:
+                params = fit_term_structure(
+                    atm_curve["T"].to_numpy(float),
+                    atm_curve["atm_vol"].to_numpy(float),
+                )
+                if params["coeff"].size > 0:
+                    fit_x = np.linspace(
+                        float(atm_curve["T"].min()),
+                        float(atm_curve["T"].max()),
+                        100,
+                    )
+                    fit_y = term_structure_iv(fit_x, params)
+            except Exception:
+                fit_x = fit_y = None
+
         plot_atm_term_structure(
             ax,
             atm_curve,
             x_units=x_units,
-            fit=True,
-            show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
+            fit_x=fit_x,
+            fit_y=fit_y,
+            show_ci=bool(
+                ci
+                and ci > 0
+                and isinstance(atm_curve, pd.DataFrame)
+                and {"atm_lo", "atm_hi"}.issubset(atm_curve.columns)
+            ),
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
         synth_bands = data.get("synth_bands")
