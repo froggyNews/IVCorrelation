@@ -4,6 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import pickle
+import queue
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -256,6 +259,44 @@ def compute_or_load(
         pass
 
     return value
+
+
+class WarmupWorker:
+    """Background worker that warms cache entries asynchronously."""
+
+    def __init__(self):
+        self._queue: "queue.Queue[tuple[str, dict, Callable[[], Any], int, str]]" = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def enqueue(
+        self,
+        kind: str,
+        payload: Dict[str, Any],
+        builder_fn: Callable[[], Any],
+        *,
+        ttl_sec: int = 900,
+        serializer: str = "pickle",
+    ) -> None:
+        """Add a job to compute or warm a cache entry."""
+        self._queue.put((kind, payload, builder_fn, ttl_sec, serializer))
+
+    def _run(self) -> None:
+        while True:
+            kind, payload, builder_fn, ttl_sec, serializer = self._queue.get()
+            try:
+                compute_or_load(
+                    kind,
+                    payload,
+                    builder_fn,
+                    ttl_sec=ttl_sec,
+                    serializer=serializer,
+                )
+            except Exception:
+                pass
+            finally:
+                self._queue.task_done()
+                time.sleep(0.01)
 
 
 # ---------------------------------------------------------------------
