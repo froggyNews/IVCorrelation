@@ -401,8 +401,8 @@ class PlotManager:
             )
             return
 
-        # --- Corr Matrix ---
-        elif plot_type.startswith("Corr Matrix"):
+        # --- Relative Weight Matrix ---
+        elif plot_type.startswith("Relative Weight Matrix"):
             self._plot_corr_matrix(ax, target, peers, asof, pillars, weight_mode, atm_band)
             return
 
@@ -436,9 +436,9 @@ class PlotManager:
         self.stop_animation()
         
         try:
-            if plot_type == "smile":
+            if plot_type.startswith("Smile"):
                 return self._create_animated_smile(ax, settings)
-            elif plot_type == "surface":
+            elif plot_type.startswith("Term"):
                 return self._create_animated_surface(ax, settings)
             else:
                 return False  # Animation not supported for this plot type
@@ -1202,7 +1202,7 @@ class PlotManager:
     # -------------------- animation control --------------------
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if animation is supported for the given plot type."""
-        return plot_type in ["smile", "surface"]
+        return plot_type.startswith("Smile")
 
     def is_animation_active(self) -> bool:
         """Check if an animation is currently active."""
