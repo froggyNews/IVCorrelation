@@ -74,47 +74,24 @@ class WeightConfig:
     max_expiries: int = 6
 
     @classmethod
-    def from_legacy_mode(cls, mode: str, **kwargs) -> "WeightConfig":
-        """
-        Accepts 'corr_iv_atm', 'pca_surface_grid', 'ul', 'equal', 'oi', etc.
+    def from_mode(cls, mode: str, **kwargs) -> "WeightConfig":
+        """Parse a canonical mode string into a :class:`WeightConfig`.
+
+        Parameters
+        ----------
+        mode:
+            Strings like ``"corr_iv_atm"`` or ``"pca_surface"``.  If only a
+            method is supplied (e.g. ``"oi"``) the feature set defaults to
+            ``"iv_atm"``.
         """
         mode = (mode or "").lower().strip()
-
-        method_map = {
-            "corr": WeightMethod.CORRELATION,
-            "correlation": WeightMethod.CORRELATION,
-            "pca": WeightMethod.PCA,
-            "cosine": WeightMethod.COSINE,
-            "equal": WeightMethod.EQUAL,
-            "oi": WeightMethod.OPEN_INTEREST,
-            "open_interest": WeightMethod.OPEN_INTEREST,
-            "iv": WeightMethod.CORRELATION,  # legacy
-        }
-        feature_map = {
-            "atm": FeatureSet.ATM,
-            "iv_atm": FeatureSet.ATM,
-            "iv_atm_ranks": FeatureSet.ATM_RANKS,
-            "atm_ranks": FeatureSet.ATM_RANKS,
-            "atm_ranked": FeatureSet.ATM_RANKS,
-            "surface": FeatureSet.SURFACE,
-            "surface_full": FeatureSet.SURFACE,
-            "surface_vector": FeatureSet.SURFACE_VECTOR,
-            "surface_grid": FeatureSet.SURFACE_VECTOR,
-            "underlying": FeatureSet.UNDERLYING_PX,
-            "underlying_px": FeatureSet.UNDERLYING_PX,
-            "ul": FeatureSet.UNDERLYING_PX,
-            "ul_px": FeatureSet.UNDERLYING_PX,
-        }
-
-        if mode in feature_map:
-            method_str, feature_str = "corr", mode
-        elif "_" in mode:
+        if "_" in mode:
             method_str, feature_str = mode.split("_", 1)
         else:
             method_str, feature_str = mode, "iv_atm"
 
-        method = method_map.get(method_str, WeightMethod.CORRELATION)
-        feature_set = feature_map.get(feature_str, FeatureSet.ATM)
+        method = WeightMethod(method_str)
+        feature_set = FeatureSet(feature_str)
         return cls(method=method, feature_set=feature_set, **kwargs)
 
 # -----------------------------------------------------------------------------
@@ -621,35 +598,10 @@ def compute_unified_weights(
     peers  : Iterable[str]
     mode   : weight mode string (e.g., "corr_iv_atm", "pca_surface_grid", "ul", "equal", "oi")
              or WeightConfig
-    **kwargs : forwarded to WeightConfig.from_legacy_mode
+    **kwargs : forwarded to :meth:`WeightConfig.from_mode`
     """
     if isinstance(mode, str):
-        logger.info("Converting legacy mode: %r -> %r", mode, mode)
-        cfg = WeightConfig.from_legacy_mode(mode, **kwargs)
-        logger.info("Final mapping: method=%s, feature_set=%s", cfg.method, cfg.feature_set)
+        cfg = WeightConfig.from_mode(mode, **kwargs)
     else:
         cfg = mode
     return _weight_computer.compute_weights(target, peers, cfg)
-
-
-# Legacy compatibility wrapper
-def compute_peer_weights_unified(
-    target: str,
-    peers: Iterable[str],
-    weight_mode: str = "corr_iv_atm",
-    asof: str | None = None,
-    pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
-    tenor_days: Iterable[int] = (7, 30, 60, 90, 180, 365),
-    mny_bins: Tuple[Tuple[float, float], ...] = ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
-    max_expiries: int = 6,
-) -> pd.Series:
-    return compute_unified_weights(
-        target=target,
-        peers=peers,
-        mode=weight_mode,
-        asof=asof,
-        pillars_days=tuple(pillar_days),
-        tenors=tuple(tenor_days),
-        mny_bins=tuple(mny_bins),
-        max_expiries=max_expiries,
-    )

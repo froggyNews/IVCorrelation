@@ -12,7 +12,7 @@ def test_weights_recomputed_on_weight_mode_change(monkeypatch):
         index=["PEER", "TARGET"],
         columns=["PEER", "TARGET"],
     )
-    pm.last_corr_meta = {"weight_mode": "iv_atm"}
+    pm.last_corr_meta = {"weight_mode": "corr_iv_atm"}
 
     calls = {"compute": 0}
 
@@ -26,7 +26,7 @@ def test_weights_recomputed_on_weight_mode_change(monkeypatch):
         "analysis.unified_weights.compute_unified_weights", fake_compute_unified_weights
     )
 
-    pm._weights_from_ui_or_matrix("TARGET", ["PEER"], "iv_atm")
-    pm._weights_from_ui_or_matrix("TARGET", ["PEER"], "ul")
+    pm._weights_from_ui_or_matrix("TARGET", ["PEER"], "corr_iv_atm")
+    pm._weights_from_ui_or_matrix("TARGET", ["PEER"], "corr_ul")
 
     assert calls["compute"] == 2

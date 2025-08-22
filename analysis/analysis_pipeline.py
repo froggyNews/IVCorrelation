@@ -44,7 +44,6 @@ from .beta_builder import (
     peer_weights_from_correlations,
     build_vol_betas,
     save_correlations,
-    build_peer_weights,
 )
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm, compute_atm_by_expiry, DEFAULT_PILLARS_DAYS, atm_curve_for_ticker_on_date
 from .correlation_utils import (
@@ -208,42 +207,15 @@ def build_synthetic_iv_series(
 def compute_peer_weights(
     target: str,
     peers: Iterable[str],
-    weight_mode: Union[str, Tuple[str, str]] = ("corr", "iv_atm"),
+    weight_mode: str = "corr_iv_atm",
     asof: str | None = None,
     pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
     tenor_days: Iterable[int] = DEFAULT_TENORS,
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
 ) -> pd.Series:
-    """
-    Compute portfolio weights.
-
-    For legacy tuple ``weight_mode`` inputs or the special ``"surface_grid"`` mode,
-    this function dispatches to classic helpers so tests can intercept those calls.
-    Otherwise it delegates to :func:`analysis.unified_weights.compute_unified_weights`.
-    """
+    """Compute portfolio weights via unified weight computation."""
     target = target.upper()
     peers = [p.upper() for p in peers]
-
-    # Legacy tuple path
-    if isinstance(weight_mode, tuple):
-        method, feature = weight_mode
-        return build_peer_weights(
-            method, feature, target, peers,
-            asof=asof,
-            pillar_days=pillar_days,
-            tenor_days=tenor_days,
-            mny_bins=mny_bins,
-        )
-
-    # Explicit surface_grid legacy path
-    if weight_mode == "surface_grid":
-        return build_vol_betas(
-            mode=weight_mode,
-            benchmark=target,
-            tenor_days=tenor_days,
-            pillar_days=pillar_days,
-            mny_bins=mny_bins,
-        ).iloc[0]
 
     from analysis.unified_weights import compute_unified_weights
 
@@ -264,7 +236,7 @@ def compute_peer_weights(
 def build_synthetic_surface_corrweighted(
     target: str,
     peers: Iterable[str],
-    weight_mode: str = "iv_atm",
+    weight_mode: str = "corr_iv_atm",
     cfg: PipelineConfig = PipelineConfig(),
     most_recent_only: bool = True,
     asof: str | None = None,
@@ -287,7 +259,7 @@ def build_synthetic_surface_corrweighted(
 def build_synthetic_iv_series_corrweighted(
     target: str,
     peers: Iterable[str],
-    weight_mode: str = "iv_atm",
+    weight_mode: str = "corr_iv_atm",
     pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLARS_DAYS,
     tolerance_days: float = 7.0,
     asof: str | None = None,
