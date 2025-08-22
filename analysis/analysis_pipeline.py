@@ -60,7 +60,13 @@ from .beta_builder.correlation_utils import (
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from .model_params_logger import append_params, load_model_params
-from .confidence_bands import synthetic_etf_pillar_bands
+from .confidence_bands import (
+    Bands,
+    synthetic_etf_pillar_bands,
+    svi_confidence_bands,
+    sabr_confidence_bands,
+    tps_confidence_bands,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -868,6 +874,23 @@ def prepare_smile_data(
             except Exception:
                 pass
 
+        bands_map: Dict[str, Bands] = {}
+        if ci and ci > 0:
+            m_grid = np.linspace(0.7, 1.3, 121)
+            K_grid = m_grid * S
+            try:
+                bands_map["svi"] = svi_confidence_bands(S, K, T_val, IV, K_grid, level=float(ci))
+            except Exception:
+                pass
+            try:
+                bands_map["sabr"] = sabr_confidence_bands(S, K, T_val, IV, K_grid, level=float(ci))
+            except Exception:
+                pass
+            try:
+                bands_map["tps"] = tps_confidence_bands(S, K, T_val, IV, K_grid, level=float(ci))
+            except Exception:
+                pass
+
         fit_by_expiry[T_val] = {
             "svi": svi_params,
             "sabr": sabr_params,
@@ -875,6 +898,8 @@ def prepare_smile_data(
             "sens": sens_params,
             "expiry": str(expiry_dt) if expiry_dt is not None else None,
         }
+        if bands_map:
+            fit_by_expiry[T_val]["bands"] = bands_map
 
     fit_entry = fit_by_expiry.get(T0, {})
     fit_info = {

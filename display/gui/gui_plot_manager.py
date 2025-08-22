@@ -259,6 +259,7 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "overlay_peers": overlay_peers,
                 "max_expiries": max_expiries,
+                "ci": float(ci),
             }
 
             def _builder():
@@ -876,15 +877,25 @@ class PlotManager:
                 pre[model] = pre_params
                 fit_map[T0] = pre
         bands = None
+        bands_map = pre.get("bands") if isinstance(pre, dict) else None
         if ci and ci > 0:
-            m_grid = np.linspace(0.7, 1.3, 121)
-            K_grid = m_grid * S
-            if model == "svi":
-                bands = svi_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
-            elif model == "sabr":
-                bands = sabr_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+            if isinstance(bands_map, dict) and model in bands_map:
+                bands = bands_map[model]
             else:
-                bands = tps_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+                m_grid = np.linspace(0.7, 1.3, 121)
+                K_grid = m_grid * S
+                if model == "svi":
+                    bands = svi_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+                elif model == "sabr":
+                    bands = sabr_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+                else:
+                    bands = tps_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+                if isinstance(pre, dict):
+                    if not isinstance(bands_map, dict):
+                        bands_map = {}
+                    bands_map[model] = bands
+                    pre["bands"] = bands_map
+                    fit_map[T0] = pre
         info = fit_and_plot_smile(
             ax,
             S=S,
