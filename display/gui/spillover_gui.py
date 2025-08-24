@@ -11,6 +11,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analysis.spillover.vol_spillover import run_spillover, load_iv_data
+from analysis.cache import compute_or_load
+import threading
 
 
 class SpilloverFrame(ttk.Frame):
@@ -112,17 +114,79 @@ class SpilloverFrame(ttk.Frame):
             messagebox.showerror("Data missing", f"Cannot find {iv_path}")
             return
         df = load_iv_data(str(iv_path), use_raw=self.var_raw.get())
-        self.results = run_spillover(
-            df,
-            tickers=tickers,
-            threshold=thr,
-            lookback=lookback,
-            top_k=topk,
-            horizons=horizons,
+        payload = {
+            "tickers": sorted(tickers),
+            "threshold": thr,
+            "lookback": lookback,
+            "top_k": topk,
+            "horizons": tuple(horizons),
+            "asof": df["date"].max().floor("min").isoformat(),
+        }
+
+        def _builder():
+            return run_spillover(
+                df,
+                tickers=tickers,
+                threshold=thr,
+                lookback=lookback,
+                top_k=topk,
+                horizons=horizons,
+            )
+
+        self.results = compute_or_load(
+            "spill", payload, _builder, "data/calculations.db"
         )
         self._populate_events()
         self._populate_summary()
         self._plot_response()
+
+    def warmup(self, tickers=None):
+        if tickers is None:
+            tickers = [
+                t.strip().upper()
+                for t in self.ent_tickers.get().split(",")
+                if t.strip()
+            ]
+        if not tickers:
+            return
+        try:
+            lookback = int(self.ent_lookback.get())
+            thr = float(self.ent_threshold.get()) / 100.0
+            topk = int(self.ent_topk.get())
+            horizons = [
+                int(h) for h in self.ent_horizons.get().split(",") if h
+            ]
+        except ValueError:
+            return
+        iv_path = ROOT / "data" / "iv_daily.parquet"
+        if not iv_path.exists():
+            return
+        df = load_iv_data(str(iv_path), use_raw=self.var_raw.get())
+        payload = {
+            "tickers": sorted(tickers),
+            "threshold": thr,
+            "lookback": lookback,
+            "top_k": topk,
+            "horizons": tuple(horizons),
+            "asof": df["date"].max().floor("min").isoformat(),
+        }
+
+        def _builder():
+            return run_spillover(
+                df,
+                tickers=tickers,
+                threshold=thr,
+                lookback=lookback,
+                top_k=topk,
+                horizons=horizons,
+            )
+
+        threading.Thread(
+            target=lambda: compute_or_load(
+                "spill", payload, _builder, "data/calculations.db"
+            ),
+            daemon=True,
+        ).start()
 
     def _populate_events(self):
         self._event_rows.clear()

@@ -123,6 +123,8 @@ class BrowserApp(tk.Tk):
 
         self.spill_win = None
 
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_change)
+
     # ---------- events ----------
     def _on_target_change(self, *_):
         """
@@ -178,6 +180,13 @@ class BrowserApp(tk.Tk):
             self.after(0, update_ui)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_tab_change(self, event):
+        if event.widget.select() == str(self.tab_spillover):
+            tickers = [self.inputs.get_target()] + self.inputs.get_peers()
+            tickers = [t for t in tickers if t]
+            if tickers:
+                self.tab_spillover.warmup(tickers)
 
     def _on_download(self):
         """
