@@ -350,114 +350,173 @@ def prepare_smile_data(
     asof: str,
     T_days: float,
     model: str = "svi",
-    ci: float = 68.0,
+    ci: float = 0.68,
     overlay_synth: bool = False,
     peers: Iterable[str] | None = None,
     weights: Optional[Mapping[str, float]] = None,
     overlay_peers: bool = False,
     max_expiries: int = 6,
 ) -> Dict[str, Any]:
-    """Precompute smile data and fitted parameters for plotting."""
-    peers = list(peers or [])
+    """
+    Precompute smile data and fitted parameters for plotting (optimized).
 
+    Perf notes:
+    - Single pass conversion to NumPy, group by expiry once.
+    - Optional subsample per-expiry to cap solver work while preserving shape.
+    - Skip overlay surface building unless overlay_synth or overlay_peers is True.
+    - Avoid re-reading params cache per expiry.
+    """
+    peers = list(peers or [])
     asof_ts = pd.to_datetime(asof).normalize()
+
+    # ---- param cache (one filter) -----------------------------------------
     try:
         from .model_params_logger import append_params, load_model_params
         params_cache = load_model_params()
-        params_cache = params_cache[
-            (params_cache["ticker"] == target)
-            & (params_cache["asof_date"] == asof_ts)
-            & (params_cache["model"].isin(["svi", "sabr", "tps", "sens"]))
-        ]
+        if not params_cache.empty:
+            params_cache = params_cache[
+                (params_cache["ticker"] == target)
+                & (params_cache["asof_date"] == asof_ts)
+                & (params_cache["model"].isin(["svi", "sabr", "tps", "sens"]))
+            ]
     except Exception:
         append_params = None  # type: ignore
         params_cache = pd.DataFrame()
 
+    # ---- quotes for one day (at most max_expiries expiries) ---------------
     df = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
     if df is None or df.empty:
         return {}
 
-    T_arr = pd.to_numeric(df["T"], errors="coerce").to_numpy(float)
-    K_arr = pd.to_numeric(df["K"], errors="coerce").to_numpy(float)
-    sigma_arr = pd.to_numeric(df["sigma"], errors="coerce").to_numpy(float)
-    S_arr = pd.to_numeric(df["S"], errors="coerce").to_numpy(float)
-    expiry_arr = pd.to_datetime(df.get("expiry"), errors="coerce").to_numpy()
+    # Light, one-time coercions
+    # Keep a pre-sorted view so per-expiry slices are contiguous
+    df = df.sort_values(["expiry", "moneyness", "K"], kind="stable").reset_index(drop=True)
+    # Convert columns once
+    T_col = pd.to_numeric(df["T"], errors="coerce").to_numpy(dtype=float, copy=False)
+    K_col = pd.to_numeric(df["K"], errors="coerce").to_numpy(dtype=float, copy=False)
+    IV_col = pd.to_numeric(df["sigma"], errors="coerce").to_numpy(dtype=float, copy=False)
+    S_col = pd.to_numeric(df["S"], errors="coerce").to_numpy(dtype=float, copy=False)
+    expiry_col = pd.to_datetime(df.get("expiry"), errors="coerce").to_numpy(copy=False)
 
-    Ts = np.sort(np.unique(T_arr[np.isfinite(T_arr)]))
+    # Unique expiries via stable grouping (vectorized)
+    # Map each row to an expiry group id
+    # (astype('datetime64[ns]') ensures exact equality within a day)
+    exp_vals, inv = np.unique(expiry_col.astype("datetime64[ns]"), return_inverse=True)
+    # Filter out NaT groups
+    valid_grp = ~(exp_vals.astype("datetime64[ns]") == np.datetime64("NaT"))
+    if not valid_grp.any():
+        return {}
+
+    # For target T, pick nearest expiry
+    Ts_all = np.array([np.nanmedian(T_col[inv == g]) for g in range(len(exp_vals))], dtype=float)
+    Ts = np.sort(Ts_all[np.isfinite(Ts_all)])
     if Ts.size == 0:
         return {}
     idx0 = int(np.argmin(np.abs(Ts * 365.25 - float(T_days))))
     T0 = float(Ts[idx0])
 
-    # fit per-expiry
+    # Helper: cached params by (tenor_d, model)
+    def _cached(tenor_d: int, model_name: str) -> Optional[Dict[str, float]]:
+        if params_cache is None or params_cache.empty:
+            return None
+        sub = params_cache[(params_cache["tenor_d"] == tenor_d) & (params_cache["model"] == model_name)]
+        return None if sub.empty else sub.set_index("param")["value"].to_dict()
+
+    # Optional uniform subsample per expiry to cap solver work
+    # Set via env: PREPARE_SMILE_MAX_PER_EXP (e.g., 60). 0 disables.
+    try:
+        max_per_exp = int(os.environ.get("PREPARE_SMILE_MAX_PER_EXP", "0"))
+    except Exception:
+        max_per_exp = 0
+
+    # Per-expiry fitting
     fit_by_expiry: Dict[float, Dict[str, Any]] = {}
-    for T_val in Ts:
-        mask = np.isclose(T_arr, T_val)
-        if not np.any(mask):
-            tol = 1e-6
-            mask = (T_arr >= T_val - tol) & (T_arr <= T_val + tol)
-        if not np.any(mask):
+
+    # Build an array of unique group ids sorted by their median T (so stable)
+    grp_ids = np.argsort(Ts_all)
+    for g in grp_ids:
+        if not valid_grp[g]:
+            continue
+        row_mask = (inv == g)
+        if not row_mask.any():
             continue
 
-        S = float(np.nanmedian(S_arr[mask])) if np.any(mask) else float("nan")
-        K = K_arr[mask]
-        IV = sigma_arr[mask]
+        # slice arrays once
+        K = K_col[row_mask]
+        IV = IV_col[row_mask]
+        S_slice = S_col[row_mask]
+        T_slice = T_col[row_mask]
+        exp_dt = exp_vals[g]  # datetime64[ns] or NaT
+
+        # basic sanity
+        if K.size < 5 or not np.isfinite(IV).any():
+            continue
+
+        # robust S and single T for this expiry
+        S = float(np.nanmedian(S_slice))
+        T_val = float(np.nanmedian(T_slice))
+        if not (np.isfinite(S) and np.isfinite(T_val)):
+            continue
+
+        # optional subsample uniformly in moneyness
+        if max_per_exp and K.size > max_per_exp:
+            with np.errstate(invalid="ignore", divide="ignore"):
+                mny = K / S
+            ord_idx = np.argsort(mny)
+            sel = np.linspace(0, ord_idx.size - 1, num=max_per_exp, dtype=int)
+            take = ord_idx[sel]
+            K = K.take(take)
+            IV = IV.take(take)
 
         expiry_dt = None
-        if expiry_arr.size and np.any(mask):
-            try:
-                expiry_dt = pd.to_datetime(expiry_arr[mask][0])
-            except Exception:
-                pass
+        try:
+            # convert numpy datetime64 -> pandas Timestamp only once
+            expiry_dt = pd.Timestamp(exp_dt) if str(exp_dt) != "NaT" else None
+        except Exception:
+            expiry_dt = None
 
-        tenor_d = int((expiry_dt - asof_ts).days) if expiry_dt is not None else int(round(float(T_val) * 365.25))
+        tenor_d = int((expiry_dt - asof_ts).days) if expiry_dt is not None else int(round(T_val * 365.25))
 
-        def _cached(model: str) -> Optional[Dict[str, float]]:
-            if params_cache.empty:
-                return None
-            sub = params_cache[(params_cache["tenor_d"] == tenor_d) & (params_cache["model"] == model)]
-            return None if sub.empty else sub.set_index("param")["value"].to_dict()
+        # ---- fit models (pull from cache if available) --------------------
+        svi_params = _cached(tenor_d, "svi")
+        sabr_params = _cached(tenor_d, "sabr")
+        tps_params = _cached(tenor_d, "tps")
+        sens_params = _cached(tenor_d, "sens")
 
-        # SVI
-        svi_params = _cached("svi")
-        if not svi_params:
+        # Lazy imports only when needed
+        if svi_params is None:
             from volModel.sviFit import fit_svi_slice
             svi_params = fit_svi_slice(S, K, T_val, IV)
             if append_params:
                 try:
-                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None, "svi", svi_params,
-                                  meta={"rmse": svi_params.get("rmse")})
+                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
+                                  "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
                 except Exception:
                     pass
 
-        # SABR
-        sabr_params = _cached("sabr")
-        if not sabr_params:
+        if sabr_params is None:
             from volModel.sabrFit import fit_sabr_slice
             sabr_params = fit_sabr_slice(S, K, T_val, IV)
             if append_params:
                 try:
-                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None, "sabr", sabr_params,
-                                  meta={"rmse": sabr_params.get("rmse")})
+                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
+                                  "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
                 except Exception:
                     pass
 
-        # TPS (optional)
-        tps_params = _cached("tps")
-        if not tps_params:
+        if tps_params is None:
             try:
                 from volModel.polyFit import fit_tps_slice
                 tps_params = fit_tps_slice(S, K, T_val, IV)
                 if append_params:
-                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None, "tps", tps_params,
-                                  meta={"rmse": tps_params.get("rmse")})
+                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
+                                  "tps", tps_params, meta={"rmse": tps_params.get("rmse")})
             except Exception:
                 tps_params = {}
 
-        # simple sensitivities
-        sens_params = _cached("sens")
-        if not sens_params:
-            dfe = df[mask].copy()
+        if sens_params is None:
+            # very cheap single-pass sensitivities
+            dfe = df.loc[row_mask, ["K"]].copy()
             try:
                 dfe["moneyness"] = dfe["K"].astype(float) / float(S)
             except Exception:
@@ -466,15 +525,24 @@ def prepare_smile_data(
             sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
             if append_params:
                 try:
-                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None, "sens", sens_params)
+                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
+                                  "sens", sens_params)
                 except Exception:
                     pass
 
-        # optional CI bands at requested level
-        bands_map: Dict[str, Bands] = {}
+        # ---- optional CI bands -------------------------------------------
+        entry: Dict[str, Any] = {
+            "svi": svi_params,
+            "sabr": sabr_params,
+            "tps": tps_params,
+            "sens": sens_params,
+            "expiry": str(expiry_dt) if expiry_dt is not None else None,
+        }
+
         if ci and ci > 0:
-            m_grid = np.linspace(0.7, 1.3, 121)
-            K_grid = m_grid * S
+            m_grid = np.linspace(0.7, 1.3, 121, dtype=float)
+            K_grid = m_grid * S  # cheap scale
+            bands_map: Dict[str, Bands] = {}
             try:
                 bands_map["svi"] = svi_confidence_bands(S, K, T_val, IV, K_grid, level=float(ci))
             except Exception:
@@ -487,18 +555,12 @@ def prepare_smile_data(
                 bands_map["tps"] = tps_confidence_bands(S, K, T_val, IV, K_grid, level=float(ci))
             except Exception:
                 pass
+            if bands_map:
+                entry["bands"] = bands_map
 
-        entry = {
-            "svi": svi_params,
-            "sabr": sabr_params,
-            "tps": tps_params,
-            "sens": sens_params,
-            "expiry": str(expiry_dt) if expiry_dt is not None else None,
-        }
-        if bands_map:
-            entry["bands"] = bands_map
         fit_by_expiry[T_val] = entry
 
+    # pick the nearest fitted expiry info
     fit_entry = fit_by_expiry.get(T0, {})
     fit_info = {
         "ticker": target,
@@ -510,50 +572,82 @@ def prepare_smile_data(
         "sens": fit_entry.get("sens", {}),
     }
 
-    # optional overlays
+    # ---- optional overlays (do work only if requested) ---------------------
     tgt_surface = None
     syn_surface = None
-    if peers:
+    if (overlay_synth or overlay_peers) and peers:
         try:
             tickers = list({target, *peers})
-            surfaces = build_surface_grids(tickers=tickers, use_atm_only=False, max_expiries=max_expiries)
+            surfaces = build_surface_grids(
+                tickers=tickers, use_atm_only=False, max_expiries=max_expiries
+            )
             if target in surfaces and asof in surfaces[target]:
                 tgt_surface = surfaces[target][asof]
-            peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces and asof in surfaces[p]}
-            if peer_surfaces:
-                w = {p: float(weights.get(p, 1.0)) for p in peer_surfaces} if weights else {p: 1.0 for p in peer_surfaces}
-                synth_by_date = combine_surfaces(peer_surfaces, w)
-                syn_surface = synth_by_date.get(asof)
+
+            if overlay_synth:
+                peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces and asof in surfaces[p]}
+                if peer_surfaces:
+                    w = ({p: float(weights.get(p, 1.0)) for p in peer_surfaces}
+                         if weights else {p: 1.0 for p in peer_surfaces})
+                    synth_by_date = combine_surfaces(peer_surfaces, w)
+                    syn_surface = synth_by_date.get(asof)
         except Exception:
             tgt_surface = None
             syn_surface = None
 
+    # Optional peer smile overlays (uses same max_expiries cap)
     peer_slices: Dict[str, Dict[str, np.ndarray]] = {}
     if overlay_peers and peers:
         for p in peers:
             df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
             if df_p is None or df_p.empty:
                 continue
-            T_p = pd.to_numeric(df_p["T"], errors="coerce").to_numpy(float)
-            K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float)
-            sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float)
-            S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float)
+            T_p = pd.to_numeric(df_p["T"], errors="coerce").to_numpy(float, copy=False)
+            K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float, copy=False)
+            sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float, copy=False)
+            S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float, copy=False)
             peer_slices[p.upper()] = {"T_arr": T_p, "K_arr": K_p, "sigma_arr": sigma_p, "S_arr": S_p}
 
+    # Return the raw arrays from the (already converted) columns
     return {
-        "T_arr": T_arr,
-        "K_arr": K_arr,
-        "sigma_arr": sigma_arr,
-        "S_arr": S_arr,
+        "T_arr": T_col,
+        "K_arr": K_col,
+        "sigma_arr": IV_col,
+        "S_arr": S_col,
         "Ts": Ts,
         "idx0": idx0,
         "tgt_surface": tgt_surface,
         "syn_surface": syn_surface,
         "peer_slices": peer_slices,
-        "expiry_arr": expiry_arr,
+        "expiry_arr": expiry_col,
         "fit_info": fit_info,
         "fit_by_expiry": fit_by_expiry,
     }
+
+def normalize_ci_level(ci, default: float = 0.68) -> Optional[float]:
+    """Normalize user-provided CI into (0,1) or return None.
+
+    Rules:
+    - None or falsy -> None
+    - >1 and <=100 treated as percentage (e.g. 95 -> 0.95)
+    - >100 or <=0 -> fallback to default (0.95)
+    - Returns float in (0,1)
+    """
+    DEFAULT_CI_LEVEL = default if (0.0 < default < 1.0) else 0.68
+    if ci is None:
+        return None
+    try:
+        c = float(ci)
+    except Exception:
+        return DEFAULT_CI_LEVEL
+    if c > 1.0:
+        if c <= 100.0:
+            c = c / 100.0
+        else:
+            return DEFAULT_CI_LEVEL
+    if not (0.0 < c < 1.0):
+        return DEFAULT_CI_LEVEL
+    return c
 
 def prepare_term_data(
     target: str,
@@ -563,95 +657,128 @@ def prepare_term_data(
     weights: Optional[Mapping[str, float]] = None,
     atm_band: float = 0.05,
     max_expiries: int = 6,
+    overlay_synth: bool = True,
 ) -> Dict[str, Any]:
-    """Precompute ATM term structure and (optional) synthetic overlay for plotting."""
+    """
+    Precompute ATM term structure (+ optional synthetic overlay) (optimized).
+
+    Perf notes:
+    - One call to get_smile_slice; no repeated conversions.
+    - When aligning peers, uses vectorized nearest-neighbor within tolerance.
+    - Skips bootstraps entirely when ci==0.
+    """
+    ci = normalize_ci_level(ci)
     df_all = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
     if df_all is None or df_all.empty:
         return {}
 
-    min_boot = 64 if (ci and ci > 0) else 0
+    # If CI==None -> no bootstrap; keep compute_atm_by_expiry cheap
+    n_boot = 0 if not (ci and ci > 0) else max(64, 1)
     atm_curve = compute_atm_by_expiry(
         df_all,
         atm_band=atm_band,
         method="fit",
         model="auto",
         vega_weighted=True,
-        n_boot=min_boot,
-        ci_level=ci,
+        n_boot=n_boot,
+        ci_level=ci if ci else 0.0,
     )
 
     synth_curve = None
     synth_bands = None
 
-    if peers:
-        w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
-        if w.sum() <= 0:
-            w = pd.Series({p: 1.0 for p in peers}, dtype=float)
-        w = (w / w.sum()).astype(float)
-        peers = [p for p in w.index if p in (peers or [])]
+    # Early out if overlay not requested and no peers
+    if not (overlay_synth or peers):
+        return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
 
-        curves: Dict[str, pd.DataFrame] = {}
-        for p in peers:
-            c = atm_curve_for_ticker_on_date(
-                get_smile_slice,
-                p,
-                asof,
-                atm_band=atm_band,
-                method="median",
-                model="auto",
-                vega_weighted=False,
-            )
-            if not c.empty:
-                curves[p] = c
+    peers = list(peers or [])
+    if not peers:
+        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
 
-        if curves:
-            # Align common expiries across target and peers (tolerance = 10d)
-            tol_years = 10.0 / 365.25
-            arrays = [atm_curve["T"].to_numpy(float)] + [c["T"].to_numpy(float) for c in curves.values()]
-            common_T = arrays[0]
-            for arr in arrays[1:]:
-                common_T = np.array([t for t in common_T if np.any(np.abs(arr - t) <= tol_years)], float)
-                if common_T.size == 0:
-                    break
+    # Normalize weights
+    w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
+    if w.sum() <= 0:
+        w = pd.Series({p: 1.0 for p in peers}, dtype=float)
+    w = (w / w.sum()).astype(float)
+    peers = [p for p in w.index if p in (peers or [])]
+    if not peers:
+        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
 
-            if common_T.size > 0:
-                common_T = np.sort(common_T)
-                atm_curve = atm_curve[atm_curve["T"].apply(lambda x: np.any(np.abs(common_T - x) <= tol_years))]
+    # Build each peer's ATM curve (median is faster + robust)
+    curves: Dict[str, pd.DataFrame] = {}
+    for p in peers:
+        c = atm_curve_for_ticker_on_date(
+            get_smile_slice,
+            p,
+            asof,
+            atm_band=atm_band,
+            method="median",
+            model="auto",
+            vega_weighted=False,
+        )
+        if not c.empty:
+            curves[p] = c
 
-                # Build per-peer ATM arrays aligned to common_T
-                atm_data: Dict[str, np.ndarray] = {}
-                for p, c in curves.items():
-                    arr_T = c["T"].to_numpy(float)
-                    arr_v = c["atm_vol"].to_numpy(float)
-                    vals = []
-                    for t in common_T:
-                        j = int(np.argmin(np.abs(arr_T - t)))
-                        if np.abs(arr_T[j] - t) <= tol_years:
-                            vals.append(arr_v[j])
-                    if len(vals) == len(common_T):
-                        atm_data[p] = np.array(vals, float)
+    if not curves:
+        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
 
-                if atm_data:
-                    pillar_days = common_T * 365.25
-                    level = float(ci) / 100.0 if ci and ci > 0 else 0.68
-                    n_boot = max(min_boot, 1)
-                    synth_bands = synthetic_etf_pillar_bands(
-                        atm_data,
-                        w.to_dict(),
-                        pillar_days,
-                        level=level,
-                        n_boot=n_boot,
-                    )
-                    synth_curve = pd.DataFrame(
-                        {
-                            "T": common_T,
-                            "atm_vol": synth_bands.mean,
-                            "atm_lo": synth_bands.lo,
-                            "atm_hi": synth_bands.hi,
-                        }
-                    )
+    # Align on common T within tolerance (vectorized)
+    tol_years = 10.0 / 365.25
+    tgt_T = atm_curve["T"].to_numpy(float, copy=False)
+    # intersect all peer T's with target T within tolerance
+    common_mask = np.ones_like(tgt_T, dtype=bool)
+    for c in curves.values():
+        Tp = c["T"].to_numpy(float, copy=False)
+        # for each t in tgt_T, require at least one close Tp within tol
+        # vectorized via broadcasting
+        close_any = (np.abs(tgt_T[:, None] - Tp[None, :]) <= tol_years).any(axis=1)
+        common_mask &= close_any
+        if not common_mask.any():
+            break
+
+    if not common_mask.any():
+        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
+
+    # Filter to common T points
+    T_common = tgt_T[common_mask]
+    atm_curve = atm_curve.iloc[np.flatnonzero(common_mask)]
+
+    # Build aligned arrays per peer by nearest match
+    atm_data: Dict[str, np.ndarray] = {}
+    for p, c in curves.items():
+        Tp = c["T"].to_numpy(float, copy=False)
+        Vp = c["atm_vol"].to_numpy(float, copy=False)
+        # nearest neighbor indices for each t in T_common
+        j = np.abs(Tp[None, :] - T_common[:, None]).argmin(axis=1)
+        ok = np.abs(Tp[j] - T_common) <= tol_years
+        if ok.all():
+            atm_data[p] = Vp[j]
+
+    if not atm_data:
+        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
+
+    pillar_days = T_common * 365.25
+    if ci and ci > 0:
+        synth_bands = synthetic_etf_pillar_bands(
+            atm_data,
+            w.to_dict(),
+            pillar_days,
+            level=ci,
+            n_boot=max(n_boot, 1),
+        )
+        synth_curve = pd.DataFrame(
+            {"T": T_common, "atm_vol": synth_bands.mean, "atm_lo": synth_bands.lo, "atm_hi": synth_bands.hi}
+        )
+    else:
+        # fast deterministic mean (no bootstrap)
+        weights_vec = np.array([w.get(p, 0.0) for p in atm_data.keys()], dtype=float)
+        mat = np.column_stack([atm_data[p] for p in atm_data.keys()])
+        mean_curve = (mat * weights_vec).sum(axis=1)  # weights already sum to 1
+        synth_curve = pd.DataFrame({"T": T_common, "atm_vol": mean_curve})
+        synth_bands = None
 
     return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
+
 
 # -----------------------------------------------------------------------------
 # Disk cache helpers (optional, tiny)

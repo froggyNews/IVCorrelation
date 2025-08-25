@@ -194,8 +194,8 @@ def add_all_features(df: pd.DataFrame, forward_steps: int = 1, r: float = 0.045)
         df["rv_30m"] = (rv * np.sqrt(ANNUAL_MINUTES / 30)).shift(1)
 
     if "opt_volume" in df.columns:
-        pct_change = df["opt_volume"].pct_change()
-        df["opt_vol_change_1m"] = (pct_change.replace([np.inf, -np.inf], np.nan).fillna(0.0))
+        diff = df["opt_volume"].diff()
+        df["opt_vol_change_1m"] = (diff.replace([np.inf, -np.inf], np.nan).fillna(0.0))
         df["opt_vol_roll_15m"] = df["opt_volume"].rolling(15).mean().shift(1)
 
     df = _add_sabr_features(df)

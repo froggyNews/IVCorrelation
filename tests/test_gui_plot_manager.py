@@ -3,6 +3,13 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import sys
+from pathlib import Path
+
+# Ensure project root (parent of tests/) is on sys.path when running file directly
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from display.gui.gui_plot_manager import PlotManager
 import display.gui.gui_plot_manager as gpm

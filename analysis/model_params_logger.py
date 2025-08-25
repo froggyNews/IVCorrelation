@@ -1,4 +1,3 @@
-# analysis/model_params_logger.py
 from __future__ import annotations
 
 import hashlib
@@ -18,12 +17,12 @@ import pandas as pd
 # ---------------------------------------------------------------------
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 STORE_PATH = DATA_DIR / "model_params.parquet"          # existing params log
-CACHE_PATH = DATA_DIR / "calculation_cache.parquet"     # new generic cache
+CACHE_PATH = DATA_DIR / "calculation_cache.parquet"     # generic cache
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------
-# 1) Parameter logging (unchanged API)
+# 1) Parameter logging (audit/provenance)
 # ---------------------------------------------------------------------
 def append_params(
     asof_date: str,
@@ -33,7 +32,7 @@ def append_params(
     params: Dict[str, float],
     meta: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Log fitted parameters to disk (de‑duplicated by asof,ticker,expiry,model,param)."""
+    """Append fitted parameters to disk (deduped by asof,ticker,expiry,model,param)."""
     meta = meta or {}
     asof_ts = pd.to_datetime(asof_date).normalize()
     expiry_dt = pd.to_datetime(expiry) if expiry else None
@@ -70,7 +69,7 @@ def append_params(
 
 
 def load_model_params() -> pd.DataFrame:
-    """Load the logged parameters as a DataFrame."""
+    """Load logged parameters as DataFrame (empty frame if none)."""
     if not STORE_PATH.exists():
         return pd.DataFrame(columns=["asof_date","ticker","expiry","tenor_d","model","param","value","fit_meta"])
     df = pd.read_parquet(STORE_PATH)
@@ -81,10 +80,9 @@ def load_model_params() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------
-# 2) General-purpose calculation cache (new)
+# 2) General-purpose calculation cache
 # ---------------------------------------------------------------------
-# Version pins let you invalidate a “kind” of artifact without touching data on disk.
-_ARTIFACT_VERSION: Dict[str, str] = {}   # e.g., {"atm_curve_v1": "3"}
+_ARTIFACT_VERSION: Dict[str, str] = {}   # e.g. {"atm_curve_v1": "3"}
 
 @dataclass(frozen=True)
 class CacheKey:
@@ -92,16 +90,13 @@ class CacheKey:
     key: str  # hashed payload + version
 
 def set_artifact_version(kind: str, version: str) -> None:
-    """Set or bump a version tag for a given artifact kind (manual invalidation knob)."""
     _ARTIFACT_VERSION[kind] = str(version)
 
 def get_artifact_version(kind: str) -> str:
-    """Get current version tag for a kind (defaults to '1')."""
     return _ARTIFACT_VERSION.get(kind, "1")
 
 
 def _hash_inputs(kind: str, payload: dict) -> CacheKey:
-    """Stable hash over (kind | version | canonical JSON of payload)."""
     version = get_artifact_version(kind)
     payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     hasher = hashlib.sha256()
@@ -117,10 +112,8 @@ def _serialize(value: Any, fmt: str = "pickle") -> bytes:
     if fmt == "pickle":
         return pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
     if fmt == "json":
-        # force to utf-8 bytes
         return json.dumps(value, default=str).encode("utf-8")
     raise ValueError(f"unknown serializer: {fmt}")
-
 
 def _deserialize(blob: bytes, fmt: str = "pickle") -> Any:
     if fmt == "pickle":
@@ -136,22 +129,18 @@ def _load_cache_df() -> pd.DataFrame:
             "kind", "key", "created_at", "expires_at", "serializer", "payload_json", "blob"
         ])
     df = pd.read_parquet(CACHE_PATH)
-    # Ensure dtypes
     if "created_at" in df:
         df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")
     if "expires_at" in df:
         df["expires_at"] = pd.to_datetime(df["expires_at"], errors="coerce")
     return df
 
-
 def _save_cache_df(df: pd.DataFrame) -> None:
-    # Keep it small & tidy
     df = df.sort_values("created_at").drop_duplicates(["kind", "key"], keep="last")
     df.to_parquet(CACHE_PATH, index=False)
 
 
 def prune_expired(now: Optional[pd.Timestamp] = None) -> int:
-    """Remove expired rows; returns count removed."""
     now = now or pd.Timestamp.utcnow()
     df = _load_cache_df()
     if df.empty:
@@ -161,9 +150,7 @@ def prune_expired(now: Optional[pd.Timestamp] = None) -> int:
     _save_cache_df(df)
     return before - len(df)
 
-
 def clear_cache(kind: Optional[str] = None) -> int:
-    """Clear entire cache or a specific kind; returns count removed."""
     df = _load_cache_df()
     if df.empty:
         return 0
@@ -175,9 +162,7 @@ def clear_cache(kind: Optional[str] = None) -> int:
     _save_cache_df(df)
     return before - len(_load_cache_df())
 
-
 def cache_stats() -> Dict[str, Any]:
-    """Simple summary stats for UI/debug."""
     df = _load_cache_df()
     if df.empty:
         return {"entries": 0, "kinds": [], "oldest": None, "newest": None}
@@ -194,35 +179,13 @@ def compute_or_load(
     payload: Dict[str, Any],
     builder_fn: Callable[[], Any],
     *,
-    ttl_sec: int = 900,              # default 15 minutes
-    serializer: str = "pickle",      # "pickle" (any object) or "json" (JSON-serializable only)
+    ttl_sec: int = 900,
+    serializer: str = "pickle",
 ) -> Any:
-    """
-    Compute an artifact or load it from cache.
-
-    Parameters
-    ----------
-    kind : str
-        Logical name for the artifact (e.g., "atm_curve_v1", "surface_grid_v2").
-    payload : dict
-        Inputs that define the artifact (must be JSON‑serializable).
-    builder_fn : callable
-        Zero-arg function that computes the artifact.
-    ttl_sec : int
-        Time‑to‑live for the cached artifact in seconds.
-    serializer : {"pickle","json"}
-        Serialization format. Use "pickle" for arbitrary Python objects. Use "json" to
-        keep files human‑readable and interoperable (object must be JSON‑serializable).
-
-    Returns
-    -------
-    Any
-        The computed or cached artifact.
-    """
+    """Compute artifact or load from cache (invalidated by version/payload)."""
     now = pd.Timestamp.utcnow()
     key = _hash_inputs(kind, payload)
 
-    # 1) Try cache
     df = _load_cache_df()
     if not df.empty:
         hit = df[(df["kind"] == key.kind) & (df["key"] == key.key)]
@@ -233,13 +196,9 @@ def compute_or_load(
                 try:
                     return _deserialize(row["blob"], fmt=row.get("serializer", serializer))
                 except Exception:
-                    # Corrupt entry → fall through to recompute
-                    pass
+                    pass  # fall through
 
-    # 2) Miss → compute
     value = builder_fn()
-
-    # 3) Persist
     try:
         blob = _serialize(value, fmt=serializer)
         payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
@@ -255,14 +214,12 @@ def compute_or_load(
         df = pd.concat([df, row], ignore_index=True)
         _save_cache_df(df)
     except Exception:
-        # Never fail caller due to cache persistence issues
         pass
-
     return value
 
 
 class WarmupWorker:
-    """Background worker that warms cache entries asynchronously."""
+    """Background worker to pre-compute cache entries asynchronously."""
 
     def __init__(self):
         self._queue: "queue.Queue[tuple[str, dict, Callable[[], Any], int, str]]" = queue.Queue()
@@ -278,20 +235,13 @@ class WarmupWorker:
         ttl_sec: int = 900,
         serializer: str = "pickle",
     ) -> None:
-        """Add a job to compute or warm a cache entry."""
         self._queue.put((kind, payload, builder_fn, ttl_sec, serializer))
 
     def _run(self) -> None:
         while True:
             kind, payload, builder_fn, ttl_sec, serializer = self._queue.get()
             try:
-                compute_or_load(
-                    kind,
-                    payload,
-                    builder_fn,
-                    ttl_sec=ttl_sec,
-                    serializer=serializer,
-                )
+                compute_or_load(kind, payload, builder_fn, ttl_sec=ttl_sec, serializer=serializer)
             except Exception:
                 pass
             finally:
@@ -300,16 +250,13 @@ class WarmupWorker:
 
 
 # ---------------------------------------------------------------------
-# 3) Small convenience wrappers for common artifacts (optional)
+# 3) Common artifact wrappers
 # ---------------------------------------------------------------------
 def cached_atm_curve(builder: Callable[[], Any], *, asof: str, ticker: str, pillar_days: Tuple[int, ...], ttl_sec: int = 900):
-    """Cache wrapper for ATM curve artifacts."""
     payload = {"asof": str(pd.to_datetime(asof).date()), "ticker": ticker.upper(), "pillar_days": tuple(map(int, pillar_days))}
     return compute_or_load("atm_curve_v1", payload, builder, ttl_sec=ttl_sec, serializer="pickle")
 
-
 def cached_surface_grid(builder: Callable[[], Any], *, asof: str, tickers: Tuple[str, ...], tenors: Tuple[int, ...], mny_bins: Tuple[Tuple[float,float], ...], ttl_sec: int = 900):
-    """Cache wrapper for surface grid artifacts."""
     payload = {
         "asof": str(pd.to_datetime(asof).date()),
         "tickers": tuple(t.upper() for t in tickers),

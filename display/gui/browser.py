@@ -15,6 +15,10 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import sys
 from pathlib import Path
 import argparse
+# add near the very top of your entry script (e.g., browser.py)
+import warnings
+warnings.filterwarnings("error", category=RuntimeWarning)  # raise instead of warn
+warnings.filterwarnings("error", category=FutureWarning)   # optional
 
 # Add project root to sys.path
 ROOT = Path(__file__).resolve().parents[2]
