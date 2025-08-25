@@ -110,14 +110,14 @@ def fit_and_plot_smile(
     line_kwargs = dict(line_kwargs or {})
     line_kwargs.setdefault("lw", 2 if show_points else 1.6)
     fit_lbl = label or (f"{model.upper()} fit")
-    fit_line = ax.plot(K_grid / S, y_fit, label=fit_lbl)
+    fit_line = ax.plot(K_grid / S, y_fit, label=fit_lbl, lw=2.2, alpha=1.0)  # More defined fit line
     if enable_toggles:
         series_map[f"{model.upper()} Fit"] = list(fit_line)
 
     # ---- confidence bands
     if bands is not None:
         ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(bands.level*100)}% CI")
-        ci_mean = ax.plot(bands.x / S, bands.mean, lw=1, alpha=0.6, linestyle="--")
+        ci_mean = ax.plot(bands.x / S, bands.mean, lw=1.8, alpha=0.8, linestyle="--")  # More defined CI mean line
         if enable_toggles:
             series_map[f"{model.upper()} Confidence Interval"] = [ci_fill, *ci_mean]
 
@@ -161,9 +161,11 @@ def plot_synthetic_etf_smile(
     """Plot synthetic ETF smile using pre-computed confidence bands."""
 
     ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(bands.level*100)}%)")
-
+    # add a line for the mean - make it more defined/prominent
     line_kwargs = dict(line_kwargs or {})
-    line_kwargs.setdefault("lw", 1.8)
+    line_kwargs.setdefault("lw", 2.5)  # Increased line width for better visibility
+    line_kwargs.setdefault("alpha", 1.0)  # Full opacity
+    line_kwargs.setdefault("linestyle", "-")  # Solid line
     ax.plot(bands.x, bands.mean, label=label, **line_kwargs)
 
     ax.set_xlabel("Strike / Moneyness")

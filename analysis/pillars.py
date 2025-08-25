@@ -62,6 +62,85 @@ def get_target_expiry_pillars(
         return list(DEFAULT_PILLARS_DAYS)
 
 
+def get_feasible_expiry_pillars(
+    get_smile_slice,
+    target_ticker: str,
+    peer_tickers: List[str],
+    asof: str,
+    max_expiries: Optional[int] = None,
+    tol_days: float = 7.0,
+    min_peer_coverage: float = 0.5
+) -> List[int]:
+    """
+    Get expiry pillars that can be reasonably matched across target and peers.
+    
+    Unlike get_target_expiry_pillars which only considers the target, this function
+    ensures the returned pillars can be matched by at least a minimum fraction of peers
+    within the specified tolerance.
+    
+    Args:
+        get_smile_slice: Function to fetch options data
+        target_ticker: The target ticker 
+        peer_tickers: List of peer tickers
+        asof: As-of date
+        max_expiries: Maximum number of expiries to use
+        tol_days: Tolerance in days for matching expiries across tickers
+        min_peer_coverage: Minimum fraction of peers that must be able to match each pillar
+        
+    Returns:
+        List of feasible expiry days that work across target and peers
+    """
+    try:
+        # Get target's available expiries
+        target_expiries = get_target_expiry_pillars(get_smile_slice, target_ticker, asof, max_expiries)
+        
+        if not peer_tickers:
+            return target_expiries
+        
+        # For each target expiry, check how many peers can match it within tolerance
+        feasible_expiries = []
+        
+        for target_expiry in target_expiries:
+            matching_peers = 0
+            
+            for peer in peer_tickers:
+                peer_df = get_smile_slice(peer, asof, max_expiries=max_expiries)
+                if peer_df is None or peer_df.empty:
+                    continue
+                    
+                # Check if this peer has an expiry within tolerance of target expiry
+                peer_T_years = pd.to_numeric(peer_df["T"], errors="coerce").dropna()
+                peer_T_days = (peer_T_years * 365.25).round().astype(int)
+                
+                # Find closest expiry to target expiry
+                if len(peer_T_days) > 0:
+                    closest_diff = np.min(np.abs(peer_T_days - target_expiry))
+                    if closest_diff <= tol_days:
+                        matching_peers += 1
+            
+            # Check if enough peers can match this expiry
+            peer_coverage = matching_peers / len(peer_tickers) if peer_tickers else 1.0
+            if peer_coverage >= min_peer_coverage:
+                feasible_expiries.append(target_expiry)
+        
+        # Ensure we have at least some pillars
+        if len(feasible_expiries) < 2:
+            # Fallback: use detect_available_pillars with all tickers
+            all_tickers = [target_ticker] + peer_tickers
+            return detect_available_pillars(
+                get_smile_slice, all_tickers, asof, 
+                candidate_pillars=target_expiries, 
+                min_tickers_per_pillar=max(1, int(len(all_tickers) * min_peer_coverage)),
+                tol_days=tol_days
+            )
+        
+        return feasible_expiries
+        
+    except Exception:
+        # Fallback to default pillars on any error
+        return list(DEFAULT_PILLARS_DAYS)
+
+
 def detect_available_pillars(
     get_smile_slice,
     tickers: Iterable[str],

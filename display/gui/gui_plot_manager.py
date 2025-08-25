@@ -32,7 +32,7 @@ from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prep
 from analysis.model_params_logger import compute_or_load, WarmupWorker
 
 from analysis.model_params_logger import append_params
-from analysis.pillars import _fit_smile_get_atm, get_target_expiry_pillars
+from analysis.pillars import _fit_smile_get_atm, get_target_expiry_pillars, get_feasible_expiry_pillars
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from volModel.polyFit import fit_tps_slice
@@ -190,15 +190,28 @@ class PlotManager:
             self._surface_cache[key] = grids if grids is not None else {}
         return self._surface_cache.get(key, {})
 
-    def _get_target_pillars(self, target: str, asof: str, max_expiries: int = 6) -> list[int]:
-        """Get actual expiry pillars for the target ticker instead of fixed day pillars."""
+    def _get_target_pillars(self, target: str, asof: str, max_expiries: int = 6, peers: list[str] = None) -> list[int]:
+        """Get feasible expiry pillars that work across target and peers."""
         try:
-            return get_target_expiry_pillars(
-                get_smile_slice=get_smile_slice,
-                target_ticker=target,
-                asof=asof,
-                max_expiries=max_expiries
-            )
+            if peers:
+                # Use flexible approach that considers peer coverage
+                return get_feasible_expiry_pillars(
+                    get_smile_slice=get_smile_slice,
+                    target_ticker=target,
+                    peer_tickers=peers,
+                    asof=asof,
+                    max_expiries=max_expiries,
+                    tol_days=7.0,  # 7 day tolerance for expiry matching
+                    min_peer_coverage=0.5  # At least 50% of peers must be able to match each pillar
+                )
+            else:
+                # No peers, just use target expiries
+                return get_target_expiry_pillars(
+                    get_smile_slice=get_smile_slice,
+                    target_ticker=target,
+                    asof=asof,
+                    max_expiries=max_expiries
+                )
         except Exception:
             # Fallback to shorter default pillars for GUI
             return [7, 14, 21]
@@ -265,8 +278,8 @@ class PlotManager:
 
             weights = None
             if peers:
-                # Use target ticker's actual expiries for weight computation
-                target_pillars = self._get_target_pillars(target, asof, max_expiries)
+                # Use feasible expiries that work across target and peers
+                target_pillars = self._get_target_pillars(target, asof, max_expiries, peers)
                 weights = self._weights_from_ui_or_matrix(
                     target, peers, weight_mode, asof=asof, pillars=target_pillars
                 )
@@ -340,8 +353,8 @@ class PlotManager:
 
             weights = None
             if peers:
-                # Use target ticker's actual expiries for weight computation
-                target_pillars = self._get_target_pillars(target, asof, max_expiries)
+                # Use feasible expiries that work across target and peers
+                target_pillars = self._get_target_pillars(target, asof, max_expiries, peers)
                 weights = self._weights_from_ui_or_matrix(
                     target,
                     peers,
@@ -427,8 +440,8 @@ class PlotManager:
 
         # --- Relative Weight Matrix ---
         elif plot_type.startswith("Relative Weight Matrix"):
-            # Use target ticker's actual expiries for correlation matrix
-            target_pillars = self._get_target_pillars(target, asof, max_expiries)
+            # Use feasible expiries that work across target and peers for correlation matrix
+            target_pillars = self._get_target_pillars(target, asof, max_expiries, peers)
             self._plot_corr_matrix(ax, target, peers, asof, target_pillars, weight_mode, atm_band)
             return
 
@@ -444,8 +457,8 @@ class PlotManager:
             if not peers:
                 ax.text(0.5, 0.5, "No peers", ha="center", va="center")
                 return
-            # Use target ticker's actual expiries for weight computation
-            target_pillars = self._get_target_pillars(target, asof, max_expiries)
+            # Use feasible expiries that work across target and peers for weight computation
+            target_pillars = self._get_target_pillars(target, asof, max_expiries, peers)
             weights = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=target_pillars)
             if weights is None or weights.empty:
                 ax.text(0.5, 0.5, "No weights", ha="center", va="center")

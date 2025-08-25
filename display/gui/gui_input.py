@@ -130,7 +130,7 @@ class InputPanel(ttk.Frame):
         self.btn_delete_preset = ttk.Button(row0, text="Delete", command=self._delete_preset)
         self.btn_delete_preset.grid(row=0, column=4, padx=2)
         
-        self.btn_refresh_presets = ttk.Button(row0, text="Refresh", command=self._refresh_presets)
+        self.btn_refresh_presets = ttk.Button(row0, text="Clear Session", command=self._clear_session)
         self.btn_refresh_presets.grid(row=0, column=5, padx=2)
         
         # Load initial presets
@@ -308,6 +308,10 @@ class InputPanel(ttk.Frame):
         # run when user confirms/enters target
         self.ent_target.bind("<FocusOut>", fn)
         self.ent_target.bind("<Return>", fn)
+
+    def bind_session_clear(self, fn: Callable[[], None]):
+        """Register a callback fired when session clear button is clicked."""
+        self._cb_session_clear = fn
 
     # ---------- setters ----------
     def set_dates(self, dates: List[str]):

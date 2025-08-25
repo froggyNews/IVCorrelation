@@ -44,7 +44,7 @@ def plot_atm_term_structure(
 
     if fit_x is not None and fit_y is not None:
         grid_plot = fit_x * 365.25 if x_units == "days" else fit_x
-        ax.plot(grid_plot, fit_y, linestyle="--", alpha=0.6, label="Term fit")
+        ax.plot(grid_plot, fit_y, linestyle="--", alpha=0.9, lw=2.0, label="Term fit")  # More defined term fit line
 
     ax.set_xlabel(x_label)
     ax.set_ylabel("Implied Vol (ATM)")
@@ -62,7 +62,8 @@ def plot_synthetic_etf_term_structure(
     ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(bands.level*100)}%)")
 
     line_kwargs = dict(line_kwargs or {})
-    line_kwargs.setdefault("lw", 1.8)
+    line_kwargs.setdefault("lw", 2.5)  # More defined synthetic ETF line
+    line_kwargs.setdefault("alpha", 1.0)  # Full opacity
     ax.plot(bands.x, bands.mean, label=label, **line_kwargs)
 
     ax.set_xlabel("Pillar (days)")
