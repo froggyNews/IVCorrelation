@@ -515,8 +515,8 @@ def prepare_smile_data(
                 tps_params = {}
 
         if sens_params is None:
-            # very cheap single-pass sensitivities
-            dfe = df.loc[row_mask, ["K"]].copy()
+            # very cheap single-pass sensitivities - need S, T, K, sigma for _fit_smile_get_atm
+            dfe = df.loc[row_mask, ["K", "S", "T", "sigma"]].copy()
             try:
                 dfe["moneyness"] = dfe["K"].astype(float) / float(S)
             except Exception:
@@ -673,7 +673,13 @@ def prepare_term_data(
         return {}
 
     # If CI==None -> no bootstrap; keep compute_atm_by_expiry cheap
-    n_boot = 0 if not (ci and ci > 0) else max(64, 1)
+    # Use fewer bootstrap iterations for GUI responsiveness
+    if not (ci and ci > 0):
+        n_boot = 0
+    else:
+        # Reduce bootstrap count significantly for GUI use
+        # 12-16 iterations are usually sufficient for confidence bands in GUI
+        n_boot = max(12, min(16, int(ci * 20))) if ci < 1.0 else max(12, min(16, ci // 4))
     atm_curve = compute_atm_by_expiry(
         df_all,
         atm_band=atm_band,

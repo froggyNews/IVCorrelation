@@ -14,7 +14,13 @@ def impute_col_median(X: np.ndarray) -> np.ndarray:
     X = np.asarray(X, float)
     if X.size == 0:
         return X.reshape(0, 0) if X.ndim == 1 else X
-    med = np.nanmedian(X, axis=0, keepdims=True)
+    
+    # Suppress the "All-NaN slice encountered" warning which is expected and handled
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="All-NaN slice encountered", category=RuntimeWarning)
+        med = np.nanmedian(X, axis=0, keepdims=True)
+    
     # Columns that are all NaN -> set median to 0
     all_nan = np.isnan(med)
     if all_nan.any():
@@ -33,8 +39,14 @@ def zscore_cols(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     X = np.asarray(X, float)
     if X.size == 0:
         return X, np.array([]), np.array([])
-    mu = np.nanmean(X, axis=0, keepdims=True)
-    sd = np.nanstd(X, axis=0, ddof=1, keepdims=True)
+    
+    # Suppress the "All-NaN slice encountered" warning which is expected and handled
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="All-NaN slice encountered", category=RuntimeWarning)
+        mu = np.nanmean(X, axis=0, keepdims=True)
+        sd = np.nanstd(X, axis=0, ddof=1, keepdims=True)
+    
     sd = np.where(~np.isfinite(sd) | (sd <= 0), 1.0, sd)
     Z = (X - mu) / sd
     Z[~np.isfinite(Z)] = 0.0
@@ -50,13 +62,19 @@ def safe_center_scale(X: np.ndarray) -> Tuple[np.ndarray, dict | None]:
         return X, None
     if np.all(~np.isfinite(X)):
         return np.zeros_like(X), None
-    med = np.nanmedian(X, axis=0, keepdims=True)
-    med[~np.isfinite(med)] = 0.0
-    Xc = X - med
-    mu = np.nanmean(Xc, axis=0, keepdims=True)
-    mu[~np.isfinite(mu)] = 0.0
-    Xc = Xc - mu
-    var = np.nanvar(Xc, axis=0, ddof=0, keepdims=True)
+    
+    # Suppress the "All-NaN slice encountered" warning which is expected and handled
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="All-NaN slice encountered", category=RuntimeWarning)
+        med = np.nanmedian(X, axis=0, keepdims=True)
+        med[~np.isfinite(med)] = 0.0
+        Xc = X - med
+        mu = np.nanmean(Xc, axis=0, keepdims=True)
+        mu[~np.isfinite(mu)] = 0.0
+        Xc = Xc - mu
+        var = np.nanvar(Xc, axis=0, ddof=0, keepdims=True)
+    
     var[~np.isfinite(var) | (var <= 0)] = 1.0
     std = np.sqrt(var)
     out = Xc / std

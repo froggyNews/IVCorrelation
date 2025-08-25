@@ -94,6 +94,21 @@ CREATE TABLE IF NOT EXISTS feature_table (
 
 CREATE INDEX IF NOT EXISTS idx_feature_table_symbol ON feature_table(symbol);
 CREATE INDEX IF NOT EXISTS idx_feature_table_ts ON feature_table(ts_event);
+
+-- Table for storing calculation cache
+CREATE TABLE IF NOT EXISTS calculation_cache (
+    kind           TEXT    NOT NULL,
+    key            TEXT    NOT NULL,
+    created_at     TEXT    NOT NULL,
+    expires_at     TEXT,
+    serializer     TEXT    NOT NULL DEFAULT 'pickle',
+    payload_json   TEXT    NOT NULL,
+    blob           BLOB    NOT NULL,
+    PRIMARY KEY (kind, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_calc_cache_expires ON calculation_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_calc_cache_created ON calculation_cache(created_at);
 """
 
 MIGRATIONS = [

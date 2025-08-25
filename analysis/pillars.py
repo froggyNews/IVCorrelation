@@ -14,6 +14,54 @@ DEFAULT_PILLARS_DAYS = [7, 14, 30]  # Realistic pillars for typical options data
 EXTENDED_PILLARS_DAYS = [7, 14, 30, 60, 90, 180, 365]
 
 
+def get_target_expiry_pillars(
+    get_smile_slice, 
+    target_ticker: str, 
+    asof: str, 
+    max_expiries: Optional[int] = None
+) -> List[int]:
+    """
+    Get actual expiry days from the target ticker's available options data.
+    
+    This replaces fixed day pillars with the real expiries available for the target.
+    
+    Args:
+        get_smile_slice: Function to fetch options data
+        target_ticker: The target ticker to get expiries for
+        asof: As-of date
+        max_expiries: Maximum number of expiries to use
+        
+    Returns:
+        List of expiry days (e.g., [8, 15, 22, 36, 50, 92])
+    """
+    try:
+        df = get_smile_slice(target_ticker, asof, max_expiries=max_expiries)
+        if df is None or df.empty:
+            # Fallback to default pillars if no data
+            return list(DEFAULT_PILLARS_DAYS)
+        
+        # Get unique time-to-expiry values in days
+        T_years = pd.to_numeric(df["T"], errors="coerce").dropna()
+        T_days = (T_years * 365.25).round().astype(int)
+        
+        # Get unique expiry days, sorted, converted to Python ints
+        expiry_days = sorted([int(x) for x in T_days.unique()])
+        
+        # Limit to max_expiries if specified
+        if max_expiries and len(expiry_days) > max_expiries:
+            expiry_days = expiry_days[:max_expiries]
+            
+        # Ensure we have at least a minimum set
+        if len(expiry_days) < 2:
+            return list(DEFAULT_PILLARS_DAYS)
+            
+        return expiry_days
+        
+    except Exception:
+        # Fallback to default pillars on any error
+        return list(DEFAULT_PILLARS_DAYS)
+
+
 def detect_available_pillars(
     get_smile_slice,
     tickers: Iterable[str],
@@ -119,7 +167,7 @@ def build_atm_matrix(
         atm_valid = atm_valid.sub(atm_valid.mean(axis=1), axis=0)
 
     # Compute correlations across pillars (pairwise, min periods = min_pillars)
-    # Use min_periods=1 for more lenient correlation calculation
+    # Use min_periods=1 for more lenient correlation calculation  
     corr_df = atm_valid.transpose().corr(method=corr_method, min_periods=max(1, int(min_pillars) - 1))
 
     # Reindex to original ticker universe (preserve shape)

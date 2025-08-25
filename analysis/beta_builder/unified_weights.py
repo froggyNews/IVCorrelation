@@ -9,7 +9,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from .utils import impute_col_median as _impute_col_median, zscore_cols as _zscore_cols
+from analysis.beta_builder.utils import impute_col_median as _impute_col_median, zscore_cols as _zscore_cols
 from .correlation import corr_weights_from_matrix
 from .cosine import cosine_similarity_weights_from_matrix
 from .pca import pca_regress_weights
@@ -307,7 +307,35 @@ def compute_unified_weights(target: str, peers: Iterable[str], mode: Union[str, 
         cfg = WeightConfig.from_legacy_mode(mode, **kwargs)
     else:
         cfg = mode
-    return _weight_computer.compute_weights(target, peers, cfg)
+    
+    # Try cached computation first
+    try:
+        from analysis.model_params_logger import compute_or_load
+        
+        # Create cache payload
+        payload = {
+            "target": target.upper(),
+            "peers": sorted([p.upper() for p in peers]),
+            "method": cfg.method.value,
+            "feature_set": cfg.feature_set.value,
+            "pillars_days": cfg.pillars_days,
+            "tenors": cfg.tenors,
+            "mny_bins": cfg.mny_bins,
+            "clip_negative": cfg.clip_negative,
+            "power": cfg.power,
+            "asof": cfg.asof,
+            "atm_band": cfg.atm_band,
+            "atm_tol_days": cfg.atm_tol_days,
+            "max_expiries": cfg.max_expiries,
+        }
+        
+        def _builder():
+            return _weight_computer.compute_weights(target, peers, cfg)
+        
+        return compute_or_load("weights", payload, _builder, ttl_sec=1800)  # 30min cache
+    except Exception:
+        # Fallback to direct computation if caching fails
+        return _weight_computer.compute_weights(target, peers, cfg)
 
 def compute_peer_weights_unified(
     target: str,

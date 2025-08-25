@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # Plot helpers
-from display.plotting.correlation_detail_plot import (
+from display.plotting.relative_weight_plot import (
     compute_and_plot_correlation,   # draws the corr heatmap
     _corr_by_expiry_rank,
 )
@@ -32,11 +32,18 @@ from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prep
 from analysis.model_params_logger import compute_or_load, WarmupWorker
 
 from analysis.model_params_logger import append_params
-from analysis.pillars import _fit_smile_get_atm
+from analysis.pillars import _fit_smile_get_atm, get_target_expiry_pillars
 from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from volModel.polyFit import fit_tps_slice
+from volModel.multi_model_cache import (
+    get_cached_model_params, 
+    fit_all_models_cached,
+    get_cached_confidence_bands,
+    fit_all_models_with_bands_cached,
+)
 from volModel.termFit import fit_term_structure, term_structure_iv
+from volModel.term_structure_cache import get_cached_term_structure_data
 from analysis.confidence_bands import (
     generate_term_structure_confidence_bands,
     svi_confidence_bands,
@@ -183,6 +190,19 @@ class PlotManager:
             self._surface_cache[key] = grids if grids is not None else {}
         return self._surface_cache.get(key, {})
 
+    def _get_target_pillars(self, target: str, asof: str, max_expiries: int = 6) -> list[int]:
+        """Get actual expiry pillars for the target ticker instead of fixed day pillars."""
+        try:
+            return get_target_expiry_pillars(
+                get_smile_slice=get_smile_slice,
+                target_ticker=target,
+                asof=asof,
+                max_expiries=max_expiries
+            )
+        except Exception:
+            # Fallback to shorter default pillars for GUI
+            return [7, 14, 21]
+
     # -------------------- main entry --------------------
     def plot(self, ax: plt.Axes, settings: dict):
         plot_type = settings["plot_type"]
@@ -245,8 +265,10 @@ class PlotManager:
 
             weights = None
             if peers:
+                # Use target ticker's actual expiries for weight computation
+                target_pillars = self._get_target_pillars(target, asof, max_expiries)
                 weights = self._weights_from_ui_or_matrix(
-                    target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
+                    target, peers, weight_mode, asof=asof, pillars=target_pillars
                 )
 
             payload = {
@@ -318,12 +340,14 @@ class PlotManager:
 
             weights = None
             if peers:
+                # Use target ticker's actual expiries for weight computation
+                target_pillars = self._get_target_pillars(target, asof, max_expiries)
                 weights = self._weights_from_ui_or_matrix(
                     target,
                     peers,
                     weight_mode,
                     asof=asof,
-                    pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
+                    pillars=target_pillars,
                 )
 
             payload = {
@@ -403,7 +427,9 @@ class PlotManager:
 
         # --- Relative Weight Matrix ---
         elif plot_type.startswith("Relative Weight Matrix"):
-            self._plot_corr_matrix(ax, target, peers, asof, pillars, weight_mode, atm_band)
+            # Use target ticker's actual expiries for correlation matrix
+            target_pillars = self._get_target_pillars(target, asof, max_expiries)
+            self._plot_corr_matrix(ax, target, peers, asof, target_pillars, weight_mode, atm_band)
             return
 
         # --- Synthetic Surface ---
@@ -418,7 +444,9 @@ class PlotManager:
             if not peers:
                 ax.text(0.5, 0.5, "No peers", ha="center", va="center")
                 return
-            weights = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=pillars)
+            # Use target ticker's actual expiries for weight computation
+            target_pillars = self._get_target_pillars(target, asof, max_expiries)
+            weights = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=target_pillars)
             if weights is None or weights.empty:
                 ax.text(0.5, 0.5, "No weights", ha="center", va="center")
                 return
@@ -477,7 +505,13 @@ class PlotManager:
 
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
-        pillars = pillars or [7, 30, 60, 90, 180, 365]
+        
+        # Use target ticker's actual expiries instead of fixed day pillars
+        if pillars is None:
+            max_expiries = getattr(self, '_current_max_expiries', 6) or 6
+            pillars = self._get_target_pillars(target, asof, max_expiries)
+        else:
+            pillars = pillars or [7, 30, 60, 90, 180, 365]
         settings = getattr(self, "last_settings", {})
 
         # 1) Unified weights with signature shims
@@ -556,18 +590,42 @@ class PlotManager:
 
         m_grid = np.linspace(0.7, 1.3, 121)
         K_grid = m_grid * S
-        svi_params = fit_svi_slice(S, K, T_used, IV)
-        sabr_params = fit_sabr_slice(S, K, T_used, IV)
-        tps_params = fit_tps_slice(S, K, T_used, IV)
+        
+        # Use cached multi-model fitting with confidence bands for better performance
+        try:
+            ci_level = float(ci) if ci and ci > 0 else None
+            all_results = fit_all_models_with_bands_cached(
+                S, K, T_used, IV, K_grid=K_grid, ci_level=ci_level, use_cache=True
+            )
+            all_params = all_results.get('models', {})
+            svi_params = all_params.get('svi', {})
+            sabr_params = all_params.get('sabr', {})
+            tps_params = all_params.get('tps', {})
+            
+            # Get cached confidence bands if available
+            bands = None
+            if ci_level and 'bands' in all_results:
+                bands = all_results['bands'].get(model)
+        except Exception:
+            # Fallback to individual fits if multi-model cache fails
+            svi_params = fit_svi_slice(S, K, T_used, IV)
+            sabr_params = fit_sabr_slice(S, K, T_used, IV)
+            tps_params = fit_tps_slice(S, K, T_used, IV)
+            
+            # Fallback confidence bands computation
+            bands = None
+            if ci and ci > 0:
+                try:
+                    if model == "svi":
+                        bands = svi_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
+                    elif model == "sabr":
+                        bands = sabr_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
+                    else:
+                        bands = tps_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
+                except Exception:
+                    bands = None
+        
         fit_params = {"svi": svi_params, "sabr": sabr_params, "tps": tps_params}.get(model, {})
-        bands = None
-        if ci and ci > 0:
-            if model == "svi":
-                bands = svi_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
-            elif model == "sabr":
-                bands = sabr_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
-            else:
-                bands = tps_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
 
         info = fit_and_plot_smile(
             ax,
@@ -583,6 +641,10 @@ class PlotManager:
             enable_toggles=True,  # clickable legend toggles for all models
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
+        
+        # Ensure smile plot axis labels are set correctly (fix for label pollution from term plots)
+        ax.set_xlabel("Moneyness (K/S)")
+        ax.set_ylabel("Implied Vol")
 
         # compute and log parameters for both SVI, SABR and sensitivities
         try:
@@ -646,8 +708,10 @@ class PlotManager:
 
         if overlay_synth and peers:
             try:
+                # Use target ticker's actual expiries for weight computation
+                target_pillars = self._get_target_pillars(target, asof, getattr(self, '_current_max_expiries', 6) or 6)
                 w = self._weights_from_ui_or_matrix(
-                    target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
+                    target, peers, weight_mode, asof=asof, pillars=target_pillars
                 )
                 tickers = list({target, *peers})
                 surfaces = build_surface_grids(
@@ -725,8 +789,10 @@ class PlotManager:
             ax.text(0.5, 0.5, "Provide peers to build synthetic surface", ha="center", va="center")
             return
 
+        # Use target ticker's actual expiries for weight computation
+        target_pillars = self._get_target_pillars(target, asof, getattr(self, '_current_max_expiries', 6) or 6)
         w = self._weights_from_ui_or_matrix(
-            target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
+            target, peers, weight_mode, asof=asof, pillars=target_pillars
         )
 
         try:
@@ -866,15 +932,27 @@ class PlotManager:
         pre = fit_map.get(T0)
         pre_params = pre.get(model) if isinstance(pre, dict) else None
         if pre_params is None:
-            if model == "svi":
-                pre_params = fit_svi_slice(S, K, T0, IV)
-            elif model == "sabr":
-                pre_params = fit_sabr_slice(S, K, T0, IV)
-            else:
-                pre_params = fit_tps_slice(S, K, T0, IV)
-            if isinstance(pre, dict):
-                pre[model] = pre_params
-                fit_map[T0] = pre
+            # Use cached multi-model fitting
+            try:
+                all_params = fit_all_models_cached(S, K, T0, IV, use_cache=True)
+                pre_params = all_params.get(model, {})
+                # Store all models in cache for future use
+                if isinstance(pre, dict):
+                    pre.update(all_params)
+                    fit_map[T0] = pre
+                elif pre is None:
+                    fit_map[T0] = all_params
+            except Exception:
+                # Fallback to individual model fitting
+                if model == "svi":
+                    pre_params = fit_svi_slice(S, K, T0, IV)
+                elif model == "sabr":
+                    pre_params = fit_sabr_slice(S, K, T0, IV)
+                else:
+                    pre_params = fit_tps_slice(S, K, T0, IV)
+                if isinstance(pre, dict):
+                    pre[model] = pre_params
+                    fit_map[T0] = pre
         bands = None
         bands_map = pre.get("bands") if isinstance(pre, dict) else None
         if ci and ci > 0:
@@ -883,13 +961,25 @@ class PlotManager:
             else:
                 m_grid = np.linspace(0.7, 1.3, 121)
                 K_grid = m_grid * S
-                if model == "svi":
-                    bands = svi_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
-                elif model == "sabr":
-                    bands = sabr_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
-                else:
-                    bands = tps_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
-                if isinstance(pre, dict):
+                # Try cached confidence bands first
+                try:
+                    bands = get_cached_confidence_bands(
+                        S, K, T0, IV, K_grid, model, level=float(ci), use_cache=True
+                    )
+                except Exception:
+                    # Fallback to direct computation
+                    try:
+                        if model == "svi":
+                            bands = svi_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+                        elif model == "sabr":
+                            bands = sabr_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+                        else:
+                            bands = tps_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
+                    except Exception:
+                        bands = None
+                
+                # Store computed bands in local cache
+                if bands is not None and isinstance(pre, dict):
                     if not isinstance(bands_map, dict):
                         bands_map = {}
                     bands_map[model] = bands
@@ -1053,12 +1143,17 @@ class PlotManager:
                 Sp = float(np.nanmedian(S_p[maskp]))
                 Kp = K_p[maskp]
                 IVp = sigma_p[maskp]
-                if model == "svi":
-                    p_params = fit_svi_slice(Sp, Kp, T0p, IVp)
-                elif model == "sabr":
-                    p_params = fit_sabr_slice(Sp, Kp, T0p, IVp)
-                else:
-                    p_params = fit_tps_slice(Sp, Kp, T0p, IVp)
+                # Use cached model parameters for peer overlays
+                try:
+                    p_params = get_cached_model_params(Sp, Kp, T0p, IVp, model)
+                except Exception:
+                    # Fallback to individual model fitting
+                    if model == "svi":
+                        p_params = fit_svi_slice(Sp, Kp, T0p, IVp)
+                    elif model == "sabr":
+                        p_params = fit_sabr_slice(Sp, Kp, T0p, IVp)
+                    else:
+                        p_params = fit_tps_slice(Sp, Kp, T0p, IVp)
                 fit_and_plot_smile(
                     ax,
                     S=Sp,
@@ -1079,6 +1174,10 @@ class PlotManager:
             ax.legend(loc="best", fontsize=8)
         days = int(round(T0 * 365.25))
         ax.set_title(f"{target}  {asof}  T≈{T0:.3f}y (~{days}d)  RMSE={info['rmse']:.4f}\n(Use buttons or click: L=next, R=prev)")
+        
+        # Ensure smile plot axis labels are set correctly (fix for label pollution from term plots)
+        ax.set_xlabel("Moneyness (K/S)")
+        ax.set_ylabel("Implied Vol")
         
         # Ensure canvas and figure are valid before drawing
         if self.canvas is not None and ax.figure is not None:
@@ -1112,22 +1211,12 @@ class PlotManager:
         """Plot precomputed ATM term structure and optional synthetic overlay."""
         atm_curve = data.get("atm_curve")
 
+        # Use cached term structure fitting for performance
         fit_x = fit_y = None
         if atm_curve is not None and not atm_curve.empty:
-            try:
-                params = fit_term_structure(
-                    atm_curve["T"].to_numpy(float),
-                    atm_curve["atm_vol"].to_numpy(float),
-                )
-                if params["coeff"].size > 0:
-                    fit_x = np.linspace(
-                        float(atm_curve["T"].min()),
-                        float(atm_curve["T"].max()),
-                        100,
-                    )
-                    fit_y = term_structure_iv(fit_x, params)
-            except Exception:
-                fit_x = fit_y = None
+            term_data = get_cached_term_structure_data(atm_curve, fit_points=100, use_cache=True)
+            fit_x = term_data.get("fit_x")
+            fit_y = term_data.get("fit_y")
 
         plot_atm_term_structure(
             ax,
@@ -1226,7 +1315,7 @@ class PlotManager:
         self.last_corr_meta = {
             "asof": asof,
             "tickers": list(tickers),
-            "pillars": list(pillars or []),
+            "pillars": list(pillars or []),  # These are now dynamic target expiry pillars
             "weight_mode": weight_mode,
             "weight_power": weight_power,
             "clip_negative": clip_negative,
