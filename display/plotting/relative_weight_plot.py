@@ -323,14 +323,15 @@ def plot_correlation_details(
     if weights is not None and not weights.empty:
         w_sorted = weights.sort_values(ascending=False)
         bbox = ax.get_position()
-        legend_ax = ax.figure.add_axes(
-            [
-                bbox.x1 + 0.02,
-                bbox.y0,
-                0.2,
-                bbox.height,
-            ]
-        )
+        x0 = bbox.x1 + 0.02
+        if hasattr(ax.figure, "_correlation_colorbar"):
+            try:
+                cbar_ax = ax.figure._correlation_colorbar.ax
+                cbar_bbox = cbar_ax.get_position()
+                x0 = cbar_bbox.x1 + 0.02
+            except Exception:
+                pass
+        legend_ax = ax.figure.add_axes([x0, bbox.y0, 0.2, bbox.height])
         legend_ax.axis("off")
         legend_ax.set_title("Relative Importance", fontsize=10)
         legend_ax.text(
