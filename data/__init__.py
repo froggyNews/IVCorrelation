@@ -25,11 +25,19 @@ from .feature_engineering import (
     build_iv_panel,
     finalize_dataset,
 )
-from data_loader_coordinator import (
-    DataCoordinator,
-    load_cores_with_auto_fetch,
-    validate_cores,
-)
+# Replace broken absolute import with safe relative import
+try:
+    from .data_loader_coordinator import (
+        DataCoordinator,
+        load_cores_with_auto_fetch,
+        validate_cores,
+    )
+except Exception:  # pragma: no cover
+    def _missing(*args, **kwargs):  # type: ignore
+        raise RuntimeError("data_loader_coordinator not available")
+    DataCoordinator = _missing  # type: ignore
+    load_cores_with_auto_fetch = _missing  # type: ignore
+    validate_cores = _missing  # type: ignore
 
 
 __all__ = [
@@ -50,5 +58,4 @@ __all__ = [
     'DataCoordinator',
     'load_cores_with_auto_fetch',
     'validate_cores',
-
 ]
