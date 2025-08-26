@@ -4,9 +4,8 @@ from typing import Iterable, Tuple
 import pandas as pd
 
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
-from .synthetic import build_synthetic_iv_series
 from .beta_builder.beta_builder import peer_weights_from_correlations
-from .syntheticETFBuilder import DEFAULT_TENORS, DEFAULT_MNY_BINS
+from .syntheticETFBuilder import DEFAULT_TENORS, DEFAULT_MNY_BINS, build_synthetic_iv_series
 
 
 def _fetch_target_atm(

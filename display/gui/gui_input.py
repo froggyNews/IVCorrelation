@@ -777,3 +777,14 @@ class InputPanel(ttk.Frame):
         except Exception as e:
             print(f"Error saving interest rate: {e}")
             messagebox.showerror("Error", f"Failed to save interest rate: {e}")
+    def _clear_session(self):
+        """Clear the current session."""
+        self.ent_target.delete(0, tk.END)
+        self.ent_peers.delete(0, tk.END)
+        self.cmb_presets.set("")
+        self.cmb_r_presets.set("")
+        self.ent_r.delete(0, tk.END)
+        self._sync_settings()
+        self._refresh_presets()
+        self._refresh_interest_rates()
+        self._refresh_plot()

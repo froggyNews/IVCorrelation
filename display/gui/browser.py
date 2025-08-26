@@ -57,6 +57,7 @@ class BrowserApp(tk.Tk):
         self.inputs.bind_download(self._on_download)
         self.inputs.bind_plot(self._refresh_plot)
         self.inputs.bind_target_change(self._on_target_change)
+        self.inputs.bind_session_clear(self._on_session_clear)
 
         # Expiry navigation and animation controls
         nav = ttk.Frame(self.tab_browser)
@@ -225,6 +226,40 @@ class BrowserApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_session_clear(self):
+        """Handle session clear button click - clear all session state."""
+        try:
+            # Clear plot manager session state
+            if hasattr(self, 'plot_mgr'):
+                # Clear cached data in plot manager
+                self.plot_mgr.last_atm_df = None
+                self.plot_mgr.last_corr_meta = {}
+                self.plot_mgr.last_settings = {}
+                self.plot_mgr.last_fit_info = None
+                self.plot_mgr._smile_ctx = None
+                self.plot_mgr.invalidate_surface_cache()
+                
+                # Stop any running animation
+                if hasattr(self.plot_mgr, 'stop_animation'):
+                    self.plot_mgr.stop_animation()
+            
+            # Clear the plot
+            if hasattr(self, 'ax'):
+                self.ax.clear()
+                self.ax.set_title("Session Cleared")
+                self.ax.text(0.5, 0.5, "Session cleared - ready for new analysis", 
+                           ha="center", va="center", transform=self.ax.transAxes)
+                self.canvas.draw()
+            
+            # Update status
+            if hasattr(self, 'status'):
+                self.status.config(text="Session cleared - ready for new analysis")
+            
+            print("✅ All session state cleared!")
+            
+        except Exception as e:
+            print(f"Error clearing session state: {e}")
+
     def _refresh_plot(self):
         settings = dict(
             plot_type=self.inputs.get_plot_type(),
@@ -366,7 +401,7 @@ def main():
         parser.add_argument("--overlay-synth", action="store_true", help="Overlay synthetic curves")
         parser.add_argument("--overlay-peers", action="store_true", help="Overlay peer curves")
         parser.add_argument("--ci", type=float, default=68.0,
-                            help="Confidence interval percentage (e.g. 95 for 95%)")
+                            help="Confidence interval percentage (e.g. 95 for 95%%)")
         args = parser.parse_args()
         app = BrowserApp(overlay_synth=args.overlay_synth,
                          overlay_peers=args.overlay_peers,

@@ -7,10 +7,17 @@ import pandas as pd
 from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 
+import tkinter as tk
+from tkinter import messagebox
+import tkinter.ttk as ttk
+
 # --- Ensure project root on path so local packages resolve first ---
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# GUI input panel
+from display.gui.gui_input import InputPanel
 
 # Plot helpers
 from display.plotting.relative_weight_plot import (
@@ -51,7 +58,7 @@ from analysis.confidence_bands import (
     tps_confidence_bands,
     
 )
-
+from display.gui.gui_input import InputPanel
 DEFAULT_ATM_BAND = 0.05
 DEFAULT_WEIGHT_METHOD = "corr"
 DEFAULT_FEATURE_MODE = "iv_atm"
@@ -142,7 +149,17 @@ class PlotManager:
             except Exception:
                 pass
         self._cid_click = self.canvas.mpl_connect("button_press_event", self._on_click)
-
+    def _clear_session(self):
+        """Clear the current session."""
+        self.ent_target.delete(0, tk.END)
+        self.ent_peers.delete(0, tk.END)
+        self.cmb_presets.set("")
+        self.cmb_r_presets.set("")
+        self.ent_r.delete(0, tk.END)
+        self._sync_settings()
+        self._refresh_presets()
+        self._refresh_interest_rates()
+        self._refresh_plot()
     def _clear_correlation_colorbar(self, ax: plt.Axes):
         """Remove any existing correlation colorbar to prevent it from
         appearing on non-correlation plots. Keeps axes geometry consistent

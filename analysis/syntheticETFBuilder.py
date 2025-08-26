@@ -10,8 +10,13 @@ from data.db_utils import get_conn
 from analysis.pillars import load_atm, nearest_pillars
 
 
+from .pillars import DEFAULT_PILLARS_DAYS
+
+
+
+
 # Default grid (tweak as needed)
-DEFAULT_TENORS = (7, 30, 60, 90, 180, 365)
+DEFAULT_TENORS = (7, 14, 28, 56, 94, 112, 182, 252)
 DEFAULT_MNY_BINS: Tuple[Tuple[float, float], ...] = ((0.80, 0.90), (0.95, 1.05), (1.10, 1.25))
 
 
@@ -24,6 +29,15 @@ def _mny_labels(bins: Tuple[Tuple[float, float], ...]) -> Tuple[pd.Interval, ...
     edges = [bins[0][0]] + [hi for (_, hi) in bins]
     labels = [f"{lo:.2f}-{hi:.2f}" for (lo, hi) in bins]
     return labels, edges
+
+def build_synthetic_iv_series(
+    weights: Mapping[str, float],
+    pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLARS_DAYS,
+    tolerance_days: float = 7.0,
+) -> pd.DataFrame:
+    """Create a weighted ATM pillar IV time series."""
+    w = {k.upper(): float(v) for k, v in weights.items()}
+    return build_synthetic_iv(w, pillar_days=pillar_days, tolerance_days=tolerance_days)
 
 
 def build_surface_grids(
