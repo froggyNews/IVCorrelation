@@ -1288,7 +1288,7 @@ class PlotManager:
         peers,
         asof,
         pillars,
-        weight_mode,  # passed through to compute_and_plot_correlation
+        weight_mode,
         atm_band,
     ):
         tickers = [t for t in [target] + peers if t]
@@ -1301,6 +1301,17 @@ class PlotManager:
         clip_negative = settings.get("clip_negative", True)
 
         max_exp = self._current_max_expiries or 6
+
+        # --- ensure weights consistent with rest of UI ---
+        weights = None
+        if peers:
+            weights = self._weights_from_ui_or_matrix(
+                target=target,
+                peers=peers,
+                weight_mode=weight_mode,
+                asof=asof,
+                pillars=pillars,
+            )
 
         payload = {
             "tickers": sorted(tickers),
@@ -1337,6 +1348,7 @@ class PlotManager:
             peers=peers,
             max_expiries=max_exp,
             weight_mode=weight_mode,
+            weights=weights.to_dict() if weights is not None else None,  # <--- NEW
         )
 
         # cache for other plots
@@ -1345,10 +1357,11 @@ class PlotManager:
         self.last_corr_meta = {
             "asof": asof,
             "tickers": list(tickers),
-            "pillars": list(pillars or []),  # These are now dynamic target expiry pillars
+            "pillars": list(pillars or []),
             "weight_mode": weight_mode,
             "weight_power": weight_power,
             "clip_negative": clip_negative,
+            "weights": weights.to_dict() if weights is not None else None,  # <--- NEW
         }
 
     # -------------------- synthetic ATM helper --------------------

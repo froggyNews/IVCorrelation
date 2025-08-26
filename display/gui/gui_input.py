@@ -788,3 +788,27 @@ class InputPanel(ttk.Frame):
         self._refresh_presets()
         self._refresh_interest_rates()
         self._refresh_plot()
+
+    def _refresh_plot(self):
+        settings = dict(
+            plot_type=self.inputs.get_plot_type(),
+            target=self.inputs.get_target(),
+            asof=self.inputs.get_asof(),
+            model=self.inputs.get_model(),
+            T_days=self.inputs.get_T_days(),
+            ci=self.inputs.get_ci(),
+            x_units=self.inputs.get_x_units(),
+            atm_band=self.inputs.get_atm_band(),
+            weight_method=self.inputs.get_weight_method(),
+            feature_mode=self.inputs.get_feature_mode(),
+            overlay_synth=self.inputs.get_overlay_synth(),
+            overlay_peers=self.inputs.get_overlay_peers(),
+            peers=self.inputs.get_peers(),
+            pillars=self.inputs.get_pillars(),
+            max_expiries=self.inputs.get_max_exp(),
+        )
+        if not settings["target"] or not settings["asof"]:
+            self.status.config(text="Enter target and date to plot")
+            return
+
+        self.status.config(text="Loading...")
