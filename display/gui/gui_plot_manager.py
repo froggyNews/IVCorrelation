@@ -825,7 +825,31 @@ class PlotManager:
             target, peers, weight_mode, asof=asof, pillars=target_pillars
         )
 
+        # Cache key for synthetic surfaces includes weights + mode
+        payload = {
+            "target": target,
+            "peers": sorted(peers),
+            "weights": w.to_dict(),
+            "asof": pd.to_datetime(asof).floor("min").isoformat(),
+            "max_expiries": int(getattr(self, '_current_max_expiries', 6) or 6),
+            "weight_mode": weight_mode,
+        }
+
+        def _builder():
+            tickers = list({target, *peers})
+            surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
+            peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
+            return combine_surfaces(peer_surfaces, w.to_dict())
+
+        if hasattr(self, "_warm"):
+            try:
+                self._warm.enqueue("synthetic_surface", payload, _builder)
+            except Exception:
+                pass
+
         try:
+            synth_by_date = compute_or_load("synthetic_surface", payload, _builder)
+
             tickers = list({target, *peers})
             surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
 
@@ -834,8 +858,6 @@ class PlotManager:
                 ax.set_title(f"Synthetic Surface - {target} vs peers")
                 return
 
-            peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
-            synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
             if asof not in synth_by_date:
                 ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center")
                 ax.set_title(f"Synthetic Surface - {target} vs peers")
