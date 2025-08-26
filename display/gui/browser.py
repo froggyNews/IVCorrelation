@@ -1,6 +1,6 @@
 # This file is based on the upstream IVCorrelation project but has been
 # modified to improve GUI responsiveness. The changes revolve around
-# running potentially long‑running operations (database queries and
+# running potentially long-running operations (database queries and
 # ingestion) in background threads and then marshaling UI updates back
 # to the Tkinter main thread via `after()`. These modifications help
 # prevent the UI from freezing while data is downloaded or dates are
@@ -15,6 +15,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import sys
 from pathlib import Path
 import argparse
+
 # add near the very top of your entry script (e.g., browser.py)
 import warnings
 warnings.filterwarnings("error", category=RuntimeWarning)  # raise instead of warn
@@ -59,36 +60,14 @@ class BrowserApp(tk.Tk):
         self.inputs.bind_target_change(self._on_target_change)
         self.inputs.bind_session_clear(self._on_session_clear)
 
-        # Expiry navigation and animation controls
+        # Expiry navigation controls
         nav = ttk.Frame(self.tab_browser)
         nav.pack(side=tk.TOP, fill=tk.X, pady=(0, 4))
 
-        # Expiry navigation (existing)
         self.btn_prev = ttk.Button(nav, text="Prev Expiry", command=self._prev_expiry)
         self.btn_prev.pack(side=tk.LEFT, padx=4)
         self.btn_next = ttk.Button(nav, text="Next Expiry", command=self._next_expiry)
         self.btn_next.pack(side=tk.LEFT, padx=4)
-
-        # Animation controls (new)
-        ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-
-        self.var_animated = tk.BooleanVar(value=False)
-        self.chk_animated = ttk.Checkbutton(nav, text="Animate", variable=self.var_animated,
-                                            command=self._toggle_animation_mode)
-        self.chk_animated.pack(side=tk.LEFT, padx=4)
-
-        self.btn_play_pause = ttk.Button(nav, text="Play", command=self._toggle_animation)
-        self.btn_play_pause.pack(side=tk.LEFT, padx=2)
-
-        self.btn_stop = ttk.Button(nav, text="Stop", command=self._stop_animation)
-        self.btn_stop.pack(side=tk.LEFT, padx=2)
-
-        ttk.Label(nav, text="Speed:").pack(side=tk.LEFT, padx=(8, 2))
-        self.speed_var = tk.IntVar(value=500)  # Default speed
-        self.speed_scale = ttk.Scale(nav, from_=100, to=2000, variable=self.speed_var,
-                                     orient=tk.HORIZONTAL, length=100,
-                                     command=self._on_speed_change)
-        self.speed_scale.pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
         self.btn_spill = ttk.Button(nav, text="Spillover", command=self._open_spillover)
@@ -124,14 +103,13 @@ class BrowserApp(tk.Tk):
             self._on_target_change()
 
         self._update_nav_buttons()
-        self._update_animation_buttons()
 
         self.spill_win = None
 
     # ---------- events ----------
     def _on_target_change(self, *_):
         """
-        Handle changes to the target ticker. To avoid thread‑affinity issues
+        Handle changes to the target ticker. To avoid thread-affinity issues
         with SQLite, this method spawns a worker thread that opens a fresh
         database connection and queries the available dates for the current
         ticker. The results are marshalled back to the Tkinter main thread
@@ -233,30 +211,28 @@ class BrowserApp(tk.Tk):
             if hasattr(self, 'plot_mgr'):
                 # Clear cached data in plot manager
                 self.plot_mgr.last_atm_df = None
-                self.plot_mgr.last_corr_meta = {}
+                # updated name after renaming correlation -> relative_weight
+                if hasattr(self.plot_mgr, 'last_relative_weight_meta'):
+                    self.plot_mgr.last_relative_weight_meta = {}
                 self.plot_mgr.last_settings = {}
                 self.plot_mgr.last_fit_info = None
                 self.plot_mgr._smile_ctx = None
                 self.plot_mgr.invalidate_surface_cache()
-                
-                # Stop any running animation
-                if hasattr(self.plot_mgr, 'stop_animation'):
-                    self.plot_mgr.stop_animation()
-            
+
             # Clear the plot
             if hasattr(self, 'ax'):
                 self.ax.clear()
                 self.ax.set_title("Session Cleared")
-                self.ax.text(0.5, 0.5, "Session cleared - ready for new analysis", 
-                           ha="center", va="center", transform=self.ax.transAxes)
+                self.ax.text(0.5, 0.5, "Session cleared - ready for new analysis",
+                             ha="center", va="center", transform=self.ax.transAxes)
                 self.canvas.draw()
-            
+
             # Update status
             if hasattr(self, 'status'):
                 self.status.config(text="Session cleared - ready for new analysis")
-            
+
             print("✅ All session state cleared!")
-            
+
         except Exception as e:
             print(f"Error clearing session state: {e}")
 
@@ -286,24 +262,11 @@ class BrowserApp(tk.Tk):
 
         def worker():
             try:
-                # Check if animation is requested and supported
-                if (self.var_animated.get() and
-                        self.plot_mgr.has_animation_support(settings["plot_type"])):
-                    # Try to create animated plot
-                    if self.plot_mgr.plot_animated(self.ax, settings):
-                        self.after(0, lambda: self.status.config(text="Animated plot created"))
-                    else:
-                        # Fall back to static plot
-                        self.plot_mgr.plot(self.ax, settings)
-                        self.after(0, lambda: self.status.config(text="Animation failed - using static plot"))
-                else:
-                    # Create static plot
-                    self.plot_mgr.stop_animation()  # Stop any existing animation
-                    self.plot_mgr.plot(self.ax, settings)
+                # Always static plot (animation removed)
+                self.plot_mgr.plot(self.ax, settings)
 
                 self.canvas.draw()
                 self.after(0, self._update_nav_buttons)
-                self.after(0, self._update_animation_buttons)
                 # Refresh parameter table with latest fit info
                 self.after(0, lambda: self.tab_params.update(self.plot_mgr.last_fit_info))
 
@@ -312,8 +275,6 @@ class BrowserApp(tk.Tk):
                     messagebox.showerror("Plot error", str(exc))
                     self.status.config(text="Plot failed")
                     self._update_nav_buttons()
-                    self._update_animation_buttons()
-                # Note: schedule the handler with the original exception
                 self.after(0, lambda exc=e: handle_err(exc))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -332,56 +293,6 @@ class BrowserApp(tk.Tk):
         self.btn_prev.config(state=state)
         self.btn_next.config(state=state)
 
-    def _update_animation_buttons(self):
-        """Update animation control button states."""
-        plot_type = self.inputs.get_plot_type()
-        has_anim_support = self.plot_mgr.has_animation_support(plot_type)
-        is_animated = self.var_animated.get()
-        is_anim_active = self.plot_mgr.is_animation_active()
-
-        # Enable/disable animation checkbox based on plot type support
-        anim_state = tk.NORMAL if has_anim_support else tk.DISABLED
-        self.chk_animated.config(state=anim_state)
-
-        # Enable/disable animation controls based on animation state
-        control_state = tk.NORMAL if (is_animated and is_anim_active) else tk.DISABLED
-        self.btn_play_pause.config(state=control_state)
-        self.btn_stop.config(state=control_state)
-        self.speed_scale.config(state=control_state)
-
-        # Update play/pause button text
-        if is_anim_active and not self.plot_mgr._animation_paused:
-            self.btn_play_pause.config(text="Pause")
-        else:
-            self.btn_play_pause.config(text="Play")
-
-    def _toggle_animation_mode(self):
-        """Handle animation checkbox toggle."""
-        # Refresh plot when animation mode changes
-        self._refresh_plot()
-
-    def _toggle_animation(self):
-        """Toggle animation play/pause."""
-        if self.plot_mgr.is_animation_active():
-            if self.plot_mgr._animation_paused:
-                self.plot_mgr.start_animation()
-            else:
-                self.plot_mgr.pause_animation()
-            self._update_animation_buttons()
-
-    def _stop_animation(self):
-        """Stop animation."""
-        self.plot_mgr.stop_animation()
-        self._update_animation_buttons()
-
-    def _on_speed_change(self, value):
-        """Handle animation speed change."""
-        try:
-            speed_ms = int(2100 - float(value))  # Invert scale (higher value = faster)
-            self.plot_mgr.set_animation_speed(speed_ms)
-        except Exception:
-            pass
-
     def _open_spillover(self):
         """Open spillover analysis window."""
         if self.spill_win is None or not self.spill_win.winfo_exists():
@@ -397,16 +308,16 @@ class BrowserApp(tk.Tk):
 
 
 def main():
-        parser = argparse.ArgumentParser(description="Vol Browser")
-        parser.add_argument("--overlay-synth", action="store_true", help="Overlay synthetic curves")
-        parser.add_argument("--overlay-peers", action="store_true", help="Overlay peer curves")
-        parser.add_argument("--ci", type=float, default=68.0,
-                            help="Confidence interval percentage (e.g. 95 for 95%%)")
-        args = parser.parse_args()
-        app = BrowserApp(overlay_synth=args.overlay_synth,
-                         overlay_peers=args.overlay_peers,
-                         ci_percent=args.ci)
-        app.mainloop()
+    parser = argparse.ArgumentParser(description="Vol Browser")
+    parser.add_argument("--overlay-synth", action="store_true", help="Overlay synthetic curves")
+    parser.add_argument("--overlay-peers", action="store_true", help="Overlay peer curves")
+    parser.add_argument("--ci", type=float, default=68.0,
+                        help="Confidence interval percentage (e.g. 95 for 95%%)")
+    args = parser.parse_args()
+    app = BrowserApp(overlay_synth=args.overlay_synth,
+                     overlay_peers=args.overlay_peers,
+                     ci_percent=args.ci)
+    app.mainloop()
 
 
 if __name__ == "__main__":

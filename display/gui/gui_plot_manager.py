@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 
 import tkinter as tk
@@ -44,7 +43,7 @@ from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from volModel.polyFit import fit_tps_slice
 from volModel.multi_model_cache import (
-    get_cached_model_params, 
+    get_cached_model_params,
     fit_all_models_cached,
     get_cached_confidence_bands,
     fit_all_models_with_bands_cached,
@@ -56,9 +55,9 @@ from analysis.confidence_bands import (
     svi_confidence_bands,
     sabr_confidence_bands,
     tps_confidence_bands,
-    
 )
 from display.gui.gui_input import InputPanel
+
 DEFAULT_ATM_BAND = 0.05
 DEFAULT_WEIGHT_METHOD = "corr"
 DEFAULT_FEATURE_MODE = "iv_atm"
@@ -124,11 +123,6 @@ class PlotManager:
         # smile click-through state (for fast re-render without re-query)
         self._smile_ctx = None  # dict storing arrays + current index + overlay bits
 
-        # animation state
-        self._animation: FuncAnimation | None = None
-        self._animation_paused = False
-        self._animation_speed = 120  # ms between frames
-
         # preserve last settings for weight computation context
         self.last_settings: dict = {}
         # store latest fit parameters for UI parameter tab
@@ -149,6 +143,7 @@ class PlotManager:
             except Exception:
                 pass
         self._cid_click = self.canvas.mpl_connect("button_press_event", self._on_click)
+
     def _clear_session(self):
         """Clear the current session."""
         self.ent_target.delete(0, tk.END)
@@ -160,6 +155,7 @@ class PlotManager:
         self._refresh_presets()
         self._refresh_interest_rates()
         self._refresh_plot()
+
     def _clear_correlation_colorbar(self, ax: plt.Axes):
         """Remove any existing correlation colorbar to prevent it from
         appearing on non-correlation plots. Keeps axes geometry consistent
@@ -257,7 +253,6 @@ class PlotManager:
         weight_mode = (
             "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
         )
-        #TODO: Fix setting- marked as always true. 
         overlay_synth = settings.get("overlay_synth", True)
         overlay_peers = settings.get("overlay_peers", False)
         peers = settings["peers"]
@@ -370,7 +365,6 @@ class PlotManager:
 
             weights = None
             if peers:
-                # Use feasible expiries that work across target and peers
                 target_pillars = self._get_target_pillars(target, asof, max_expiries, peers)
                 weights = self._weights_from_ui_or_matrix(
                     target,
@@ -474,7 +468,6 @@ class PlotManager:
             if not peers:
                 ax.text(0.5, 0.5, "No peers", ha="center", va="center")
                 return
-            # Use feasible expiries that work across target and peers for weight computation
             target_pillars = self._get_target_pillars(target, asof, max_expiries, peers)
             weights = self._weights_from_ui_or_matrix(target, peers, weight_mode, asof=asof, pillars=target_pillars)
             if weights is None or weights.empty:
@@ -485,24 +478,6 @@ class PlotManager:
 
         else:
             ax.text(0.5, 0.5, f"Unknown plot: {plot_type}", ha="center", va="center")
-
-    def plot_animated(self, ax: plt.Axes, settings: dict) -> bool:
-        """Try to create an animated plot. Returns True if successful, False otherwise."""
-        plot_type = settings["plot_type"]
-        
-        # Stop any existing animation first
-        self.stop_animation()
-        
-        try:
-            if plot_type.startswith("Smile"):
-                return self._create_animated_smile(ax, settings)
-            elif plot_type.startswith("Term"):
-                return self._create_animated_surface(ax, settings)
-            else:
-                return False  # Animation not supported for this plot type
-        except Exception as e:
-            print(f"Warning: Animation creation failed: {e}")
-            return False
 
     # -------------------- event handlers --------------------
     def _on_click(self, event):
@@ -535,7 +510,7 @@ class PlotManager:
 
         target = (target or "").upper()
         peers = [p.upper() for p in (peers or [])]
-        
+
         # Use target ticker's actual expiries instead of fixed day pillars
         if pillars is None:
             max_expiries = getattr(self, '_current_max_expiries', 6) or 6
@@ -620,7 +595,7 @@ class PlotManager:
 
         m_grid = np.linspace(0.7, 1.3, 121)
         K_grid = m_grid * S
-        
+
         # Use cached multi-model fitting with confidence bands for better performance
         try:
             ci_level = float(ci) if ci and ci > 0 else None
@@ -631,7 +606,7 @@ class PlotManager:
             svi_params = all_params.get('svi', {})
             sabr_params = all_params.get('sabr', {})
             tps_params = all_params.get('tps', {})
-            
+
             # Get cached confidence bands if available
             bands = None
             if ci_level and 'bands' in all_results:
@@ -641,7 +616,7 @@ class PlotManager:
             svi_params = fit_svi_slice(S, K, T_used, IV)
             sabr_params = fit_sabr_slice(S, K, T_used, IV)
             tps_params = fit_tps_slice(S, K, T_used, IV)
-            
+
             # Fallback confidence bands computation
             bands = None
             if ci and ci > 0:
@@ -654,7 +629,7 @@ class PlotManager:
                         bands = tps_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
                 except Exception:
                     bands = None
-        
+
         fit_params = {"svi": svi_params, "sabr": sabr_params, "tps": tps_params}.get(model, {})
 
         info = fit_and_plot_smile(
@@ -671,7 +646,7 @@ class PlotManager:
             enable_toggles=True,  # clickable legend toggles for all models
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
-        
+
         # Ensure smile plot axis labels are set correctly (fix for label pollution from term plots)
         ax.set_xlabel("Moneyness (K/S)")
         ax.set_ylabel("Implied Vol")
@@ -763,37 +738,35 @@ class PlotManager:
 
                         x_mny = _mny_from_index_labels(tgt_grid.index)
                         y_syn = syn_grid[col_syn].astype(float).to_numpy()
-                        
+
                         # Improved grid alignment for synthetic smile
                         if not tgt_grid.index.equals(syn_grid.index):
                             try:
-                                # Try interpolation-based alignment
                                 syn_mny = _mny_from_index_labels(syn_grid.index)
                                 syn_iv = syn_grid[col_syn].astype(float).to_numpy()
-                                
-                                # Filter valid data
+
                                 syn_valid = np.isfinite(syn_mny) & np.isfinite(syn_iv)
                                 tgt_valid = np.isfinite(x_mny)
-                                
+
                                 if np.sum(syn_valid) >= 2 and np.sum(tgt_valid) >= 2:
                                     from scipy.interpolate import interp1d
                                     syn_mny_clean = syn_mny[syn_valid]
                                     syn_iv_clean = syn_iv[syn_valid]
                                     tgt_mny_clean = x_mny[tgt_valid]
-                                    
+
                                     # Interpolate within range
                                     min_syn = np.min(syn_mny_clean)
                                     max_syn = np.max(syn_mny_clean)
                                     interp_mask = (tgt_mny_clean >= min_syn) & (tgt_mny_clean <= max_syn)
-                                    
+
                                     if np.sum(interp_mask) >= 2:
                                         tgt_mny_interp = tgt_mny_clean[interp_mask]
-                                        f_interp = interp1d(syn_mny_clean, syn_iv_clean, 
-                                                          kind='linear', bounds_error=False, fill_value=np.nan)
+                                        f_interp = interp1d(syn_mny_clean, syn_iv_clean,
+                                                            kind='linear', bounds_error=False, fill_value=np.nan)
                                         syn_iv_interp = f_interp(tgt_mny_interp)
                                         x_mny = tgt_mny_interp
                                         y_syn = syn_iv_interp
-                                        
+
                             except (ImportError, Exception):
                                 # Fallback to intersection-based alignment
                                 common = tgt_grid.index.intersection(syn_grid.index)
@@ -887,40 +860,40 @@ class PlotManager:
                     # Try interpolation-based alignment
                     tgt_mny = _mny_from_index_labels(tgt_grid.index)
                     syn_mny = _mny_from_index_labels(syn_grid.index)
-                    
+
                     # Filter valid data
                     tgt_valid = np.isfinite(tgt_mny) & np.isfinite(y_tgt)
                     syn_valid = np.isfinite(syn_mny) & np.isfinite(y_syn)
-                    
+
                     if np.sum(tgt_valid) >= 2 and np.sum(syn_valid) >= 2:
                         from scipy.interpolate import interp1d
                         tgt_mny_clean = tgt_mny[tgt_valid]
                         tgt_iv_clean = y_tgt[tgt_valid]
                         syn_mny_clean = syn_mny[syn_valid]
                         syn_iv_clean = y_syn[syn_valid]
-                        
+
                         # Find common moneyness range
                         min_common = max(np.min(tgt_mny_clean), np.min(syn_mny_clean))
                         max_common = min(np.max(tgt_mny_clean), np.max(syn_mny_clean))
-                        
+
                         if max_common > min_common:
                             # Create common grid
                             common_grid = np.linspace(min_common, max_common, 50)
-                            
+
                             # Interpolate both curves onto common grid
-                            f_tgt = interp1d(tgt_mny_clean, tgt_iv_clean, 
-                                           kind='linear', bounds_error=False, fill_value=np.nan)
-                            f_syn = interp1d(syn_mny_clean, syn_iv_clean, 
-                                           kind='linear', bounds_error=False, fill_value=np.nan)
-                            
+                            f_tgt = interp1d(tgt_mny_clean, tgt_iv_clean,
+                                             kind='linear', bounds_error=False, fill_value=np.nan)
+                            f_syn = interp1d(syn_mny_clean, syn_iv_clean,
+                                             kind='linear', bounds_error=False, fill_value=np.nan)
+
                             y_tgt_interp = f_tgt(common_grid)
                             y_syn_interp = f_syn(common_grid)
-                            
+
                             # Use interpolated values
                             x_mny = common_grid
                             y_tgt = y_tgt_interp
                             y_syn = y_syn_interp
-                            
+
                 except (ImportError, Exception):
                     # Fallback to intersection-based alignment
                     common = tgt_grid.index.intersection(syn_grid.index)
@@ -1040,7 +1013,7 @@ class PlotManager:
                             bands = tps_confidence_bands(S, K, T0, IV, K_grid, level=float(ci))
                     except Exception:
                         bands = None
-                
+
                 # Store computed bands in local cache
                 if bands is not None and isinstance(pre, dict):
                     if not isinstance(bands_map, dict):
@@ -1237,11 +1210,11 @@ class PlotManager:
             ax.legend(loc="best", fontsize=8)
         days = int(round(T0 * 365.25))
         ax.set_title(f"{target}  {asof}  T≈{T0:.3f}y (~{days}d)  RMSE={info['rmse']:.4f}\n(Use buttons or click: L=next, R=prev)")
-        
+
         # Ensure smile plot axis labels are set correctly (fix for label pollution from term plots)
         ax.set_xlabel("Moneyness (K/S)")
         ax.set_ylabel("Implied Vol")
-        
+
         # Ensure canvas and figure are valid before drawing
         if self.canvas is not None and ax.figure is not None:
             self.canvas.draw_idle()
@@ -1269,7 +1242,6 @@ class PlotManager:
         self._render_smile_at_index()
 
     # -------------------- term structure --------------------
-    
     def _plot_term(self, ax, data, target, asof, x_units, ci):
         """Plot precomputed ATM term structure and optional synthetic overlay."""
         atm_curve = data.get("atm_curve")
@@ -1381,8 +1353,15 @@ class PlotManager:
             peers=peers,
             max_expiries=max_exp,
             weight_mode=weight_mode,
-            weights=weights,
+            weights=(None if weights is None else weights.to_dict()),
         )
+
+        if rel_w_df is None or rel_w_df.empty:
+            ax.text(0.5, 0.5,
+                    "No relative-weight data (empty ATM panel).\n"
+                    "Check: asof coverage, peers≥2, max_expiries>1, atm_band.",
+                    ha="center", va="center")
+            return
 
         # cache for other plots
         self.last_relative_weight_df = rel_w_df
@@ -1394,249 +1373,5 @@ class PlotManager:
             "weight_mode": weight_mode,
             "weight_power": weight_power,
             "clip_negative": clip_negative,
-            "weights": weights.to_dict() if weights is not None else None,  # <--- keep storing dict
+            "weights": (None if weights is None else weights.to_dict()),
         }
-
-    # -------------------- synthetic ATM helper --------------------
-    # -------------------- animation control --------------------
-    def has_animation_support(self, plot_type: str) -> bool:
-        """Check if animation is supported for the given plot type."""
-        return plot_type.startswith("Smile")
-
-    def is_animation_active(self) -> bool:
-        """Check if an animation is currently active."""
-        return self._animation is not None
-
-    def stop_animation(self) -> None:
-        """Stop any currently running animation."""
-        if self._animation is not None:
-            try:
-                self._animation.event_source.stop()
-                self._animation = None
-                self._animation_paused = False
-            except Exception as e:
-                print(f"Warning: Error stopping animation: {e}")
-                self._animation = None
-                self._animation_paused = False
-
-    def start_animation(self) -> None:
-        """Start or resume animation."""
-        if self._animation is not None:
-            if self._animation_paused:
-                try:
-                    self._animation.resume()
-                    self._animation_paused = False
-                except Exception as e:
-                    print(f"Warning: Error resuming animation: {e}")
-
-    def pause_animation(self) -> None:
-        """Pause animation."""
-        if self._animation is not None and not self._animation_paused:
-            try:
-                self._animation.pause()
-                self._animation_paused = True
-            except Exception as e:
-                print(f"Warning: Error pausing animation: {e}")
-
-    def set_animation_speed(self, speed_ms: int) -> None:
-        """Set animation speed in milliseconds between frames."""
-        self._animation_speed = max(50, min(2000, speed_ms))  # Clamp between 50ms and 2000ms
-        if self._animation is not None:
-            try:
-                self._animation.event_source.interval = self._animation_speed
-            except Exception as e:
-                print(f"Warning: Error setting animation speed: {e}")
-
-    def _create_animated_smile(self, ax: plt.Axes, settings: dict) -> bool:
-        target = settings["target"]
-        try:
-            if self._try_animate_smile_over_dates(ax, settings):
-                return True
-            return self._try_animate_smile_over_expiries(ax, settings)
-        except Exception as e:
-            print(f"Error creating animated smile: {e}")
-            return False
-
-    def _try_animate_smile_over_dates(self, ax: plt.Axes, settings: dict) -> bool:
-        from analysis.analysis_pipeline import available_dates
-
-        target = settings["target"]
-        T_days = settings.get("T_days", 30)
-        dates = available_dates(target)
-        if len(dates) < 2:
-            return False
-        animation_dates = dates[-10:] if len(dates) > 10 else dates
-
-        k_data, iv_data, valid_dates = [], [], []
-        for date in animation_dates:
-            df = self.get_smile_slice(target, date, T_target_years=T_days / 365.25)
-            if df is None or df.empty:
-                continue
-            K_arr = pd.to_numeric(df["K"], errors="coerce").to_numpy(float)
-            sigma_arr = pd.to_numeric(df["sigma"], errors="coerce").to_numpy(float)
-            S_arr = pd.to_numeric(df["S"], errors="coerce").to_numpy(float)
-            S = np.nanmedian(S_arr)
-            if not np.isfinite(S) or S <= 0:
-                continue
-            k = K_arr / S
-            valid_mask = np.isfinite(k) & np.isfinite(sigma_arr)
-            if not np.any(valid_mask):
-                continue
-            k_clean = k[valid_mask]
-            iv_clean = sigma_arr[valid_mask]
-            sort_idx = np.argsort(k_clean)
-            k_data.append(k_clean[sort_idx])
-            iv_data.append(iv_clean[sort_idx])
-            valid_dates.append(date)
-
-        if len(valid_dates) < 2:
-            return False
-        return self._create_smile_animation(ax, k_data, iv_data, valid_dates, f"{target} Smile Over Time")
-
-    def _try_animate_smile_over_expiries(self, ax: plt.Axes, settings: dict) -> bool:
-        target = settings["target"]
-        asof = settings["asof"]
-        df = self.get_smile_slice(target, asof, T_target_years=None)
-        if df is None or df.empty:
-            return False
-
-        T_arr = pd.to_numeric(df["T"], errors="coerce").to_numpy(float)
-        K_arr = pd.to_numeric(df["K"], errors="coerce").to_numpy(float)
-        sigma_arr = pd.to_numeric(df["sigma"], errors="coerce").to_numpy(float)
-        S_arr = pd.to_numeric(df["S"], errors="coerce").to_numpy(float)
-
-        Ts = np.sort(np.unique(T_arr[np.isfinite(T_arr)]))
-        if len(Ts) < 2:
-            return False
-
-        k_data, iv_data, valid_expiries = [], [], []
-        for T in Ts:
-            mask = np.isclose(T_arr, T, atol=1e-6)
-            if not np.any(mask):
-                continue
-            K_T = K_arr[mask]
-            sigma_T = sigma_arr[mask]
-            S_T = S_arr[mask]
-            S = np.nanmedian(S_T)
-            if not np.isfinite(S) or S <= 0:
-                continue
-            k = K_T / S
-            valid_mask = np.isfinite(k) & np.isfinite(sigma_T)
-            if not np.any(valid_mask):
-                continue
-            k_clean = k[valid_mask]
-            iv_clean = sigma_T[valid_mask]
-            sort_idx = np.argsort(k_clean)
-            k_data.append(k_clean[sort_idx])
-            iv_data.append(iv_clean[sort_idx])
-            days = int(round(T * 365.25))
-            valid_expiries.append(f"T={T:.3f}y ({days}d)")
-
-        if len(valid_expiries) < 2:
-            return False
-        return self._create_smile_animation(ax, k_data, iv_data, valid_expiries, f"{target} Smile Over Expiries - {asof}")
-
-    def _create_smile_animation(self, ax: plt.Axes, k_data: list, iv_data: list, labels: list, base_title: str) -> bool:
-        all_k = np.concatenate(k_data)
-        k_min, k_max = np.nanpercentile(all_k, [5, 95])
-        k_grid = np.linspace(k_min, k_max, 50)
-
-        iv_grid_data = []
-        for k_points, iv_points in zip(k_data, iv_data):
-            if len(k_points) > 1:
-                iv_interp = np.interp(k_grid, k_points, iv_points, left=np.nan, right=np.nan)
-            else:
-                iv_interp = np.full_like(k_grid, np.nan)
-            iv_grid_data.append(iv_interp)
-        iv_tk = np.array(iv_grid_data)
-
-        ax.clear()
-        line, = ax.plot(k_grid, iv_tk[0], label="Smile", lw=2)
-        ax.set_xlim(k_grid.min(), k_grid.max())
-        iv_min, iv_max = np.nanpercentile(iv_tk, [1, 99])
-        iv_range = max(iv_max - iv_min, 1e-6)
-        ax.set_ylim(iv_min - 0.1 * iv_range, iv_max + 0.1 * iv_range)
-        ax.set_xlabel("Moneyness (K/S)")
-        ax.set_ylabel("Implied Volatility")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        def update_frame(i):
-            line.set_ydata(iv_tk[i])
-            ax.set_title(f"{base_title} - {labels[i]}")
-            return [line]
-
-        fig = ax.figure
-        self._animation = FuncAnimation(fig, update_frame, frames=len(labels), interval=self._animation_speed, blit=True, repeat=True)
-        update_frame(0)
-        return True
-
-    def _create_animated_surface(self, ax: plt.Axes, settings: dict) -> bool:
-        from analysis.analysis_pipeline import available_dates
-
-        target = settings["target"]
-        peers = settings.get("peers", [])
-
-        dates = available_dates(target)
-        if len(dates) < 2:
-            return False
-        animation_dates = dates[-8:] if len(dates) > 8 else dates
-
-        surfaces_data = []
-        valid_dates = []
-        for date in animation_dates:
-            try:
-                # Build grids (no asof_dates arg to keep compatibility)
-                surfaces = build_surface_grids(
-                    tickers=[target] + (peers or []),
-                    max_expiries=settings.get("max_expiries", 6),
-                    use_atm_only=False,
-                )
-                if target in surfaces and date in surfaces[target]:
-                    surface = surfaces[target][date]
-                    if not surface.empty:
-                        surfaces_data.append(surface)
-                        valid_dates.append(date)
-            except Exception:
-                continue
-
-        if len(valid_dates) < 2:
-            return False
-
-        first_surface = surfaces_data[0]
-        tau_days = first_surface.columns.values
-        k_levels = first_surface.index.values
-        tau = np.array([float(t) for t in tau_days])
-        k = np.array([float(str(k_str).split('-')[0]) if '-' in str(k_str) else float(k_str) for k_str in k_levels])
-
-        iv_tktau = []
-        for surface in surfaces_data:
-            aligned = surface.reindex(index=k_levels, columns=tau_days, fill_value=np.nan)
-            iv_tktau.append(aligned.values)
-        iv_tktau = np.array(iv_tktau)
-
-        ax.clear()
-        vmin, vmax = np.nanpercentile(iv_tktau, [1, 99])
-        im = ax.imshow(
-            iv_tktau[0],
-            origin="lower",
-            aspect="auto",
-            extent=[tau.min(), tau.max(), k.min(), k.max()],
-            vmin=vmin,
-            vmax=vmax,
-            animated=True,
-        )
-        ax.set_xlabel("Time to Expiry (days)")
-        ax.set_ylabel("Moneyness")
-        cbar = ax.figure.colorbar(im, ax=ax)
-        cbar.set_label("Implied Volatility")
-
-        def update_surface(i):
-            im.set_array(iv_tktau[i])
-            ax.set_title(f"{target} IV Surface Animation - {valid_dates[i]}")
-            return [im]
-
-        fig = ax.figure
-        self._animation = FuncAnimation(fig, update_surface, frames=len(valid_dates), interval=self._animation_speed, blit=True, repeat=True)
-        update_surface(0)
-        return True
