@@ -301,49 +301,77 @@ def get_smile_slice(
 ) -> pd.DataFrame:
     """
     Return a slice of quotes for plotting a smile (one date, one ticker).
-    If asof_date is None, uses the most recent date for the ticker.
-    If T_target_years is given, returns only the nearest expiry; otherwise returns all expiries that day.
-    Optionally filter by call_put ('C'/'P').
+    - If asof_date is None: use the most recent trading day for that ticker.
+    - Accepts either date-only ('YYYY-MM-DD') or full timestamp inputs.
+    - Matches rows by calendar day regardless of how asof_date is stored in DB.
+    - If T_target_years is provided, keep only the nearest expiry for that T.
     """
     conn = get_conn()
-    ticker = ticker.upper()
+    try:
+        ticker = (ticker or "").upper()
 
-    if asof_date is None:
-        from data.db_utils import get_most_recent_date
-        asof_date = get_most_recent_date(conn, ticker)
-        if asof_date is None:
-            return pd.DataFrame()
+        # Resolve the calendar day we should pull
+        if not asof_date:
+            from data.db_utils import get_most_recent_date
+            asof_date = get_most_recent_date(conn, ticker)
+            if not asof_date:
+                return pd.DataFrame()
 
-    q = """
-        SELECT asof_date, ticker, expiry, call_put, strike AS K, spot AS S, ttm_years AS T,
-               moneyness, iv AS sigma, delta, is_atm
-        FROM options_quotes
-        WHERE asof_date = ? AND ticker = ?
-    """
-    df = pd.read_sql_query(q, conn, params=[asof_date, ticker])
-    if df.empty:
-        return df
+        asof_ts = pd.to_datetime(asof_date)
+        day_str = asof_ts.strftime("%Y-%m-%d")
 
-    if call_put in ("C", "P"):
-        df = df[df["call_put"] == call_put]
+        # Robust day match: works whether DB stores TEXT dates with/without time
+        q = """
+            SELECT asof_date, ticker, expiry, call_put, strike AS K, spot AS S, ttm_years AS T,
+                   moneyness, iv AS sigma, delta, is_atm
+            FROM options_quotes
+            WHERE ticker = ?
+              AND substr(asof_date, 1, 10) = ?
+        """
+        df = pd.read_sql_query(q, conn, params=[ticker, day_str])
 
-    # Optionally limit number of expiries (smallest T first)
-    if max_expiries is not None and max_expiries > 0 and not df.empty:
-        unique_expiries = df.groupby("expiry")["T"].first().sort_values()
-        limited_expiries = unique_expiries.head(max_expiries).index.tolist()
-        df = df[df["expiry"].isin(limited_expiries)]
+        if df.empty:
+            return df
 
-    if T_target_years is not None and not df.empty:
-        # pick nearest expiry to T_target_years
-        abs_diff = (df["T"] - float(T_target_years)).abs()
-        nearest_mask = abs_diff.groupby(df["expiry"]).transform("min") == abs_diff
-        df = df[nearest_mask]
-        # if multiple expiries tie, keep the largest bucket (most rows)
-        if df["expiry"].nunique() > 1:
-            first_expiry = df.groupby("expiry").size().sort_values(ascending=False).index[0]
-            df = df[df["expiry"] == first_expiry]
+        # Optional call/put filter
+        if call_put in ("C", "P"):
+            df = df[df["call_put"] == call_put]
+            if df.empty:
+                return df
 
-    return df.sort_values(["call_put", "T", "moneyness", "K"]).reset_index(drop=True)
+        # Optionally limit number of expiries (smallest T first)
+        if max_expiries is not None and max_expiries > 0 and not df.empty:
+            # group by expiry and keep the earliest (smallest T) expiries
+            unique_exp = (
+                df.groupby("expiry", as_index=True)["T"]
+                  .first()
+                  .sort_values(kind="stable")
+            )
+            keep = unique_exp.head(max_expiries).index.tolist()
+            df = df[df["expiry"].isin(keep)]
+            if df.empty:
+                return df
+
+        # If a target T is specified, keep only the nearest expiry
+        if T_target_years is not None and not df.empty:
+            # Find rows belonging to the expiry whose T is closest to target
+            abs_diff = (df["T"].astype(float) - float(T_target_years)).abs()
+            nearest_mask = abs_diff.groupby(df["expiry"]).transform("min") == abs_diff
+            df = df[nearest_mask]
+            if df["expiry"].nunique() > 1:
+                # If multiple expiries tie, keep the one with the most rows
+                top = df.groupby("expiry").size().sort_values(ascending=False).index[0]
+                df = df[df["expiry"] == top]
+
+        return df.sort_values(["call_put", "T", "moneyness", "K"], kind="stable").reset_index(drop=True)
+
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 
 def prepare_smile_data(
     target: str,

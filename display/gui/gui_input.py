@@ -19,16 +19,14 @@ class InputManager:
     The GUI updates this manager whenever a control changes so that callers
     can grab a coherent snapshot of the current configuration without polling
     each widget individually. This reduces the delay between editing a field
-    and using the new values for plotting or data ingestion."""
-
+    and using the new values for plotting or data ingestion.
+    """
     settings: Dict[str, Any] = field(default_factory=dict)
 
     def update(self, **kwargs: Any) -> None:
-        """Merge provided key/value pairs into the settings store."""
         self.settings.update(kwargs)
 
     def as_dict(self) -> Dict[str, Any]:
-        """Return a shallow copy of all current settings."""
         return dict(self.settings)
 
 from data.ticker_groups import (
@@ -38,18 +36,18 @@ from data.ticker_groups import (
 from data.interest_rates import (
     save_interest_rate, load_interest_rate, get_default_interest_rate,
     list_interest_rates, delete_interest_rate, set_default_interest_rate,
-    get_interest_rate_names, create_default_interest_rates, STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
+    get_interest_rate_names, create_default_interest_rates,
+    STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 )
 from data.db_utils import get_conn, ensure_initialized
 
-
 DEFAULT_MODEL = "svi"
 DEFAULT_ATM_BAND = 0.05
-DEFAULT_CI = 0.68
+DEFAULT_CI = 0.68           # as a decimal (e.g., 0.68 -> 68%)
 DEFAULT_X_UNITS = "years"
 DEFAULT_WEIGHT_METHOD = "corr"
 DEFAULT_FEATURE_MODE = "iv_atm"
-DEFAULT_PILLARS = [7,30,60,90,180,365]
+DEFAULT_PILLARS = [7, 30, 60, 90, 180, 365]
 DEFAULT_OVERLAY = False
 PLOT_TYPES = (
     "Smile (K/S vs IV)",
@@ -59,11 +57,8 @@ PLOT_TYPES = (
     "ETF Weights",
 )
 
-
 def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
-    """Infer feature scope from plot and feature mode.
-
-    Returns one of: 'smile', 'term', 'surface'."""
+    """Infer feature scope from plot and feature mode. Returns: 'smile' | 'term' | 'surface'."""
     if plot_type.startswith("Smile"):
         return "smile"
     if plot_type.startswith("Term"):
@@ -72,10 +67,8 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
         return "surface"
     if plot_type.startswith("Relative Weight Matrix"):
         if feature_mode in ("iv_atm", "ul"):
-            # decide later based on pillars count
             return "term"
-        else:
-            return "surface"
+        return "surface"
     if plot_type.startswith("ETF Weights"):
         return "surface" if feature_mode.startswith("surface") else "term"
     return "term"
@@ -83,21 +76,11 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
 class InputPanel(ttk.Frame):
     """
     Encapsulates all GUI inputs and exposes getters/setters + callbacks.
-    Browser/runner can:
-      - read current settings via getters
+
+    Host code can:
+      - read current settings via getters / get_settings()
       - set date list via set_dates(...)
       - bind target-entry changes and button clicks
-
-    Parameters
-    ----------
-    master : tk.Widget
-        Parent widget.
-    overlay_synth : bool, optional
-        Initial state for the synthetic overlay checkbox.
-    overlay_peers : bool, optional
-        Initial state for the peer overlay checkbox.
-    ci_percent : float, optional
-        Confidence interval expressed in percentage (e.g. 68 for 68%).
     """
 
     def __init__(self, master, *, overlay_synth: bool = True, overlay_peers: bool = True,
@@ -107,32 +90,36 @@ class InputPanel(ttk.Frame):
 
         # Central store for current settings
         self.manager = InputManager()
-        
-        # Initialize database and create default groups if needed
+
+        # session clear callback placeholder
+        self._cb_session_clear: Callable[[], None] | None = None
+
+        # Initialize DB artifacts and load defaults
         self._init_ticker_groups()
 
         # =======================
         # Row 0: Presets
         # =======================
-        row0 = ttk.Frame(self); row0.pack(side=tk.TOP, fill=tk.X, pady=(0,6))
-        
+        row0 = ttk.Frame(self); row0.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+
         ttk.Label(row0, text="Presets").grid(row=0, column=0, sticky="w")
         self.cmb_presets = ttk.Combobox(row0, values=[], width=25, state="readonly")
-        self.cmb_presets.grid(row=0, column=1, padx=(4,6))
+        self.cmb_presets.grid(row=0, column=1, padx=(4, 6))
         self.cmb_presets.bind("<<ComboboxSelected>>", self._on_preset_selected)
-        
+
         self.btn_load_preset = ttk.Button(row0, text="Load", command=self._load_preset)
         self.btn_load_preset.grid(row=0, column=2, padx=2)
-        
+
         self.btn_save_preset = ttk.Button(row0, text="Save", command=self._save_preset)
         self.btn_save_preset.grid(row=0, column=3, padx=2)
-        
+
         self.btn_delete_preset = ttk.Button(row0, text="Delete", command=self._delete_preset)
         self.btn_delete_preset.grid(row=0, column=4, padx=2)
-        
-        self.btn_refresh_presets = ttk.Button(row0, text="Clear Session", command=self._clear_session)
-        self.btn_refresh_presets.grid(row=0, column=5, padx=2)
-        
+
+        # Clear Session triggers a host-provided callback
+        self.btn_clear_session = ttk.Button(row0, text="Clear Session", command=self._on_clear_session_clicked)
+        self.btn_clear_session.grid(row=0, column=5, padx=2)
+
         # Load initial presets
         self._refresh_presets()
 
@@ -143,38 +130,38 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row1, text="Target").grid(row=0, column=0, sticky="w")
         self.ent_target = ttk.Entry(row1, width=12)
-        self.ent_target.grid(row=0, column=1, padx=(4,10))
+        self.ent_target.grid(row=0, column=1, padx=(4, 10))
         self.ent_target.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row1, text="Peers (comma)").grid(row=0, column=2, sticky="w")
         self.ent_peers = ttk.Entry(row1, width=40)
-        self.ent_peers.grid(row=0, column=3, padx=(4,10))
+        self.ent_peers.grid(row=0, column=3, padx=(4, 10))
         self.ent_peers.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row1, text="Max expiries").grid(row=0, column=4, sticky="w")
         self.ent_maxexp = ttk.Entry(row1, width=6)
         self.ent_maxexp.insert(0, "6")
-        self.ent_maxexp.grid(row=0, column=5, padx=(4,10))
+        self.ent_maxexp.grid(row=0, column=5, padx=(4, 10))
         self.ent_maxexp.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row1, text="r").grid(row=0, column=6, sticky="w")
         self.ent_r = ttk.Entry(row1, width=8)
-        self.ent_r.grid(row=0, column=7, padx=(4,4))
+        self.ent_r.grid(row=0, column=7, padx=(4, 4))
         self.ent_r.bind("<KeyRelease>", self._sync_settings)
-        
+
         # Interest rate dropdown and management
         self.cmb_r_presets = ttk.Combobox(row1, values=[], width=12, state="readonly")
-        self.cmb_r_presets.grid(row=0, column=8, padx=(2,2))
+        self.cmb_r_presets.grid(row=0, column=8, padx=(2, 2))
         self.cmb_r_presets.bind("<<ComboboxSelected>>", self._on_rate_preset_selected)
         self.cmb_r_presets.bind("<<ComboboxSelected>>", self._sync_settings)
-        
+
         self.btn_save_rate = ttk.Button(row1, text="Save R", command=self._save_interest_rate, width=6)
         self.btn_save_rate.grid(row=0, column=9, padx=2)
 
         ttk.Label(row1, text="q").grid(row=0, column=10, sticky="w")
         self.ent_q = ttk.Entry(row1, width=6)
         self.ent_q.insert(0, "0.0")
-        self.ent_q.grid(row=0, column=11, padx=(4,10))
+        self.ent_q.grid(row=0, column=11, padx=(4, 10))
         self.ent_q.bind("<KeyRelease>", self._sync_settings)
 
         self.btn_download = ttk.Button(row1, text="Download / Ingest")
@@ -186,7 +173,7 @@ class InputPanel(ttk.Frame):
         # =======================
         # Row 2: Plot controls
         # =======================
-        row2 = ttk.Frame(self); row2.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
+        row2 = ttk.Frame(self); row2.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
 
         ttk.Label(row2, text="Date").grid(row=0, column=0, sticky="w")
         self.cmb_date = ttk.Combobox(row2, values=[], width=12, state="readonly")
@@ -219,11 +206,14 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row2, text="X units").grid(row=0, column=10, sticky="w")
         self.cmb_xunits = ttk.Combobox(row2, values=["years", "days"], width=8, state="readonly")
-        self.cmb_xunits.set("years")
+        self.cmb_xunits.set(DEFAULT_X_UNITS)
         self.cmb_xunits.grid(row=0, column=11, padx=6)
         self.cmb_xunits.bind("<<ComboboxSelected>>", self._sync_settings)
-        
-        row3 = ttk.Frame(self); row3.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
+
+        # =======================
+        # Row 3: Weights & bands
+        # =======================
+        row3 = ttk.Frame(self); row3.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
 
         ttk.Label(row3, text="Pillars (days)").grid(row=0, column=0, sticky="w")
         self.ent_pillars = ttk.Entry(row3, width=18)
@@ -263,19 +253,21 @@ class InputPanel(ttk.Frame):
         self.ent_atm_band.grid(row=0, column=7, padx=6)
         self.ent_atm_band.bind("<KeyRelease>", self._sync_settings)
 
-        # Row 4: Weight power and clipping controls
-        row4 = ttk.Frame(self); row4.pack(side=tk.TOP, fill=tk.X, pady=(6,0))
-        
+        # =======================
+        # Row 4: Weight power, clipping, overlays
+        # =======================
+        row4 = ttk.Frame(self); row4.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
+
         ttk.Label(row4, text="Weight power").grid(row=0, column=0, sticky="w")
         self.var_weight_power = tk.DoubleVar(value=1.0)
-        self.scl_weight_power = ttk.Scale(row4, from_=1.0, to=3.0, variable=self.var_weight_power, 
+        self.scl_weight_power = ttk.Scale(row4, from_=1.0, to=3.0, variable=self.var_weight_power,
                                           orient=tk.HORIZONTAL, length=120)
         self.scl_weight_power.grid(row=0, column=1, padx=6, sticky="w")
         self.var_weight_power.trace_add("write", lambda *args: self._sync_settings())
-        
+
         self.var_clip_negative = tk.BooleanVar(value=True)
-        self.chk_clip_negative = ttk.Checkbutton(row4, text="Clip negative weights", 
-                                                variable=self.var_clip_negative)
+        self.chk_clip_negative = ttk.Checkbutton(row4, text="Clip negative weights",
+                                                 variable=self.var_clip_negative)
         self.chk_clip_negative.grid(row=0, column=2, padx=8, sticky="w")
         self.var_clip_negative.trace_add("write", lambda *args: self._sync_settings())
 
@@ -292,10 +284,9 @@ class InputPanel(ttk.Frame):
         self.btn_plot = ttk.Button(row4, text="Plot")
         self.btn_plot.grid(row=0, column=5, padx=8)
 
-        # initial sync of settings
+        # initial sync of settings + visibility
         self._sync_settings()
         self._refresh_visibility()
-
 
     # ---------- bindings ----------
     def bind_download(self, fn: Callable[[], None]):
@@ -310,8 +301,10 @@ class InputPanel(ttk.Frame):
         self.ent_target.bind("<Return>", fn)
 
     def bind_session_clear(self, fn: Callable[[], None]):
-        """Register a callback fired when session clear button is clicked."""
+        """Register a callback fired when Clear Session is clicked."""
         self._cb_session_clear = fn
+        # ensure the button is wired to the latest callback
+        self.btn_clear_session.configure(command=self._on_clear_session_clicked)
 
     # ---------- setters ----------
     def set_dates(self, dates: List[str]):
@@ -321,7 +314,7 @@ class InputPanel(ttk.Frame):
         self._sync_settings()
 
     def set_rates(self, r: float = STANDARD_RISK_FREE_RATE, q: float = STANDARD_DIVIDEND_YIELD) -> None:
-        """Set the risk-free and dividend rates displayed in the UI."""
+        """Set risk-free and dividend rates in the UI."""
         self.ent_r.delete(0, tk.END)
         self.ent_r.insert(0, f"{r:.4f}")
         self.ent_q.delete(0, tk.END)
@@ -368,27 +361,20 @@ class InputPanel(ttk.Frame):
             return 6
 
     def get_interest_rate(self) -> float:
-        """Get the current interest rate value from the persistent system."""
+        """Get the current interest rate value with persistence defaults."""
         try:
             rate_str = self.ent_r.get().strip()
             if not rate_str:
                 return get_default_interest_rate()
-            
             rate_value = float(rate_str)
-            
-            # Convert to decimal if percentage (values > 1 are assumed to be percentages)
             if rate_value > 1:
-                rate_value = rate_value / 100.0
-            
+                rate_value /= 100.0
             return rate_value
-            
         except ValueError:
-            # Return default if parsing fails
             return get_default_interest_rate()
 
     def get_rates(self) -> tuple[float, float]:
-        """Get interest rate and dividend yield. Uses persistent interest rate system."""
-        r = self.get_interest_rate()  # Use our new persistent interest rate method
+        r = self.get_interest_rate()
         try:
             q = float(self.ent_q.get())
         except Exception:
@@ -419,7 +405,6 @@ class InputPanel(ttk.Frame):
             return val
         except Exception:
             return DEFAULT_CI
-
 
     def get_x_units(self) -> str:
         return self.cmb_xunits.get() or DEFAULT_X_UNITS
@@ -462,6 +447,7 @@ class InputPanel(ttk.Frame):
         st["mode"] = legacy_mode
         return st
 
+    # ---------- internal sync / visibility ----------
     def _sync_settings(self, *_):
         """Synchronize widgets to the central InputManager."""
         try:
@@ -514,38 +500,28 @@ class InputPanel(ttk.Frame):
             show_pillars = len(self.get_pillars()) >= 2
             show_T = not show_pillars
 
-        show_model = (
-            feat == "surface"
-            and (plot.startswith("Smile") or plot.startswith("Synthetic Surface"))
-        )
+        show_model = (feat == "surface" and (plot.startswith("Smile") or plot.startswith("Synthetic Surface")))
 
         self.ent_days.configure(state=("normal" if show_T else "disabled"))
         self.ent_pillars.configure(state=("normal" if show_pillars else "disabled"))
         self.cmb_model.configure(state=("readonly" if show_model else "disabled"))
 
-        self.cmb_xunits.configure(
-            state=("readonly" if feat.startswith("surface") else "disabled")
-        )
-        self.cmb_feature_mode.configure(
-            state=("disabled" if wm == "oi" else "readonly")
-        )
-    
+        self.cmb_xunits.configure(state=("readonly" if feat.startswith("surface") else "disabled"))
+        self.cmb_feature_mode.configure(state=("disabled" if wm == "oi" else "readonly"))
+
     # ---------- preset management ----------
     def _init_ticker_groups(self):
         """Initialize database for ticker groups and create defaults if needed."""
         try:
             conn = get_conn()
             ensure_initialized(conn)
-            
-            # Check if we have any groups, if not create defaults
             groups = list_ticker_groups(conn)
             if not groups:
                 create_default_groups(conn)
-            
             conn.close()
         except Exception as e:
             print(f"Error initializing ticker groups: {e}")
-    
+
     def _refresh_presets(self):
         """Refresh the preset dropdown with current groups from database."""
         try:
@@ -553,22 +529,20 @@ class InputPanel(ttk.Frame):
             group_names = [group["group_name"] for group in groups]
             self.cmb_presets["values"] = group_names
             if group_names:
-                self.cmb_presets.set("")  # Clear selection
+                self.cmb_presets.set("")  # Clear selection so user chooses explicitly
         except Exception as e:
             print(f"Error refreshing presets: {e}")
             messagebox.showerror("Error", f"Failed to refresh presets: {e}")
-    
+
     def _on_preset_selected(self, event=None):
-        """Called when user selects a preset from dropdown."""
-        # Auto-load when selection changes
+        """Auto-load when selection changes."""
         self._load_preset()
-    
+
     def _load_preset(self):
         """Load the selected preset into the target and peers fields."""
         selected = self.cmb_presets.get()
         if not selected:
             return
-            
         try:
             group = load_ticker_group(selected)
             if group is None:
@@ -576,53 +550,45 @@ class InputPanel(ttk.Frame):
                 self._refresh_presets()
                 return
 
-            # Update the GUI fields
             self.ent_target.delete(0, tk.END)
             self.ent_target.insert(0, group["target_ticker"])
 
             self.ent_peers.delete(0, tk.END)
             self.ent_peers.insert(0, ", ".join(group["peer_tickers"]))
 
-            # Show description if available
             if group.get("description"):
                 print(f"Loaded preset: {selected} - {group['description']}")
 
             self._sync_settings()
-
         except Exception as e:
             print(f"Error loading preset: {e}")
             messagebox.showerror("Error", f"Failed to load preset: {e}")
-    
+
     def _save_preset(self):
         """Save current target and peers as a new preset."""
         target = self.get_target()
         peers = self.get_peers()
-        
         if not target:
             messagebox.showerror("Error", "Please enter a target ticker before saving preset.")
             return
-            
         if not peers:
             messagebox.showerror("Error", "Please enter peer tickers before saving preset.")
             return
-        
-        # Ask for preset name
+
         group_name = simpledialog.askstring(
-            "Save Preset", 
+            "Save Preset",
             "Enter a name for this preset:",
             initialvalue=f"{target} vs peers"
         )
-        
         if not group_name:
             return
-            
-        # Ask for optional description
+
         description = simpledialog.askstring(
-            "Save Preset", 
+            "Save Preset",
             "Enter an optional description:",
             initialvalue=""
         ) or ""
-        
+
         try:
             success = save_ticker_group(
                 group_name=group_name,
@@ -630,30 +596,24 @@ class InputPanel(ttk.Frame):
                 peer_tickers=peers,
                 description=description
             )
-            
             if success:
                 self._refresh_presets()
                 self.cmb_presets.set(group_name)
                 print(f"Success: Preset '{group_name}' saved successfully!")
             else:
                 messagebox.showerror("Error", "Failed to save preset.")
-                
         except Exception as e:
             print(f"Error saving preset: {e}")
             messagebox.showerror("Error", f"Failed to save preset: {e}")
-    
+
     def _delete_preset(self):
         """Delete the selected preset."""
         selected = self.cmb_presets.get()
         if not selected:
             messagebox.showerror("Error", "Please select a preset to delete.")
             return
-        
-        # Confirm deletion
-        if not messagebox.askyesno("Confirm Delete", 
-                                   f"Are you sure you want to delete preset '{selected}'?"):
+        if not messagebox.askyesno("Confirm Delete", f"Delete preset '{selected}'?"):
             return
-        
         try:
             success = delete_ticker_group(selected)
             if success:
@@ -661,19 +621,14 @@ class InputPanel(ttk.Frame):
                 print(f"Success: Preset '{selected}' deleted successfully!")
             else:
                 messagebox.showerror("Error", f"Preset '{selected}' not found or could not be deleted.")
-                
         except Exception as e:
             print(f"Error deleting preset: {e}")
             messagebox.showerror("Error", f"Failed to delete preset: {e}")
-    
+
     def get_selected_preset_name(self) -> str:
-        """Get the currently selected preset name."""
         return self.cmb_presets.get()
-    
-    # ==========================================
-    # Interest Rate Management Methods
-    # ==========================================
-    
+
+    # ---------- Interest Rate Management ----------
     def _init_interest_rates(self):
         """Initialize interest rates and load default."""
         try:
@@ -681,36 +636,29 @@ class InputPanel(ttk.Frame):
             ensure_initialized(conn)
             create_default_interest_rates()
             self._refresh_interest_rates()
-            
-            # Load and set the default rate
             default_rate = get_default_interest_rate()
             self.ent_r.delete(0, tk.END)
             self.ent_r.insert(0, f"{default_rate:.4f}")
-            
         except Exception as e:
             print(f"Error initializing interest rates: {e}")
-    
+
     def _refresh_interest_rates(self):
         """Refresh the interest rate dropdown with current rates."""
         try:
             rate_names = get_interest_rate_names()
             self.cmb_r_presets['values'] = rate_names
-            
-            # Set to default if exists
             for rate_id, rate_value, description, is_default in list_interest_rates():
                 if is_default:
                     self.cmb_r_presets.set(rate_id)
                     break
-                    
         except Exception as e:
             print(f"Error refreshing interest rates: {e}")
-    
+
     def _on_rate_preset_selected(self, event=None):
         """Handle selection of an interest rate preset."""
         selected = self.cmb_r_presets.get()
         if not selected:
             return
-        
         try:
             rate_data = load_interest_rate(selected)
             if rate_data:
@@ -718,97 +666,65 @@ class InputPanel(ttk.Frame):
                 self.ent_r.delete(0, tk.END)
                 self.ent_r.insert(0, f"{rate_value:.4f}")
                 self._sync_settings()
-
         except Exception as e:
             print(f"Error loading interest rate: {e}")
             messagebox.showerror("Error", f"Failed to load interest rate: {e}")
-    
+
     def _save_interest_rate(self):
         """Save the current interest rate as a new preset."""
         try:
-            # Get current rate value
             rate_str = self.ent_r.get().strip()
             if not rate_str:
                 messagebox.showerror("Error", "Please enter an interest rate value.")
                 return
-            
             try:
                 rate_value = float(rate_str)
             except ValueError:
                 messagebox.showerror("Error", "Please enter a valid numeric interest rate.")
                 return
-            
-            # Convert to percentage if needed (values > 1 are assumed to be percentages)
+
             if rate_value > 1:
                 rate_value = rate_value / 100.0
                 print(f"Info: Converted {rate_str}% to {rate_value:.4f} (decimal form)")
-            
-            # Ask for rate name
+
             rate_id = simpledialog.askstring(
-                "Save Interest Rate", 
+                "Save Interest Rate",
                 "Enter a name for this interest rate:",
                 initialvalue=f"rate_{rate_value*100:.2f}pct"
             )
-            
             if not rate_id:
                 return
-            
-            # Ask for description
+
             description = simpledialog.askstring(
-                "Save Interest Rate", 
+                "Save Interest Rate",
                 "Enter an optional description:",
                 initialvalue=f"{rate_value*100:.2f}% interest rate"
             ) or ""
-            
-            # Ask if this should be the default
-            is_default = messagebox.askyesno(
-                "Set as Default", 
-                "Set this as the default interest rate?"
-            )
-            
-            # Save the rate
+
+            is_default = messagebox.askyesno("Set as Default", "Set this as the default interest rate?")
+
             save_interest_rate(rate_id, rate_value, description, is_default)
-            
-            # Refresh the dropdown
             self._refresh_interest_rates()
             self.cmb_r_presets.set(rate_id)
-            
-            
         except Exception as e:
             print(f"Error saving interest rate: {e}")
             messagebox.showerror("Error", f"Failed to save interest rate: {e}")
-    def _clear_session(self):
-        """Clear the current session."""
-        self.ent_target.delete(0, tk.END)
-        self.ent_peers.delete(0, tk.END)
-        self.cmb_presets.set("")
-        self.cmb_r_presets.set("")
-        self.ent_r.delete(0, tk.END)
-        self._sync_settings()
-        self._refresh_presets()
-        self._refresh_interest_rates()
-        self._refresh_plot()
 
-    def _refresh_plot(self):
-        settings = dict(
-            plot_type=self.inputs.get_plot_type(),
-            target=self.inputs.get_target(),
-            asof=self.inputs.get_asof(),
-            model=self.inputs.get_model(),
-            T_days=self.inputs.get_T_days(),
-            ci=self.inputs.get_ci(),
-            x_units=self.inputs.get_x_units(),
-            atm_band=self.inputs.get_atm_band(),
-            weight_method=self.inputs.get_weight_method(),
-            feature_mode=self.inputs.get_feature_mode(),
-            overlay_synth=self.inputs.get_overlay_synth(),
-            overlay_peers=self.inputs.get_overlay_peers(),
-            peers=self.inputs.get_peers(),
-            pillars=self.inputs.get_pillars(),
-            max_expiries=self.inputs.get_max_exp(),
-        )
-        if not settings["target"] or not settings["asof"]:
-            self.status.config(text="Enter target and date to plot")
-            return
-
-        self.status.config(text="Loading...")
+    # ---------- session clear dispatch ----------
+    def _on_clear_session_clicked(self):
+        """Delegate session clearing to host app if bound."""
+        if callable(self._cb_session_clear):
+            try:
+                self._cb_session_clear()
+            except Exception as e:
+                print(f"Error in session clear callback: {e}")
+        else:
+            # If no host callback provided, just reset local inputs
+            self.ent_target.delete(0, tk.END)
+            self.ent_peers.delete(0, tk.END)
+            self.cmb_presets.set("")
+            self.cmb_r_presets.set("")
+            self.ent_r.delete(0, tk.END)
+            self._sync_settings()
+            self._refresh_presets()
+            self._refresh_interest_rates()

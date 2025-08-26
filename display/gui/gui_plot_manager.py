@@ -396,6 +396,7 @@ class PlotManager:
                     weights=weights.to_dict() if weights is not None else None,
                     atm_band=atm_band,
                     max_expiries=max_expiries,
+                    get_slice=self.get_smile_slice,
                 )
 
             if hasattr(self, "_warm"):
@@ -1355,6 +1356,11 @@ class PlotManager:
             weight_mode=weight_mode,
             weights=(None if weights is None else weights.to_dict()),
         )
+        print("rel-w ATM shape:", None if atm_df is None else atm_df.shape,
+      "| rel-w matrix shape:", None if rel_w_df is None else rel_w_df.shape,
+      "| tickers:", tickers, "| asof:", asof, "| max_exp:", max_exp,
+      "| atm_band:", atm_band)
+
 
         if rel_w_df is None or rel_w_df.empty:
             ax.text(0.5, 0.5,
