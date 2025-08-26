@@ -21,8 +21,8 @@ from display.gui.gui_input import InputPanel
 
 # Plot helpers
 from display.plotting.relative_weight_plot import (
-    compute_and_plot_correlation,   # draws the corr heatmap
-    _corr_by_expiry_rank,
+    compute_and_plot_relative_weight,   # draws the heatmap
+    _relative_weight_by_expiry_rank,
 )
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import (
@@ -111,9 +111,9 @@ class PlotManager:
         self.get_smile_slice = get_smile_slice
 
         # caches
-        self.last_corr_df: pd.DataFrame | None = None
+        self.last_relative_weight_df: pd.DataFrame | None = None
         self.last_atm_df: pd.DataFrame | None = None
-        self.last_corr_meta: dict = {}
+        self.last_relative_weight_meta: dict = {}
 
         # ui state
         self._current_max_expiries = None
@@ -457,9 +457,9 @@ class PlotManager:
 
         # --- Relative Weight Matrix ---
         elif plot_type.startswith("Relative Weight Matrix"):
-            # Use feasible expiries that work across target and peers for correlation matrix
+            # Use feasible expiries that work across target and peers for relative-weight matrix
             target_pillars = self._get_target_pillars(target, asof, max_expiries, peers)
-            self._plot_corr_matrix(ax, target, peers, asof, target_pillars, weight_mode, atm_band)
+            self._plot_relative_weight_matrix(ax, target, peers, asof, target_pillars, weight_mode, atm_band)
             return
 
         # --- Synthetic Surface ---
@@ -527,7 +527,7 @@ class PlotManager:
         (target, peers, weight_mode=..., asof=..., pillar_days=...)
         positional: (target, peers, mode, asof, pillar_days)
 
-        Fallbacks to corr-matrix-derived weights (if cached meta matches) then equal weights.
+        Fallbacks to relative-weight matrix-derived weights (if cached meta matches) then equal weights.
         """
         import numpy as np
         import pandas as pd
@@ -578,20 +578,20 @@ class PlotManager:
         except Exception as e:
             print(f"Unified weight computation failed: {e}")
 
-        # 2) Correlation-matrix derived (only if cached meta matches exactly)
+        # 2) Relative-weight matrix derived (only if cached meta matches exactly)
         try:
             if (
-                isinstance(self.last_corr_df, pd.DataFrame)
-                and not self.last_corr_df.empty
-                and self.last_corr_meta.get("weight_mode") == weight_mode
-                and self.last_corr_meta.get("clip_negative") == settings.get("clip_negative", True)
-                and self.last_corr_meta.get("weight_power") == settings.get("weight_power", 1.0)
-                and self.last_corr_meta.get("pillars", []) == list(pillars)
-                and self.last_corr_meta.get("asof") == asof
-                and set(self.last_corr_meta.get("tickers", [])) >= set([target] + peers)
+                isinstance(self.last_relative_weight_df, pd.DataFrame)
+                and not self.last_relative_weight_df.empty
+                and self.last_relative_weight_meta.get("weight_mode") == weight_mode
+                and self.last_relative_weight_meta.get("clip_negative") == settings.get("clip_negative", True)
+                and self.last_relative_weight_meta.get("weight_power") == settings.get("weight_power", 1.0)
+                and self.last_relative_weight_meta.get("pillars", []) == list(pillars)
+                and self.last_relative_weight_meta.get("asof") == asof
+                and set(self.last_relative_weight_meta.get("tickers", [])) >= set([target] + peers)
             ):
                 w = corr_weights(
-                    self.last_corr_df,
+                    self.last_relative_weight_df,
                     target,
                     peers,
                     clip_negative=settings.get("clip_negative", True),
@@ -805,7 +805,12 @@ class PlotManager:
                         final_valid = np.isfinite(x_mny) & np.isfinite(y_syn)
                         if np.sum(final_valid) >= 2:
                             ax.plot(
-                                x_mny[final_valid], y_syn[final_valid], "--", linewidth=1.6, alpha=0.95, label="Synthetic smile (corr-matrix)"
+                                x_mny[final_valid],
+                                y_syn[final_valid],
+                                "--",
+                                linewidth=1.6,
+                                alpha=0.95,
+                                label="Synthetic smile (relative-weight)",
                             )
                         ax.legend(loc="best", fontsize=8)
             except Exception:
@@ -928,7 +933,13 @@ class PlotManager:
             final_valid = np.isfinite(x_mny) & np.isfinite(y_tgt) & np.isfinite(y_syn)
             if np.sum(final_valid) >= 2:
                 ax.plot(x_mny[final_valid], y_tgt[final_valid], "-", linewidth=1.8, label=f"{target} smile @ ~{int(T_days)}d")
-                ax.plot(x_mny[final_valid], y_syn[final_valid], "--", linewidth=1.8, label="Synthetic (corr-matrix)")
+                ax.plot(
+                    x_mny[final_valid],
+                    y_syn[final_valid],
+                    "--",
+                    linewidth=1.8,
+                    label="Synthetic (relative-weight)",
+                )
             else:
                 ax.text(0.5, 0.5, "Insufficient valid data for comparison", ha="center", va="center")
             ax.set_xlabel("Moneyness (K/S)")
@@ -1154,7 +1165,7 @@ class PlotManager:
                                 linestyle="--",
                                 linewidth=1.5,
                                 alpha=0.9,
-                                label="Synthetic smile (corr-matrix)",
+                                label="Synthetic smile (relative-weight)",
                             )
                 except Exception as e:
                     print(f"Warning: Failed to plot synthetic smile overlay: {e}")
@@ -1170,7 +1181,7 @@ class PlotManager:
                                 linestyle="--",
                                 linewidth=1.5,
                                 alpha=0.9,
-                                label="Synthetic smile (corr-matrix)",
+                                label="Synthetic smile (relative-weight)",
                             )
                     except Exception:
                         pass
@@ -1302,8 +1313,8 @@ class PlotManager:
             ax.set_ylabel("Implied Vol (ATM)")
             title += f" - Synthetic Overlay (N={len(bands.x)})"
 
-    # -------------------- correlation matrix --------------------
-    def _plot_corr_matrix(
+    # -------------------- relative-weight matrix --------------------
+    def _plot_relative_weight_matrix(
         self,
         ax,
         target,
@@ -1343,7 +1354,7 @@ class PlotManager:
         }
 
         def _builder():
-            return _corr_by_expiry_rank(
+            return _relative_weight_by_expiry_rank(
                 get_slice=self.get_smile_slice,
                 tickers=tickers,
                 asof=asof,
@@ -1353,11 +1364,11 @@ class PlotManager:
 
         if hasattr(self, "_warm"):
             try:
-                self._warm.enqueue("corr", payload, _builder)
+                self._warm.enqueue("relative_weight", payload, _builder)
             except Exception:
                 pass
 
-        atm_df, corr_df, _ = compute_and_plot_correlation(
+        atm_df, rel_w_df, _ = compute_and_plot_relative_weight(
             ax=ax,
             get_smile_slice=self.get_smile_slice,
             tickers=tickers,
@@ -1370,20 +1381,20 @@ class PlotManager:
             peers=peers,
             max_expiries=max_exp,
             weight_mode=weight_mode,
-            weights=weights.to_dict() if weights is not None else None,  # <--- NEW
+            weights=weights,
         )
 
         # cache for other plots
-        self.last_corr_df = corr_df
+        self.last_relative_weight_df = rel_w_df
         self.last_atm_df = atm_df
-        self.last_corr_meta = {
+        self.last_relative_weight_meta = {
             "asof": asof,
             "tickers": list(tickers),
             "pillars": list(pillars or []),
             "weight_mode": weight_mode,
             "weight_power": weight_power,
             "clip_negative": clip_negative,
-            "weights": weights.to_dict() if weights is not None else None,  # <--- NEW
+            "weights": weights.to_dict() if weights is not None else None,  # <--- keep storing dict
         }
 
     # -------------------- synthetic ATM helper --------------------

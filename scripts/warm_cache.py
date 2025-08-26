@@ -29,7 +29,7 @@ from analysis.model_params_logger import (
     invalidate_cache_for_tickers, cache_stats
 )
 from analysis.analysis_pipeline import prepare_smile_data, prepare_term_data, get_smile_slice
-from display.plotting.relative_weight_plot import _corr_by_expiry_rank
+from display.plotting.relative_weight_plot import _relative_weight_by_expiry_rank
 from analysis.spillover.vol_spillover import run_spillover, load_iv_data
 from data import load_ticker_group
 from data.db_utils import get_conn, get_most_recent_date
@@ -237,7 +237,7 @@ def _warm_synth(task: Dict[str, Any]) -> None:
             print(f"❌ Failed to warm synthetic ETF for {target} ({mode}): {e}")
 
 
-def _warm_corr(task: Dict[str, Any]) -> None:
+def _warm_relative_weight(task: Dict[str, Any]) -> None:
     tickers = [t.upper() for t in task["tickers"]]
     asof = task["asof"]
     max_expiries = int(task.get("max_expiries", 6))
@@ -251,7 +251,7 @@ def _warm_corr(task: Dict[str, Any]) -> None:
     }
 
     def _builder() -> Any:
-        return _corr_by_expiry_rank(
+        return _relative_weight_by_expiry_rank(
             get_slice=get_smile_slice,
             tickers=tickers,
             asof=asof,
@@ -259,7 +259,7 @@ def _warm_corr(task: Dict[str, Any]) -> None:
             atm_band=atm_band,
         )
 
-    compute_or_load("corr", payload, _builder)
+    compute_or_load("relative_weight", payload, _builder)
 
 
 def _warm_spill(task: Dict[str, Any]) -> None:
@@ -384,10 +384,10 @@ def main() -> None:
                         "max_expiries": 6,
                     })
         
-        # Refresh correlation if any tickers were affected or forced
+        # Refresh relative-weight matrix if any tickers were affected or forced
         if refresh_tickers and global_asof:
-            print(f"Warming correlation data...")
-            _warm_corr({"tickers": tickers, "asof": global_asof})
+            print(f"Warming relative-weight data...")
+            _warm_relative_weight({"tickers": tickers, "asof": global_asof})
             
         # Only warm spillover if forced (spillover has its own error handling)
         if args.force:

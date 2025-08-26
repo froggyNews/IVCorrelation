@@ -1,10 +1,11 @@
 """
-Correlation plotting without pillars, with configurable weighting modes.
+Relative-weight plotting without pillars, with configurable weighting modes.
 
-This module computes correlations across implied-volatility surfaces using
-the first few expiries for each ticker (as opposed to fixed pillar days).
-It then provides a heatmap and optional ETF weight annotations.  You can
-specify how weights are computed via the ``weight_mode`` parameter.
+This module computes correlation-based relative weights across
+implied-volatility surfaces using the first few expiries for each ticker
+(as opposed to fixed pillar days).  It then provides a heatmap and
+optional ETF weight annotations.  You can specify how weights are
+computed via the ``weight_mode`` parameter.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from analysis.model_params_logger import compute_or_load
 
 
 # ---------------------------------------------------------------------------
-# Helpers to compute ATM curves and correlations without using fixed pillars
+# Helpers to compute ATM curves and relative weights without using pillars
 # ---------------------------------------------------------------------------
 
 
@@ -62,7 +63,7 @@ def _compute_atm_curve_simple(df: pd.DataFrame, atm_band: float = 0.05) -> pd.Da
     return pd.DataFrame(rows).sort_values("T").reset_index(drop=True)
 
 
-def _corr_by_expiry_rank(
+def _relative_weight_by_expiry_rank(
     get_slice,
     tickers: Iterable[str],
     asof: str,
@@ -70,10 +71,11 @@ def _corr_by_expiry_rank(
     atm_band: float = 0.05,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Build an ATM matrix and correlation matrix without using pillars.
+    Build an ATM matrix and correlation (relative-weight) matrix without
+    using pillars.
 
-    The matrix rows correspond to tickers, columns to expiry ranks (0,1,…).
-    Correlations are computed across expiry ranks.
+    The matrix rows correspond to tickers, columns to expiry ranks
+    (0,1,…).  Correlations are computed across expiry ranks.
     """
     rows: List[pd.Series] = []
     for t in tickers:
@@ -96,12 +98,12 @@ def _corr_by_expiry_rank(
         rows.append(pd.Series(values, name=t.upper()))
     atm_rank_df = pd.DataFrame(rows)
     if atm_rank_df.empty or len(atm_rank_df.index) < 2:
-        corr_df = pd.DataFrame(
+        rel_w_df = pd.DataFrame(
             index=atm_rank_df.index, columns=atm_rank_df.index, dtype=float
         )
     else:
-        corr_df = atm_rank_df.transpose().corr(method="pearson", min_periods=2)
-    return atm_rank_df, corr_df
+        rel_w_df = atm_rank_df.transpose().corr(method="pearson", min_periods=2)
+    return atm_rank_df, rel_w_df
 
 
 def _maybe_compute_weights(
@@ -133,11 +135,11 @@ def _maybe_compute_weights(
 
 
 # ---------------------------------------------------------------------------
-# Correlation: compute and plot (optionally show weights)
+# Relative weights: compute and plot (optionally show weights)
 # ---------------------------------------------------------------------------
 
 
-def compute_and_plot_correlation(
+def compute_and_plot_relative_weight(
     ax: plt.Axes,
     get_smile_slice,
     tickers: Iterable[str],
@@ -151,17 +153,19 @@ def compute_and_plot_correlation(
     weight_power: float = 1.0,
     max_expiries: int = 6,
     weight_mode: str = "corr",
+    weights: Optional[pd.Series | Dict[str, float]] = None,
     **weight_config,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.Series]]:
     """
-    Compute a correlation matrix and draw a heatmap without relying on pillars.
+    Compute a relative-weight matrix and draw a heatmap without relying on
+    pillars.
 
-    Parameters remain compatible with the upstream version but no longer accept
-    pillar-related options.  The ``weight_mode`` is forwarded to
-    :func:`analysis.unified_weights.compute_unified_weights`. Additional weight
-    configuration such as ``weight_power`` and ``clip_negative`` can be
-    supplied, along with any extra keyword arguments understood by the unified
-    weight system.
+    Parameters remain compatible with the upstream version but no longer
+    accept pillar-related options.  The ``weight_mode`` is forwarded to
+    :func:`analysis.unified_weights.compute_unified_weights`. Additional
+    weight configuration such as ``weight_power`` and ``clip_negative``
+    can be supplied, along with any extra keyword arguments understood by
+    the unified weight system.
     """
     tickers = [t.upper() for t in tickers]
     payload = {
@@ -172,7 +176,7 @@ def compute_and_plot_correlation(
     }
 
     def _builder() -> Tuple[pd.DataFrame, pd.DataFrame]:
-        return _corr_by_expiry_rank(
+        return _relative_weight_by_expiry_rank(
             get_slice=get_smile_slice,
             tickers=tickers,
             asof=asof,
@@ -180,41 +184,52 @@ def compute_and_plot_correlation(
             atm_band=atm_band,
         )
 
-    atm_df, corr_df = compute_or_load("corr", payload, _builder)
+    atm_df, rel_w_df = compute_or_load("relative_weight", payload, _builder)
 
-    weights = _maybe_compute_weights(
-        target=target,
-        peers=peers,
-        asof=asof,
-        weight_mode=weight_mode,
-        weight_power=weight_power,
-        clip_negative=clip_negative,
-        **weight_config,
-    )
+    # Normalise/compute weights
+    w_series: Optional[pd.Series]
+    if weights is not None:
+        # accept dict-like or Series
+        if isinstance(weights, pd.Series):
+            w_series = weights.astype(float)
+        else:
+            w_series = pd.Series(dict(weights), dtype=float)
+    else:
+        # only compute if not supplied so we reuse cached unified weights
+        w_series = _maybe_compute_weights(
+            target=target,
+            peers=peers,
+            asof=asof,
+            weight_mode=weight_mode,
+            weight_power=weight_power,
+            clip_negative=clip_negative,
+            **weight_config,
+        )
 
-    plot_correlation_details(ax, corr_df, weights=weights, show_values=show_values)
-    return atm_df, corr_df, weights
+    plot_relative_weight_details(ax, rel_w_df, weights=w_series, show_values=show_values)
+    return atm_df, rel_w_df, w_series
 
 
-def plot_correlation_details(
+def plot_relative_weight_details(
     ax: plt.Axes,
-    corr_df: pd.DataFrame,
+    rel_w_df: pd.DataFrame,
     weights: Optional[pd.Series] = None,
     show_values: bool = True,
 ) -> None:
     """
-    Heatmap of the correlation matrix; optionally show weights as annotation.
+    Heatmap of the relative-weight (correlation) matrix; optionally show
+    weights as annotation.
 
-    Adds a data-quality badge and, if supplied, lists the ETF weights on the
-    right.  The heatmap is labelled “per expiries” to emphasize that no
-    pillar selection is used.
+    Adds a data-quality badge and, if supplied, lists the ETF weights on
+    the right.  The heatmap is labelled “per expiries” to emphasize that
+    no pillar selection is used.
     """
     ax.clear()
-    if corr_df is None or corr_df.empty:
+    if rel_w_df is None or rel_w_df.empty:
         ax.text(0.5, 0.5, "No correlation data", ha="center", va="center")
         return
 
-    data = corr_df.to_numpy(dtype=float)
+    data = rel_w_df.to_numpy(dtype=float)
     finite_count = np.sum(np.isfinite(data))
     total_elements = data.size
 
@@ -279,11 +294,11 @@ def plot_correlation_details(
         except Exception:
             pass
 
-    ax.set_xticks(range(len(corr_df.columns)))
-    ax.set_yticks(range(len(corr_df.index)))
-    ax.set_xticklabels(corr_df.columns, rotation=45, ha="right", fontsize=9)
-    ax.set_yticklabels(corr_df.index, fontsize=9)
-    ax.set_title("Correlation and Relative Importance (per expiries)")
+    ax.set_xticks(range(len(rel_w_df.columns)))
+    ax.set_yticks(range(len(rel_w_df.index)))
+    ax.set_xticklabels(rel_w_df.columns, rotation=45, ha="right", fontsize=9)
+    ax.set_yticklabels(rel_w_df.index, fontsize=9)
+    ax.set_title("Relative Weight Matrix and Relative Importance (per expiries)")
 
     if show_values:
         n, m = data.shape
