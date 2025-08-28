@@ -16,9 +16,9 @@ __all__ = [
     "sabr_confidence_bands",
     "tps_confidence_bands",
     "generate_term_structure_confidence_bands",
-    "synthetic_etf_confidence_bands",
-    "synthetic_etf_weight_bands",
-    "synthetic_etf_pillar_bands",
+    "composite_etf_confidence_bands",
+    "composite_etf_weight_bands",
+    "composite_etf_pillar_bands",
 ]
 
 @dataclass
@@ -278,7 +278,7 @@ def generate_term_structure_confidence_bands(
 
 
 # -----------------------------
-# Synthetic ETF (deterministic)
+# composite ETF (deterministic)
 # -----------------------------
 def _weighted_quantiles_across_components(
     component_values: np.ndarray, weights: np.ndarray, q_lo: float, q_hi: float
@@ -290,124 +290,7 @@ def _weighted_quantiles_across_components(
     )
 
 
-def synthetic_etf_confidence_bands(
-    surfaces: Dict[str, np.ndarray],
-    weights: Dict[str, float],
-    grid_K: np.ndarray,
-    level: float = 0.68,
-    n_boot: int = 200,             # ignored
-    weight_uncertainty: bool = False, # ignored; kept for API compat
-    surface_uncertainty: bool = False # ignored; kept for API compat
-) -> Bands:
-    """
-    Deterministic bands from cross-sectional dispersion:
-      - Baseline = weighted mean across component surfaces.
-      - Bands = baseline + [weighted-quantile(components) - weighted-mean].
-    """
-    grid_K = np.asarray(grid_K, float)
-    tickers = [t for t in surfaces.keys() if t in weights]
-
-    if not tickers:
-        return Bands(x=grid_K, mean=np.full_like(grid_K, np.nan), lo=np.nan, hi=np.nan, level=level)
-
-    # Normalize weights
-    w = np.array([max(0.0, float(weights[t])) for t in tickers], dtype=float)
-    sw = w.sum()
-    if sw <= 0:
-        w[:] = 1.0
-        sw = w.sum()
-    w /= sw
-
-    # Components matrix: shape (n_tickers, n_points)
-    comps = np.vstack([np.asarray(surfaces[t], float) for t in tickers])
-    # Baseline (weighted mean per grid point)
-    baseline = (w[:, None] * comps).sum(axis=0)
-
-    alpha = max(0.0, min(1.0, 1.0 - level))
-    q_lo = alpha / 2.0
-    q_hi = 1.0 - alpha / 2.0
-
-    # Weighted dispersion quantiles at each grid point
-    lo = np.empty_like(baseline)
-    hi = np.empty_like(baseline)
-    for j in range(baseline.size):
-        vals = comps[:, j]
-        # Weighted quantiles across components
-        ql, qh = _weighted_quantiles_across_components(vals, w, q_lo, q_hi)
-        # Shift around baseline (weighted mean) for symmetric interpretation
-        offset_lo = ql - np.dot(w, vals)
-        offset_hi = qh - np.dot(w, vals)
-        lo[j] = baseline[j] + offset_lo
-        hi[j] = baseline[j] + offset_hi
-
-    return Bands(x=grid_K, mean=baseline, lo=lo, hi=hi, level=level)
-
-
-def synthetic_etf_weight_bands(
-    correlation_matrix: np.ndarray,
-    target_idx: int,
-    peer_indices: list,
-    level: float = 0.68,
-    n_boot: int = 200,  # ignored
-    eps_corr: float = 0.05,  # deterministic correlation perturbation bound
-) -> Dict[int, Bands]:
-    """
-    Deterministic weight intervals from bounded correlation perturbations.
-
-    Baseline weights: w_i = |ρ_i| / Σ_j |ρ_j|, where ρ_i = corr(target, peer_i).
-    Bounds: each |ρ_k| ∈ [max(0, |ρ_k|-eps_corr), min(1, |ρ_k|+eps_corr)].
-    For peer i:
-      w_i^lo uses min numerator, max others in denominator.
-      w_i^hi uses max numerator, min others in denominator.
-    """
-    n_peers = len(peer_indices)
-    if n_peers == 0:
-        return {}
-
-    # Extract relevant correlations (target vs peers)
-    all_indices = [target_idx] + peer_indices
-    corr_sub = correlation_matrix[np.ix_(all_indices, all_indices)]
-    target_corrs = np.abs(corr_sub[0, 1:].astype(float))  # nonnegative
-
-    base_den = target_corrs.sum()
-    if base_den <= 0:
-        baseline_weights = np.ones(n_peers, dtype=float) / n_peers
-    else:
-        baseline_weights = target_corrs / base_den
-
-    # Bounds for each correlation
-    lo_r = np.maximum(0.0, target_corrs - eps_corr)
-    hi_r = np.minimum(1.0, target_corrs + eps_corr)
-
-    result: Dict[int, Bands] = {}
-    alpha = max(0.0, min(1.0, 1.0 - level))
-    # Single-point bands per peer
-    for i, peer_idx in enumerate(peer_indices):
-        # Lower bound: shrink i, grow others
-        num_lo = lo_r[i]
-        den_lo = num_lo + np.sum(hi_r[np.arange(n_peers) != i])
-        w_lo = num_lo / den_lo if den_lo > 0 else 0.0
-
-        # Upper bound: grow i, shrink others
-        num_hi = hi_r[i]
-        den_hi = num_hi + np.sum(lo_r[np.arange(n_peers) != i])
-        w_hi = num_hi / den_hi if den_hi > 0 else 1.0 / n_peers
-
-        # Ensure ordered
-        w0 = baseline_weights[i]
-        lo_i, hi_i = (min(w_lo, w_hi), max(w_lo, w_hi))
-
-        result[peer_idx] = Bands(
-            x=np.array([peer_idx], dtype=float),
-            mean=np.array([w0], dtype=float),
-            lo=np.array([lo_i], dtype=float),
-            hi=np.array([hi_i], dtype=float),
-            level=1.0 - alpha,  # echo requested level
-        )
-    return result
-
-
-def synthetic_etf_pillar_bands(
+def composite_etf_pillar_bands(
     atm_data: Dict[str, np.ndarray],
     weights: Dict[str, float],
     pillar_days: np.ndarray,

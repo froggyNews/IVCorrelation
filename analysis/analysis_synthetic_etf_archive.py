@@ -1,13 +1,13 @@
 """
-High-level Synthetic ETF construction utilities.
+High-level composite ETF construction utilities.
 
 Leverages existing primitives:
-- build_surface_grids / combine_surfaces (analysis.syntheticETFBuilder)
+- build_surface_grids / combine_surfaces (analysis.compositeETFBuilder)
 - UnifiedWeightComputer for peer weighting (analysis.unified_weights)
 - sample_smile_curve / fit_smile_for (analysis.analysis_pipeline)
 
 Provides:
-- SyntheticETFBuilder: orchestrates weights, surfaces, synthetic surface, ATM RV.
+- compositeETFBuilder: orchestrates weights, surfaces, composite surface, ATM RV.
 - Convenience functions for command-line or programmatic usage.
 
 Design Goals:
@@ -30,7 +30,7 @@ import os
 import json
 import time
 
-from analysis.syntheticETFBuilder import (
+from analysis.compositeETFBuilder import (
     build_surface_grids,
     combine_surfaces,
     DEFAULT_TENORS,
@@ -43,13 +43,13 @@ from analysis.analysis_pipeline import (
 )
 from analysis.beta_builder.unified_weights import UnifiedWeightComputer, WeightConfig, FeatureSet, WeightMethod
 from analysis.pillars import compute_atm_by_expiry
-from analysis.syntheticETFBuilder import build_synthetic_iv_by_rank
+from analysis.compositeETFBuilder import build_composite_iv_by_rank
 
 WeightMode = Literal["corr", "pca", "cosine", "equal", "custom"]
 
 
 @dataclass
-class SyntheticETFConfig:
+class compositeETFConfig:
     target: str
     peers: Iterable[str]
     max_expiries: int = 6
@@ -62,7 +62,7 @@ class SyntheticETFConfig:
     clip_negative: bool = True
     use_atm_only_surface: bool = False
     cache_dir: Optional[str] = "data/cache_synth_etf"
-    # If True we require surfaces for EVERY peer date to include a date in synthetic output
+    # If True we require surfaces for EVERY peer date to include a date in composite output
     # DISABLED: Always False to prevent date filtering
     strict_date_intersection: bool = False
 
@@ -72,25 +72,25 @@ class SyntheticETFConfig:
 
 
 @dataclass
-class SyntheticETFArtifacts:
+class compositeETFArtifacts:
     weights: pd.Series
     surfaces: Dict[str, Dict[str, pd.DataFrame]]
-    synthetic_surfaces: Dict[str, pd.DataFrame]
+    composite_surfaces: Dict[str, pd.DataFrame]
     rv_metrics: pd.DataFrame
     meta: Dict[str, str] = field(default_factory=dict)
 
 
-class SyntheticETFBuilder:
+class compositeETFBuilder:
     def __init__(
         self,
-        config: SyntheticETFConfig,
+        config: compositeETFConfig,
         weight_computer: Optional[UnifiedWeightComputer] = None,
     ):
         self.cfg = config
         self.cfg.ensure_cache()
         self._weights: Optional[pd.Series] = None
         self._surfaces: Optional[Dict[str, Dict[str, pd.DataFrame]]] = None
-        self._synthetic_surfaces: Optional[Dict[str, pd.DataFrame]] = None
+        self._composite_surfaces: Optional[Dict[str, pd.DataFrame]] = None
         self._rv: Optional[pd.DataFrame] = None
         self._weight_computer = weight_computer or UnifiedWeightComputer()
 
@@ -148,7 +148,7 @@ class SyntheticETFBuilder:
         self._surfaces = surfaces
         return surfaces
 
-    def build_synthetic_surfaces(self) -> Dict[str, pd.DataFrame]:
+    def build_composite_surfaces(self) -> Dict[str, pd.DataFrame]:
         if self._weights is None:
             raise RuntimeError("Weights not computed yet. Call compute_weights() first.")
         if self._surfaces is None:
@@ -159,17 +159,17 @@ class SyntheticETFBuilder:
             for p in self.cfg.peers
             if p in self._surfaces
         }
-        synthetic = combine_surfaces(peer_surfaces, self._weights.to_dict())
+        composite = combine_surfaces(peer_surfaces, self._weights.to_dict())
 
         # Optionally restrict dates to intersection across all peer surfaces
         if self.cfg.strict_date_intersection:
             date_sets = [set(dates_dict.keys()) for dates_dict in peer_surfaces.values()]
             if date_sets:
                 common = set.intersection(*date_sets)
-                synthetic = {d: grid for d, grid in synthetic.items() if d in common}
+                composite = {d: grid for d, grid in composite.items() if d in common}
 
-        self._synthetic_surfaces = synthetic
-        return synthetic
+        self._composite_surfaces = composite
+        return composite
 
     # ----------------------
     # Relative Value (ATM)
@@ -185,7 +185,7 @@ class SyntheticETFBuilder:
         if not asof:
             raise RuntimeError("No as-of date available for RV.")
 
-        syn = build_synthetic_iv_by_rank(self._weights.to_dict(), asof=asof,
+        syn = build_composite_iv_by_rank(self._weights.to_dict(), asof=asof,
                                          max_expiries=self.cfg.max_expiries)
         if syn.empty:
             self._rv = syn
@@ -209,11 +209,11 @@ class SyntheticETFBuilder:
     def build_all(
         self,
         custom_weights: Optional[Dict[str, float]] = None,
-    ) -> SyntheticETFArtifacts:
+    ) -> compositeETFArtifacts:
         start = time.time()
         w = self.compute_weights(custom_weights=custom_weights)
         surfaces = self.build_surfaces()
-        synth = self.build_synthetic_surfaces()
+        synth = self.build_composite_surfaces()
         rv = self.compute_relative_value()
 
         meta = {
@@ -228,10 +228,10 @@ class SyntheticETFBuilder:
             "build_timestamp_utc": pd.Timestamp.utcnow().isoformat(),
             "elapsed_sec": f"{time.time()-start:.2f}",
         }
-        return SyntheticETFArtifacts(
+        return compositeETFArtifacts(
             weights=w,
             surfaces=surfaces,
-            synthetic_surfaces=synth,
+            composite_surfaces=synth,
             rv_metrics=rv,
             meta=meta,
         )
@@ -239,7 +239,7 @@ class SyntheticETFBuilder:
     # ----------------------
     # Export Helpers
     # ----------------------
-    def export(self, artifacts: SyntheticETFArtifacts, out_dir: str) -> None:
+    def export(self, artifacts: compositeETFArtifacts, out_dir: str) -> None:
         os.makedirs(out_dir, exist_ok=True)
 
         # weights
@@ -261,29 +261,29 @@ class SyntheticETFBuilder:
             for d, df in date_map.items():
                 df.to_csv(os.path.join(t_dir, f"{d}.csv"))
 
-        # Synthetic surfaces
-        syn_dir = os.path.join(out_dir, "synthetic")
+        # composite surfaces
+        syn_dir = os.path.join(out_dir, "composite")
         os.makedirs(syn_dir, exist_ok=True)
-        for d, df in artifacts.synthetic_surfaces.items():
+        for d, df in artifacts.composite_surfaces.items():
             df.to_csv(os.path.join(syn_dir, f"{d}.csv"))
 
     # ----------------------
     # Convenience Queries
     # ----------------------
     def latest_surface_pair(self) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[str]]:
-        """Return (target_surface, synthetic_surface, date) for most recent common date."""
-        if self._surfaces is None or self._synthetic_surfaces is None:
+        """Return (target_surface, composite_surface, date) for most recent common date."""
+        if self._surfaces is None or self._composite_surfaces is None:
             return None, None, None
         target_surfs = self._surfaces.get(self.cfg.target, {})
         if not target_surfs:
             return None, None, None
         dates_target = set(target_surfs.keys())
-        dates_syn = set(self._synthetic_surfaces.keys())
+        dates_syn = set(self._composite_surfaces.keys())
         common = sorted(dates_target.intersection(dates_syn))
         if not common:
             return None, None, None
         d = common[-1]
-        return target_surfs[d], self._synthetic_surfaces[d], d
+        return target_surfs[d], self._composite_surfaces[d], d
 
     def sample_smile(self, T_days: float, model: str = "svi") -> pd.DataFrame:
         """Convenience wrapper for a smile at nearest expiry for latest date."""
@@ -301,26 +301,26 @@ class SyntheticETFBuilder:
 # ----------------------
 # Stand-alone convenience function
 # ----------------------
-def build_synthetic_etf(
+def build_composite_etf(
     target: str,
     peers: Iterable[str],
     weight_mode: WeightMode = "corr",
     custom_weights: Optional[Dict[str, float]] = None,
     **kwargs,
-) -> SyntheticETFArtifacts:
-    cfg = SyntheticETFConfig(
+) -> compositeETFArtifacts:
+    cfg = compositeETFConfig(
         target=target,
         peers=tuple(peers),
         weight_mode=weight_mode,
         **kwargs,
     )
-    builder = SyntheticETFBuilder(cfg)
+    builder = compositeETFBuilder(cfg)
     return builder.build_all(custom_weights=custom_weights)
 
 
 __all__ = [
-    "SyntheticETFConfig",
-    "SyntheticETFBuilder",
-    "SyntheticETFArtifacts",
-    "build_synthetic_etf",
+    "compositeETFConfig",
+    "compositeETFBuilder",
+    "compositeETFArtifacts",
+    "build_composite_etf",
 ]

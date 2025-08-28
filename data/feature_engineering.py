@@ -166,10 +166,14 @@ def add_all_features(df: pd.DataFrame, forward_steps: int = 1, r: float = 0.045)
     """Centralized feature engineering (preserves all original feature logic)."""
     df = df.copy()
 
-    log_col = np.log(df["iv_clip"].astype(float))
-    fwd = log_col.shift(-forward_steps) - log_col
-    df["iv_ret_fwd"] = fwd
-    df["iv_ret_fwd_abs"] = fwd.abs()
+    log_iv = np.log(df["iv_clip"].astype(float))
+
+    df = df.assign(
+        iv_ret_fwd = log_iv.shift(-forward_steps) - log_iv,
+        iv_ret_fwd_abs = lambda d: d["iv_ret_fwd"].abs(),
+        iv_ret = log_iv.diff()
+    )
+
 
     S = df["stock_close"].astype(float).to_numpy()
     K = df["strike_price"].astype(float).to_numpy()
@@ -505,8 +509,11 @@ def build_target_peer_dataset(
         on="ts_event", direction="backward", tolerance=pd.Timedelta(tolerance)
     )
 
-    if target_kind in ("iv_ret", "iv_ret_fwd"):
+    if target_kind in ( "iv_ret_fwd"):
         target_col = "iv_ret_fwd"
+    elif target_kind == "iv_ret":
+        target_col = "iv_ret"
+        
     elif target_kind == "iv_ret_fwd_abs":
         target_col = "iv_ret_fwd_abs"
     elif target_kind == "iv":

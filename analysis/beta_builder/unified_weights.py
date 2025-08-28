@@ -141,7 +141,7 @@ def surface_feature_matrix(
     mny_bins: Iterable[Tuple[float, float]] | None = None,
     standardize: bool = True,
 ) -> Tuple[Dict[str, Dict[pd.Timestamp, pd.DataFrame]], np.ndarray, List[str]]:
-    from analysis.syntheticETFBuilder import build_surface_grids
+    from analysis.compositeETFBuilder import build_surface_grids
     req = [t.upper() for t in tickers]
     grids = build_surface_grids(
         tickers=req,
@@ -357,3 +357,15 @@ def compute_peer_weights_unified(
         mny_bins=tuple(mny_bins),
         max_expiries=max_expiries,
     )
+
+def normalize(w: pd.Series, peers: Iterable[str]) -> pd.Series | None:
+    if w is None or w.empty:
+        return None
+    w = w.dropna().astype(float)
+    w = w[w.index.isin(peers)]
+    if w.empty or not np.isfinite(w.to_numpy(dtype=float)).any():
+        return None
+    s = float(w.sum())
+    if s <= 0 or not np.isfinite(s):
+        return None
+    return (w / s).reindex(peers).fillna(0.0).astype(float)

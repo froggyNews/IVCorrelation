@@ -12,7 +12,7 @@ from display.plotting.smile_plot import fit_and_plot_smile
 def test_tps_implementation():
     """Test TPS model in smile plotting."""
     
-    # Create synthetic smile data
+    # Create composite smile data
     S = 100.0
     K = np.array([85, 90, 95, 100, 105, 110, 115])
     T = 0.25

@@ -7,11 +7,16 @@ import matplotlib.pyplot as plt
 import sys
 from pathlib import Path
 
-from volModel.sviFit import svi_smile_iv
-from volModel.sabrFit import sabr_smile_iv
-from volModel.polyFit import tps_smile_iv
-from analysis.confidence_bands import Bands
+from volModel.sviFit import svi_smile_iv, fit_svi_slice
+from volModel.sabrFit import sabr_smile_iv, fit_sabr_slice
+from volModel.polyFit import tps_smile_iv, fit_tps_slice
+from volModel.multi_model_cache import fit_all_models_with_bands_cached
+from analysis.confidence_bands import Bands, svi_confidence_bands, sabr_confidence_bands, tps_confidence_bands
+from analysis.model_params_logger import append_params
+from analysis.pillars import _fit_smile_get_atm
 from display.plotting.anim_utils import  add_legend_toggles
+import pandas as pd
+from scipy.interpolate import interp1d
 
 ModelName = Literal["svi", "sabr", "tps"]
 
@@ -31,6 +36,45 @@ def _finite_mask(*arrs: np.ndarray) -> np.ndarray:
         m = np.isfinite(a)
         mask = m if mask is None else (mask & m)
     return mask if mask is not None else np.array([], dtype=bool)
+
+
+def _cols_to_days(cols):
+    """Convert column labels to days for tenor matching."""
+    result = []
+    for c in cols:
+        try:
+            if isinstance(c, str) and c.endswith('d'):
+                result.append(float(c[:-1]))
+            else:
+                result.append(float(c))
+        except (ValueError, TypeError):
+            result.append(np.nan)
+    return np.array(result)
+
+
+def _nearest_tenor_idx(tenor_days, target_days):
+    """Find index of nearest tenor to target."""
+    tenor_days = np.asarray(tenor_days, dtype=float)
+    valid = np.isfinite(tenor_days)
+    if not np.any(valid):
+        return 0
+    diffs = np.abs(tenor_days[valid] - float(target_days))
+    min_idx = np.argmin(diffs)
+    return np.where(valid)[0][min_idx]
+
+
+def _mny_from_index_labels(index):
+    """Extract moneyness values from index labels."""
+    result = []
+    for label in index:
+        try:
+            if isinstance(label, str) and label.startswith('m'):
+                result.append(float(label[1:]))
+            else:
+                result.append(float(label))
+        except (ValueError, TypeError):
+            result.append(np.nan)
+    return np.array(result)
 
 
 # ------------------
@@ -151,14 +195,14 @@ def fit_and_plot_smile(
     }
 
 
-def plot_synthetic_etf_smile(
+def plot_composite_etf_smile(
     ax: plt.Axes,
     bands: Bands,
     *,
-    label: Optional[str] = "Synthetic ETF",
+    label: Optional[str] = "composite ETF",
     line_kwargs: Optional[Dict] = None,
 ) -> Bands:
-    """Plot synthetic ETF smile using pre-computed confidence bands."""
+    """Plot composite ETF smile using pre-computed confidence bands."""
 
     ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(bands.level*100)}%)")
     # add a line for the mean - make it more defined/prominent
@@ -176,4 +220,327 @@ def plot_synthetic_etf_smile(
 
     return bands
 
+
+def fit_smile_models_with_bands(S: float, K: np.ndarray, T: float, IV: np.ndarray, 
+                                 K_grid: np.ndarray, ci_level: Optional[float] = None) -> Dict:
+    """
+    Fit all smile models (SVI, SABR, TPS) with optional confidence bands.
+    
+    Returns dict with structure:
+    {
+        'models': {'svi': params, 'sabr': params, 'tps': params},
+        'bands': {'svi': bands, 'sabr': bands, 'tps': bands}  # if ci_level provided
+    }
+    """
+    result = {'models': {}, 'bands': {}}
+    
+    # Try cached multi-model fitting first
+    try:
+        all_results = fit_all_models_with_bands_cached(
+            S, K, T, IV, K_grid=K_grid, ci_level=ci_level, use_cache=True
+        )
+        result['models'] = all_results.get('models', {})
+        if ci_level and 'bands' in all_results:
+            result['bands'] = all_results['bands']
+        return result
+    except Exception:
+        pass
+    
+    # Fallback to individual fits
+    try:
+        result['models']['svi'] = fit_svi_slice(S, K, T, IV)
+    except Exception:
+        result['models']['svi'] = {}
+        
+    try:
+        result['models']['sabr'] = fit_sabr_slice(S, K, T, IV)
+    except Exception:
+        result['models']['sabr'] = {}
+        
+    try:
+        result['models']['tps'] = fit_tps_slice(S, K, T, IV)
+    except Exception:
+        result['models']['tps'] = {}
+    
+    # Fallback confidence bands computation
+    if ci_level and ci_level > 0:
+        try:
+            result['bands']['svi'] = svi_confidence_bands(S, K, T, IV, K_grid, level=float(ci_level))
+        except Exception:
+            pass
+            
+        try:
+            result['bands']['sabr'] = sabr_confidence_bands(S, K, T, IV, K_grid, level=float(ci_level))
+        except Exception:
+            pass
+            
+        try:
+            result['bands']['tps'] = tps_confidence_bands(S, K, T, IV, K_grid, level=float(ci_level))
+        except Exception:
+            pass
+    
+    return result
+
+
+def plot_composite_smile_overlay(ax: plt.Axes, target_grid: pd.DataFrame, 
+                                 synthetic_grid: pd.DataFrame, T_days: float,
+                                 label: str = "composite smile (relative-weight)") -> bool:
+    """
+    Plot composite smile overlay on existing smile plot.
+    
+    Args:
+        ax: matplotlib axes
+        target_grid: Target ticker's surface grid
+        synthetic_grid: Synthetic/composite surface grid  
+        T_days: Target tenor in days
+        label: Label for the composite smile line
+        
+    Returns:
+        bool: True if overlay was successfully plotted
+    """
+    try:
+        # Find nearest tenor columns
+        tgt_cols = _cols_to_days(target_grid.columns)
+        syn_cols = _cols_to_days(synthetic_grid.columns)
+        i_tgt = _nearest_tenor_idx(tgt_cols, T_days)
+        i_syn = _nearest_tenor_idx(syn_cols, T_days)
+        
+        col_tgt = target_grid.columns[i_tgt]
+        col_syn = synthetic_grid.columns[i_syn]
+        
+        x_mny = _mny_from_index_labels(target_grid.index)
+        y_syn = synthetic_grid[col_syn].astype(float).to_numpy()
+        
+        # Improved grid alignment for composite smile
+        if not target_grid.index.equals(synthetic_grid.index):
+            try:
+                syn_mny = _mny_from_index_labels(synthetic_grid.index)
+                syn_iv = synthetic_grid[col_syn].astype(float).to_numpy()
+                
+                syn_valid = np.isfinite(syn_mny) & np.isfinite(syn_iv)
+                tgt_valid = np.isfinite(x_mny)
+                
+                if np.sum(syn_valid) >= 2 and np.sum(tgt_valid) >= 2:
+                    syn_mny_clean = syn_mny[syn_valid]
+                    syn_iv_clean = syn_iv[syn_valid]
+                    tgt_mny_clean = x_mny[tgt_valid]
+                    
+                    # Interpolate within range
+                    min_syn = np.min(syn_mny_clean)
+                    max_syn = np.max(syn_mny_clean)
+                    interp_mask = (tgt_mny_clean >= min_syn) & (tgt_mny_clean <= max_syn)
+                    
+                    if np.sum(interp_mask) >= 2:
+                        tgt_mny_interp = tgt_mny_clean[interp_mask]
+                        f_interp = interp1d(syn_mny_clean, syn_iv_clean,
+                                          kind='linear', bounds_error=False, fill_value=np.nan)
+                        syn_iv_interp = f_interp(tgt_mny_interp)
+                        x_mny = tgt_mny_interp
+                        y_syn = syn_iv_interp
+                        
+            except (ImportError, Exception):
+                # Fallback to intersection-based alignment
+                common = target_grid.index.intersection(synthetic_grid.index)
+                if len(common) >= 3:
+                    x_mny = _mny_from_index_labels(common)
+                    y_syn = synthetic_grid.loc[common, col_syn].astype(float).to_numpy()
+        
+        # Filter final valid data before plotting
+        final_valid = np.isfinite(x_mny) & np.isfinite(y_syn)
+        if np.sum(final_valid) >= 2:
+            ax.plot(
+                x_mny[final_valid],
+                y_syn[final_valid],
+                "--",
+                linewidth=1.6,
+                alpha=0.95,
+                label=label,
+            )
+            return True
+            
+    except Exception:
+        pass
+    
+    return False
+
+
+def log_smile_parameters(asof: str, target: str, expiry_dt, model_results: Dict, 
+                        S: float, T_used: float, df: pd.DataFrame) -> Optional[Dict]:
+    """
+    Log fitted smile parameters for all models and compute sensitivities.
+    
+    Args:
+        asof: As-of date string
+        target: Target ticker
+        expiry_dt: Expiry datetime
+        model_results: Results from fit_smile_models_with_bands
+        S: Spot price
+        T_used: Time to expiry in years
+        df: Original dataframe with smile data
+        
+    Returns:
+        Dict with fit info for storage, or None if failed
+    """
+    try:
+        models = model_results.get('models', {})
+        svi_params = models.get('svi', {})
+        sabr_params = models.get('sabr', {})
+        tps_params = models.get('tps', {})
+        
+        # Compute sensitivities
+        dfe2 = df.copy()
+        dfe2["moneyness"] = dfe2["K"].astype(float) / float(S)
+        sens = _fit_smile_get_atm(dfe2, model="auto")
+        sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
+        
+        # Log all parameters
+        append_params(
+            asof_date=asof,
+            ticker=target,
+            expiry=str(expiry_dt) if expiry_dt is not None else None,
+            model="svi",
+            params=svi_params,
+            meta={"rmse": svi_params.get("rmse")},
+        )
+        append_params(
+            asof_date=asof,
+            ticker=target,
+            expiry=str(expiry_dt) if expiry_dt is not None else None,
+            model="sabr",
+            params=sabr_params,
+            meta={"rmse": sabr_params.get("rmse")},
+        )
+        append_params(
+            asof_date=asof,
+            ticker=target,
+            expiry=str(expiry_dt) if expiry_dt is not None else None,
+            model="tps",
+            params=tps_params,
+            meta={"rmse": tps_params.get("rmse")},
+        )
+        append_params(
+            asof_date=asof,
+            ticker=target,
+            expiry=str(expiry_dt) if expiry_dt is not None else None,
+            model="sens",
+            params=sens_params,
+        )
+        
+        fit_map = {
+            float(T_used): {
+                "expiry": str(expiry_dt.date()) if expiry_dt is not None else None,
+                "svi": svi_params,
+                "sabr": sabr_params,
+                "tps": tps_params,
+                "sens": sens_params,
+            }
+        }
+        
+        return {
+            "ticker": target,
+            "asof": asof,
+            "fit_by_expiry": fit_map,
+        }
+        
+    except Exception:
+        return None
+
+
+def plot_smile_with_composite(ax: plt.Axes, df: pd.DataFrame, target: str, asof: str, 
+                             model: ModelName, T_days: float, ci: Optional[float] = None,
+                             overlay_synth: bool = False, surfaces: Optional[Dict] = None,
+                             weights: Optional[Dict] = None) -> Tuple[Dict, Optional[Dict]]:
+    """
+    Complete smile plotting function with model fitting, confidence bands, and composite overlay.
+    
+    This is the main function that can replace most of the logic in gui_plot_manager._plot_smile.
+    
+    Args:
+        ax: matplotlib axes
+        df: DataFrame with smile data (columns: S, K, sigma, T, expiry)
+        target: Target ticker symbol
+        asof: As-of date string
+        model: Model to use for fitting ('svi', 'sabr', 'tps')
+        T_days: Target tenor in days
+        ci: Confidence interval level (0-1), None to disable
+        overlay_synth: Whether to overlay composite smile
+        surfaces: Pre-computed surface grids for composite
+        weights: Weights for composite construction
+        
+    Returns:
+        Tuple of (fit_info_dict, last_fit_info_dict)
+    """
+    # Prepare data
+    dfe = df.copy()
+    S = float(dfe["S"].median())
+    K = dfe["K"].to_numpy(float)
+    IV = dfe["sigma"].to_numpy(float)
+    T_used = float(dfe["T"].median())
+    
+    # Create moneyness grid
+    m_grid = np.linspace(0.7, 1.3, 121)
+    K_grid = m_grid * S
+    
+    # Fit all models with confidence bands
+    ci_level = float(ci) if ci and ci > 0 else None
+    all_results = fit_smile_models_with_bands(S, K, T_used, IV, K_grid, ci_level)
+    
+    # Get specific model parameters and bands
+    fit_params = all_results['models'].get(model, {})
+    bands = all_results['bands'].get(model) if ci_level else None
+    
+    # Plot the main smile
+    info = fit_and_plot_smile(
+        ax,
+        S=S,
+        K=K,
+        T=T_used,
+        iv=IV,
+        model=model,
+        params=fit_params,
+        bands=bands,
+        moneyness_grid=(0.7, 1.3, 121),
+        show_points=True,
+        enable_toggles=True,
+    )
+    
+    # Set title
+    title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
+    
+    # Ensure correct axis labels (fix for label pollution from term plots)
+    ax.set_xlabel("Moneyness (K/S)")
+    ax.set_ylabel("Implied Vol")
+    
+    # Log parameters
+    expiry_dt = None
+    if "expiry" in dfe.columns and not dfe["expiry"].empty:
+        expiry_dt = dfe["expiry"].iloc[0]
+    
+    last_fit_info = log_smile_parameters(asof, target, expiry_dt, all_results, S, T_used, dfe)
+    
+    # Add composite overlay if requested
+    if overlay_synth and surfaces and weights and target in surfaces and asof in surfaces[target]:
+        try:
+            # Extract peer surfaces for the given asof
+            peer_tickers = list(weights.keys())
+            peer_surfaces = {t: surfaces[t][asof] for t in peer_tickers if t in surfaces and asof in surfaces[t]}
+            
+            if peer_surfaces:
+                from analysis.compositeETFBuilder import combine_surfaces
+                synth_by_date = combine_surfaces(peer_surfaces, weights)
+                
+                if asof in synth_by_date:
+                    target_grid = surfaces[target][asof]
+                    synthetic_grid = synth_by_date[asof]
+                    
+                    success = plot_composite_smile_overlay(ax, target_grid, synthetic_grid, T_days)
+                    if success:
+                        ax.legend(loc="best", fontsize=8)
+                        
+        except Exception:
+            pass
+    
+    ax.set_title(title)
+    
+    return info, last_fit_info
 

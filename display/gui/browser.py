@@ -1,12 +1,3 @@
-# This file is based on the upstream IVCorrelation project but has been
-# modified to improve GUI responsiveness. The changes revolve around
-# running potentially long-running operations (database queries and
-# ingestion) in background threads and then marshaling UI updates back
-# to the Tkinter main thread via `after()`. These modifications help
-# prevent the UI from freezing while data is downloaded or dates are
-# fetched.
-
-from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
@@ -29,7 +20,7 @@ if str(ROOT) not in sys.path:
 from analysis.analysis_pipeline import available_tickers, available_dates, ingest_and_process
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager
-from display.gui.spillover_gui import launch_spillover, SpilloverFrame
+# from display.gui.spillover_gui import launch_spillover, SpilloverFrame
 from display.gui.parameters_tab import ParametersTab
 
 
@@ -69,9 +60,9 @@ class BrowserApp(tk.Tk):
         self.btn_next = ttk.Button(nav, text="Next Expiry", command=self._next_expiry)
         self.btn_next.pack(side=tk.LEFT, padx=4)
 
-        ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        self.btn_spill = ttk.Button(nav, text="Spillover", command=self._open_spillover)
-        self.btn_spill.pack(side=tk.LEFT, padx=4)
+        # ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        # self.btn_spill = ttk.Button(nav, text="Spillover", command=self._open_spillover)
+        # self.btn_spill.pack(side=tk.LEFT, padx=4)
 
         # Canvas
         self.fig = plt.Figure(figsize=(11.2, 6.6))
@@ -88,8 +79,8 @@ class BrowserApp(tk.Tk):
         self.notebook.add(self.tab_params, text="Parameter Summary")
 
         # ---- Spillover tab ----
-        self.tab_spillover = SpilloverFrame(self.notebook)
-        self.notebook.add(self.tab_spillover, text="Spillover")
+        # self.tab_spillover = SpilloverFrame(self.notebook)
+        # self.notebook.add(self.tab_spillover, text="Spillover")
 
         # Status bar for user feedback
         self.status = ttk.Label(self, text="Ready", anchor="w")
@@ -293,12 +284,12 @@ class BrowserApp(tk.Tk):
         self.btn_prev.config(state=state)
         self.btn_next.config(state=state)
 
-    def _open_spillover(self):
-        """Open spillover analysis window."""
-        if self.spill_win is None or not self.spill_win.winfo_exists():
-            self.spill_win = launch_spillover(self)
-        else:
-            self.spill_win.lift()
+    # def _open_spillover(self):
+    #     """Open spillover analysis window."""
+    #     if self.spill_win is None or not self.spill_win.winfo_exists():
+    #         self.spill_win = launch_spillover(self)
+        # else:
+        #     self.spill_win.lift()
 
     def _load_tickers(self):
         try:
@@ -309,7 +300,7 @@ class BrowserApp(tk.Tk):
 
 def main():
     parser = argparse.ArgumentParser(description="Vol Browser")
-    parser.add_argument("--overlay-synth", action="store_true", help="Overlay synthetic curves")
+    parser.add_argument("--overlay-synth", action="store_true", help="Overlay composite curves")
     parser.add_argument("--overlay-peers", action="store_true", help="Overlay peer curves")
     parser.add_argument("--ci", type=float, default=68.0,
                         help="Confidence interval percentage (e.g. 95 for 95%%)")

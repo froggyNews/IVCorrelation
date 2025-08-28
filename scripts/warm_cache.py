@@ -34,7 +34,7 @@ from analysis.spillover.vol_spillover import run_spillover, load_iv_data
 from data import load_ticker_group
 from data.db_utils import get_conn, get_most_recent_date
 from data.data_downloader import save_for_tickers
-from analysis.analysis_synthetic_etf import SyntheticETFBuilder, SyntheticETFConfig
+from analysis.analysis_composite_etf import compositeETFBuilder, compositeETFConfig
 
 
 def _warm_smile(task: Dict[str, Any]) -> None:
@@ -206,14 +206,14 @@ def _warm_term(task: Dict[str, Any]) -> None:
 
 
 def _warm_synth(task: Dict[str, Any]) -> None:
-    """Warm synthetic ETF surface cache for multiple weight modes."""
+    """Warm composite ETF surface cache for multiple weight modes."""
     target = task["target"].upper()
     peers = [p.upper() for p in task.get("peers", [])]
     weight_modes = task.get("weight_modes", ["corr"])
     max_expiries = int(task.get("max_expiries", 6))
 
     for mode in weight_modes:
-        cfg = SyntheticETFConfig(
+        cfg = compositeETFConfig(
             target=target,
             peers=tuple(peers),
             max_expiries=max_expiries,
@@ -221,7 +221,7 @@ def _warm_synth(task: Dict[str, Any]) -> None:
         )
 
         def _builder() -> Any:
-            b = SyntheticETFBuilder(cfg)
+            b = compositeETFBuilder(cfg)
             return b.build_all()
 
         payload = {
@@ -231,10 +231,10 @@ def _warm_synth(task: Dict[str, Any]) -> None:
             "max_expiries": max_expiries,
         }
         try:
-            compute_or_load("synthetic_etf", payload, _builder)
-            print(f"✓ Warmed synthetic ETF cache for {target} ({mode})")
+            compute_or_load("composite_etf", payload, _builder)
+            print(f"✓ Warmed composite ETF cache for {target} ({mode})")
         except Exception as e:
-            print(f"❌ Failed to warm synthetic ETF for {target} ({mode}): {e}")
+            print(f"❌ Failed to warm composite ETF for {target} ({mode}): {e}")
 
 
 def _warm_relative_weight(task: Dict[str, Any]) -> None:
@@ -376,7 +376,7 @@ def main() -> None:
                     "ci": 68.0,
                 })
                 if t.upper() == group["target_ticker"].upper():
-                    print("Warming synthetic ETF surfaces...")
+                    print("Warming composite ETF surfaces...")
                     _warm_synth({
                         "target": t,
                         "peers": list(group["peer_tickers"]),

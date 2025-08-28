@@ -5,7 +5,7 @@ import pandas as pd
 
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 from .beta_builder.beta_builder import peer_weights_from_correlations
-from .syntheticETFBuilder import DEFAULT_TENORS, DEFAULT_MNY_BINS, build_synthetic_iv_series
+from .compositeETFBuilder import DEFAULT_TENORS, DEFAULT_MNY_BINS, build_composite_iv_series
 
 
 def _fetch_target_atm(
@@ -70,7 +70,7 @@ def relative_value_atm_report_corrweighted(
         empty_cols = ["asof_date", "pillar_days", "iv_target", "iv_synth", "spread", "z", "pct_rank"]
         return pd.DataFrame(columns=empty_cols), w
 
-    synth = build_synthetic_iv_series(weights=w.to_dict(), pillar_days=pillar_days, tolerance_days=tolerance_days)
+    synth = build_composite_iv_series(weights=w.to_dict(), pillar_days=pillar_days, tolerance_days=tolerance_days)
     tgt = _fetch_target_atm(target, pillar_days=pillar_days, tolerance_days=tolerance_days)
     rv = _rv_metrics_join(tgt, synth, lookback=lookback)
     return rv, w

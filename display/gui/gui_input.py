@@ -53,8 +53,12 @@ PLOT_TYPES = (
     "Smile (K/S vs IV)",
     "Term (ATM vs T)",
     "Relative Weight Matrix",
-    "Synthetic Surface (Smile)",
+    "Target vs Composite",
     "ETF Weights",
+    "ATM Term Structure",
+    "Term Smile", 
+    "3D Vol Surface",
+    "Vol Dashboard",
 )
 
 def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
@@ -63,7 +67,7 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
         return "smile"
     if plot_type.startswith("Term"):
         return "term"
-    if plot_type.startswith("Synthetic Surface"):
+    if plot_type.startswith("Target vs Composite"):
         return "surface"
     if plot_type.startswith("Relative Weight Matrix"):
         if feature_mode in ("iv_atm", "ul"):
@@ -71,6 +75,14 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
         return "surface"
     if plot_type.startswith("ETF Weights"):
         return "surface" if feature_mode.startswith("surface") else "term"
+    if plot_type.startswith("ATM Term Structure"):
+        return "term"
+    if plot_type.startswith("Term Smile"):
+        return "smile"
+    if plot_type.startswith("3D Vol Surface"):
+        return "surface"
+    if plot_type.startswith("Vol Dashboard"):
+        return "surface"
     return "term"
 
 class InputPanel(ttk.Frame):
@@ -351,7 +363,7 @@ class InputPanel(ttk.Frame):
         return bool(self.var_overlay_peers.get())
 
     def get_overlay(self) -> bool:
-        """Backward-compatible synthetic overlay getter."""
+        """Backward-compatible composite overlay getter."""
         return self.get_overlay_synth()
 
     def get_max_exp(self) -> int:
@@ -489,10 +501,10 @@ class InputPanel(ttk.Frame):
         feat = self.get_feature_mode()
         plot = self.get_plot_type()
 
-        show_T = plot.startswith("Smile") or plot.startswith("Synthetic Surface")
+        show_T = plot.startswith("Smile") or plot.startswith("composite Surface")
         show_pillars = (
             plot.startswith("Term")
-            or plot.startswith("Synthetic Surface")
+            or plot.startswith("composite Surface")
             or (plot.startswith("Relative Weight Matrix") and feat.startswith("surface"))
         )
 
@@ -500,7 +512,7 @@ class InputPanel(ttk.Frame):
             show_pillars = len(self.get_pillars()) >= 2
             show_T = not show_pillars
 
-        show_model = (feat == "surface" and (plot.startswith("Smile") or plot.startswith("Synthetic Surface")))
+        show_model = (feat == "surface" and (plot.startswith("Smile") or plot.startswith("composite Surface")))
 
         self.ent_days.configure(state=("normal" if show_T else "disabled"))
         self.ent_pillars.configure(state=("normal" if show_pillars else "disabled"))

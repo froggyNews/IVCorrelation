@@ -11,13 +11,13 @@ Always reference these instructions first and fallback to search or bash command
 ### Testing (3 seconds) 
 - Run all tests: `python -m pytest tests/ -v` -- takes 3 seconds. NEVER CANCEL.
 - Test specific file: `python -m pytest tests/test_surfaces.py -v`
-- Tests cover configuration changes, synthetic ETF construction, surface building, and edge cases
+- Tests cover configuration changes, composite ETF construction, surface building, and edge cases
 
 ### Running the Application
 
 #### CLI Analysis (1-2 seconds per run)
-- Main demo script: `python scripts/scripts_synthetic_etf_demo.py --target SPY --peers QQQ IWM --no-show`
-- View help: `python scripts/scripts_synthetic_etf_demo.py --help`
+- Main demo script: `python scripts/scripts_composite_etf_demo.py --target SPY --peers QQQ IWM --no-show`
+- View help: `python scripts/scripts_composite_etf_demo.py --help`
 - Caching demo: `python examples/caching_improvements_demo.py` -- takes 1 second. NEVER CANCEL.
 
 #### GUI Application (Limited in CI environments)
@@ -47,7 +47,7 @@ Always reference these instructions first and fallback to search or bash command
 ALWAYS test these scenarios after making changes:
 
 1. **Run test suite**: `python -m pytest tests/ -v` (3 seconds)
-2. **Test basic analysis**: `python scripts/scripts_synthetic_etf_demo.py --target SPY --peers QQQ --no-show` (1.5 seconds)
+2. **Test basic analysis**: `python scripts/scripts_composite_etf_demo.py --target SPY --peers QQQ --no-show` (1.5 seconds)
 3. **Test configuration changes**: `python -m pytest tests/test_surfaces.py::test_configuration_isolation -v`
 4. **Validate caching**: `python examples/caching_improvements_demo.py` (1 second)
 
@@ -57,13 +57,13 @@ After making changes to analysis pipeline:
 2. **KNOWN ISSUES**: `--weight-mode pca` and `--weight-mode cosine` have bugs (see limitations below)
 3. Test configuration isolation with different parameters
 4. Verify cache invalidation works with config changes
-5. Check synthetic ETF construction produces valid weights and metrics
+5. Check composite ETF construction produces valid weights and metrics
 
 ## Key File Locations
 
 ### Core Analysis Engine
 - `analysis/analysis_pipeline.py` - Main orchestration, caching, configuration
-- `analysis/syntheticETFBuilder.py` - Synthetic ETF surface construction  
+- `analysis/compositeETFBuilder.py` - composite ETF surface construction  
 - `analysis/surface_builder.py` - IV surface building
 - `analysis/correlation_builder.py` - Correlation calculations
 
@@ -78,7 +78,7 @@ After making changes to analysis pipeline:
 - `analysis/analysis_pipeline.py:PipelineConfig` - Main configuration class
 
 ### Entry Points
-- `scripts/scripts_synthetic_etf_demo.py` - Main CLI demo
+- `scripts/scripts_composite_etf_demo.py` - Main CLI demo
 - `display/gui/browser.py` - GUI application (tkinter required)
 - `examples/caching_improvements_demo.py` - Caching demonstration
 
@@ -87,7 +87,7 @@ After making changes to analysis pipeline:
 **CRITICAL**: All operations are very fast (1-3 seconds). Set timeouts appropriately.
 
 - **Tests**: `python -m pytest tests/ -v` -- 3 seconds. NEVER CANCEL. Use timeout 30+ seconds.
-- **Analysis**: `python scripts/scripts_synthetic_etf_demo.py --target SPY --peers QQQ --no-show` -- 1.5 seconds. NEVER CANCEL. Use timeout 30+ seconds.
+- **Analysis**: `python scripts/scripts_composite_etf_demo.py --target SPY --peers QQQ --no-show` -- 1.5 seconds. NEVER CANCEL. Use timeout 30+ seconds.
 - **Caching demo**: `python examples/caching_improvements_demo.py` -- 1 second. NEVER CANCEL. Use timeout 30+ seconds.
 - **Dependency install**: `pip install -r requirements.txt` -- 30 seconds. NEVER CANCEL. Use timeout 60+ seconds.
 - **Data ingestion** (when network available): May take 30-60 seconds per ticker. NEVER CANCEL. Use timeout 120+ seconds.
@@ -109,13 +109,13 @@ python -m pytest tests/test_config_edge_cases.py::test_configuration_caching_beh
 ### Analysis Pipeline Development
 ```bash
 # Test with different peer combinations
-python scripts/scripts_synthetic_etf_demo.py --target SPY --peers QQQ IWM GOOGL --no-show
+python scripts/scripts_composite_etf_demo.py --target SPY --peers QQQ IWM GOOGL --no-show
 
 # Test working weight modes (corr and equal work, pca/cosine have bugs)
-python scripts/scripts_synthetic_etf_demo.py --target SPY --peers QQQ --weight-mode equal --no-show
+python scripts/scripts_composite_etf_demo.py --target SPY --peers QQQ --weight-mode equal --no-show
 
 # Export results for inspection
-python scripts/scripts_synthetic_etf_demo.py --target SPY --peers QQQ --no-show --export-dir /tmp/results
+python scripts/scripts_composite_etf_demo.py --target SPY --peers QQQ --no-show --export-dir /tmp/results
 ```
 
 ### Cache Management

@@ -6,7 +6,7 @@ Goals
 -----
 - Exercise the *same* code-paths the GUI uses, but from CLI.
 - Minimal interactive loop: list dates, pick asof, build smiles/term,
-  compute peer weights, build synthetic, and dump intermediate data.
+  compute peer weights, build composite, and dump intermediate data.
 - Focused debug logging (opt-in) + warning-to-error to reveal NaN stacks.
 
 Usage
@@ -27,9 +27,9 @@ help               - show commands
 dates              - list available dates (global and per ticker)
 asof YYYY-MM-DD    - set active asof date (default: most recent)
 smile [T_days]     - build smile data (default uses nearest expiry to 30d)
-term               - build ATM term curve (+ optional synthetic overlay)
+term               - build ATM term curve (+ optional composite overlay)
 weights            - compute peer weights with current config
-synth              - build synthetic ATM pillar series (weights required)
+synth              - build composite ATM pillar series (weights required)
 dump [what]        - write current artifacts to /tmp parquet/csv (see options)
 quit / exit        - leave
 """
@@ -64,8 +64,8 @@ from analysis.analysis_pipeline import (  # noqa: E402
     available_dates,
     get_most_recent_date_global,
     compute_peer_weights,
-    build_synthetic_iv_series_weighted,
-    build_synthetic_iv_series_corrweighted,
+    build_composite_iv_series_weighted,
+    build_composite_iv_series_corrweighted,
     prepare_smile_data,
     prepare_term_data,
 )
@@ -201,7 +201,7 @@ def run_term(sess: Session, ci: float = 68.0):
     synth = out.get("synth_curve", pd.DataFrame())
     logger.info("ATM curve: %s", _df_info(atm, cols=("T", "atm_vol")))
     if not synth is None:
-        logger.info("Synthetic ATM curve: %s", _df_info(synth, cols=("T", "atm_vol")))
+        logger.info("composite ATM curve: %s", _df_info(synth, cols=("T", "atm_vol")))
 
 
 def run_weights(sess: Session, asof: Optional[str] = None):
@@ -223,25 +223,25 @@ def run_weights(sess: Session, asof: Optional[str] = None):
 
 def run_synth_iv(sess: Session, pillar_days: Tuple[int, ...] | int = (7, 30, 60, 90), tolerance_days: float = 7.0):
     if sess.weights_last is None and (not sess.target or not sess.peers):
-        logger.warning("Need weights or (target+peers) to build synthetic.")
+        logger.warning("Need weights or (target+peers) to build composite.")
         return
 
     if sess.weights_last is None:
         logger.info("No precomputed weights; computing on-the-fly for synth...")
-        df, w = build_synthetic_iv_series_corrweighted(
+        df, w = build_composite_iv_series_corrweighted(
             target=sess.target, peers=sess.peers, weight_mode=sess.weight_mode,
             pillar_days=pillar_days, tolerance_days=tolerance_days, asof=sess.ensure_asof(),
         )
         sess.weights_last = w
         sess.synth_iv_last = df
     else:
-        df = build_synthetic_iv_series_weighted(
+        df = build_composite_iv_series_weighted(
             weights=sess.weights_last.to_dict(),
             pillar_days=pillar_days, tolerance_days=tolerance_days,
         )
         sess.synth_iv_last = df
 
-    logger.info("Synthetic ATM pillars: %s", _df_info(sess.synth_iv_last, cols=("pillar_days", "iv")))
+    logger.info("composite ATM pillars: %s", _df_info(sess.synth_iv_last, cols=("pillar_days", "iv")))
 
 
 def list_dates(sess: Session):
@@ -333,9 +333,9 @@ help               - show this
 dates              - list known dates (global and per ticker)
 asof YYYY-MM-DD    - set active asof date (or 'asof latest')
 smile [T_days]     - build smile slice & fit (default 30)
-term               - build ATM term structure (+ synthetic if peers/weights set)
+term               - build ATM term structure (+ composite if peers/weights set)
 weights            - compute peer weights with current config
-synth              - build synthetic ATM pillar series
+synth              - build composite ATM pillar series
 dump [what]        - write artifacts to /tmp (smile|term|synth|surface)
 """)
             continue
@@ -390,7 +390,7 @@ def parse_args(argv=None):
     p.add_argument("--t-days", type=float, default=30.0,
                 help="Target maturity in days for smile fitting.")
     p.add_argument("--pillar-days", nargs="*", type=int, default=[7,30,60,90],
-                help="Pillar days for synthetic IV series.")
+                help="Pillar days for composite IV series.")
     p.add_argument("--tolerance-days", type=float, default=7.0,
                 help="Tolerance in days when aligning expiries.")
     p.add_argument("--ci", type=float, default=68.0,

@@ -5,7 +5,7 @@ GUI-ready analysis orchestrator (modern, slim).
 This module wires together:
 - ingest (download + persist)
 - surface grid building
-- synthetic ETF surface & ATM-pillar curves
+- composite ETF surface & ATM-pillar curves
 - unified peer-weight computation
 - lightweight smile/term helpers for GUI
 
@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple, List, Mapping, Union
+from typing import Any, Dict, Iterable, Optional, Tuple, List, Mapping, Union, Callable
 
 import json
 import logging
@@ -34,12 +34,12 @@ from data.interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 
 from volModel.volModel import VolModel
 
-from .syntheticETFBuilder import (
+from .compositeETFBuilder import (
     build_surface_grids,
     DEFAULT_TENORS,
     DEFAULT_MNY_BINS,
     combine_surfaces,
-    build_synthetic_iv as build_synthetic_iv_pillars,
+    build_composite_iv as build_composite_iv_pillars,
 )
 from .pillars import (
     load_atm,
@@ -50,7 +50,7 @@ from .pillars import (
 )
 from .confidence_bands import (
     Bands,
-    synthetic_etf_pillar_bands,
+    composite_etf_pillar_bands,
     svi_confidence_bands,
     sabr_confidence_bands,
     tps_confidence_bands,
@@ -194,29 +194,29 @@ def compute_peer_weights(
     )
 
 # -----------------------------------------------------------------------------
-# Synthetic ETF constructions
+# composite ETF constructions
 # -----------------------------------------------------------------------------
-def build_synthetic_surface(
+def build_composite_surface(
     weights: Mapping[str, float],
     cfg: PipelineConfig = PipelineConfig(),
     most_recent_only: bool = True,
 ) -> Dict[pd.Timestamp, pd.DataFrame]:
-    """Create a synthetic ETF surface from ticker grids + weights."""
+    """Create a composite ETF surface from ticker grids + weights."""
     w = {k.upper(): float(v) for k, v in weights.items()}
     surfaces = build_surfaces(tickers=list(w.keys()), cfg=cfg, most_recent_only=most_recent_only)
     return combine_surfaces(surfaces, w)
 
-def build_synthetic_iv_series_weighted(
+def build_composite_iv_series_weighted(
     weights: Mapping[str, float],
     *,
     pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLARS_DAYS,
     tolerance_days: float = 7.0,
 ) -> pd.DataFrame:
-    """Build a weighted synthetic ATM pillar IV series (no weights computation here)."""
-    return build_synthetic_iv_pillars({k.upper(): float(v) for k, v in weights.items()},
+    """Build a weighted composite ATM pillar IV series (no weights computation here)."""
+    return build_composite_iv_pillars({k.upper(): float(v) for k, v in weights.items()},
                                       pillar_days=pillar_days, tolerance_days=tolerance_days)
 
-def build_synthetic_iv_series_corrweighted(
+def build_composite_iv_series_corrweighted(
     target: str,
     peers: Iterable[str],
     *,
@@ -225,11 +225,11 @@ def build_synthetic_iv_series_corrweighted(
     tolerance_days: float = 7.0,
     asof: str | None = None,
 ) -> Tuple[pd.DataFrame, pd.Series]:
-    """Build correlation/PCA/cosine/OI‑weighted synthetic ATM pillar IV series."""
+    """Build correlation/PCA/cosine/OI‑weighted composite ATM pillar IV series."""
     w = compute_peer_weights(
         target=target, peers=peers, weight_mode=weight_mode, asof=asof, pillar_days=pillar_days
     )
-    df = build_synthetic_iv_pillars(w.to_dict(), pillar_days=pillar_days, tolerance_days=tolerance_days)
+    df = build_composite_iv_pillars(w.to_dict(), pillar_days=pillar_days, tolerance_days=tolerance_days)
     return df, w
 
 # -----------------------------------------------------------------------------
@@ -686,9 +686,10 @@ def prepare_term_data(
     atm_band: float = 0.05,
     max_expiries: int = 6,
     overlay_synth: bool = True,
+    get_slice: Callable[[str, str, float, int], pd.DataFrame] = get_smile_slice,
 ) -> Dict[str, Any]:
     """
-    Precompute ATM term structure (+ optional synthetic overlay) (optimized).
+    Precompute ATM term structure (+ optional composite overlay) (optimized).
 
     Perf notes:
     - One call to get_smile_slice; no repeated conversions.
@@ -793,7 +794,7 @@ def prepare_term_data(
 
     pillar_days = T_common * 365.25
     if ci and ci > 0:
-        synth_bands = synthetic_etf_pillar_bands(
+        synth_bands = composite_etf_pillar_bands(
             atm_data,
             w.to_dict(),
             pillar_days,
@@ -897,7 +898,7 @@ if __name__ == "__main__":
         print("Built surfaces:", [k for k in surfaces.keys()])
         weights = compute_peer_weights("SPY", ["QQQ"], weight_mode="corr_iv_atm")
         print("Weights:\n", weights)
-        synth, w = build_synthetic_iv_series_corrweighted("SPY", ["QQQ"], weight_mode="corr_iv_atm")
-        print("Synthetic ATM pillars len:", len(synth))
+        synth, w = build_composite_iv_series_corrweighted("SPY", ["QQQ"], weight_mode="corr_iv_atm")
+        print("composite ATM pillars len:", len(synth))
     except Exception as e:
         print("Demo error:", e)
