@@ -32,6 +32,7 @@ from display.plotting.smile_plot import (
 )
 from display.plotting.term_plot import (
     plot_composite_etf_term_structure,
+    plot_atm_term_structure as plot_atm_term_structure_df,
 )
 from display.plotting.weights_plot import plot_weights
 
@@ -43,7 +44,7 @@ from display.plotting.surface_viewer import (
     show_smile_overlay,         # 2D smile overlay at nearest tenor
 )
 from display.plotting.vol_structure_plots import (
-    plot_atm_term_structure,    # ATM IV vs TTE
+    plot_atm_term_structure as plot_atm_term_structure_simple,    # ATM IV vs TTE
     plot_term_smile,            # IV vs Strike for fixed maturity
     plot_3d_vol_surface,        # 3D surface for single ticker
     create_vol_dashboard,       # comprehensive dashboard
@@ -134,6 +135,28 @@ class PlotManager:
         self._refresh_interest_rates()
         self._refresh_plot()
 
+    def _validate_date_and_target(self, asof: str, target: str) -> tuple[bool, str]:
+        """
+        Validate that date and target are available for plotting.
+        
+        Returns:
+            tuple: (is_valid, error_message)
+        """
+        if not target or target.strip() == "":
+            return False, "Please select a target ticker"
+            
+        if not asof or asof.strip() == "":
+            return False, "Please select a valid date"
+            
+        # Check if data exists for this ticker/date combination
+        try:
+            df = self.get_smile_slice(target, asof)
+            if df.empty:
+                return False, f"No data available for {target} on {asof}"
+            return True, ""
+        except Exception as e:
+            return False, f"Error checking data: {e}"
+    
     def _clear_correlation_colorbar(self, ax: plt.Axes):
         """Remove any existing correlation colorbar to prevent it from
         appearing on non-correlation plots. Keeps axes geometry consistent
@@ -230,9 +253,13 @@ class PlotManager:
         self.target_pillars= get_target_pillars(self, self.target, asof, max_expiries)
         self.weights = weights_from_ui_or_matrix(self,self.target, self.peers, weight_mode, asof=asof, pillars=self.target_pillars)
         # create a bounded get_smile_slice with current max_expiries
-        def bounded_get_smile_slice(ticker, asof_date=None, T_target_years=None, call_put=None, nearest_by="T"):
+        def bounded_get_smile_slice(ticker, asof_date=None, T_target_years=None, call_put=None):
             return get_smile_slice(
-                ticker, asof_date, T_target_years, call_put, nearest_by, max_expiries=self._current_max_expiries
+                ticker,
+                asof_date=asof_date,
+                T_target_years=T_target_years,
+                call_put=call_put,
+                max_expiries=self._current_max_expiries,
             )
 
         self.get_smile_slice = bounded_get_smile_slice
@@ -430,26 +457,51 @@ class PlotManager:
         # --- ETF Weights only ---
         elif plot_type.startswith("ETF Weights"):
             self._clear_correlation_colorbar(ax)
-            plot_weights(ax, weights)
+            plot_weights(ax, self.weights)
             return
 
         # --- ATM Term Structure ---
         elif plot_type.startswith("ATM Term Structure"):
             self._clear_correlation_colorbar(ax)
-            atm_info = plot_atm_term_structure(ax, self.target, asof)
+            
+            # Validate date and target
+            is_valid, error_msg = self._validate_date_and_target(asof, self.target)
+            if not is_valid:
+                ax.text(0.5, 0.5, error_msg, ha="center", va="center")
+                ax.set_title("ATM Term Structure - Validation Error")
+                return
+                
+            atm_info = plot_atm_term_structure_simple(ax, self.target, asof)
             return
 
         # --- Term Smile ---
         elif plot_type.startswith("Term Smile"):
             self._clear_correlation_colorbar(ax)
+            
+            # Validate date and target
+            is_valid, error_msg = self._validate_date_and_target(asof, self.target)
+            if not is_valid:
+                ax.text(0.5, 0.5, error_msg, ha="center", va="center")
+                ax.set_title("Term Smile - Validation Error")
+                return
+                
             smile_info = plot_term_smile(ax, self.target, asof, T_days)
             return
 
         # --- 3D Vol Surface ---
         elif plot_type.startswith("3D Vol Surface"):
             self._clear_correlation_colorbar(ax)
+            
+            # Validate date and target
+            is_valid, error_msg = self._validate_date_and_target(asof, self.target)
+            if not is_valid:
+                ax.text(0.5, 0.5, error_msg, ha="center", va="center")
+                ax.set_title("3D Vol Surface - Validation Error")
+                return
+                
             # Pop separate window for 3D surface
             try:
+                print(f"Creating 3D surface for {self.target} on {asof}")
                 fig = plot_3d_vol_surface(
                     self.target, 
                     asof, 
@@ -457,16 +509,31 @@ class PlotManager:
                     max_expiries=self._current_max_expiries or 12
                 )
                 if fig:
+                    print(f"3D surface created successfully: {type(fig)}")
                     ax.set_title("3D Surface opened (separate window)")
                 else:
-                    ax.text(0.5, 0.5, "Failed to create 3D surface", ha="center", va="center")
+                    print("3D surface creation returned None")
+                    ax.text(0.5, 0.5, f"No surface data available for {self.target} on {asof}", ha="center", va="center")
+                    ax.set_title("3D Vol Surface - No Data")
             except Exception as e:
+                print(f"Error creating 3D surface: {e}")
+                import traceback
+                traceback.print_exc()
                 ax.text(0.5, 0.5, f"Error: {e}", ha="center", va="center")
+                ax.set_title("3D Vol Surface - Error")
             return
 
         # --- Vol Dashboard ---
         elif plot_type.startswith("Vol Dashboard"):
             self._clear_correlation_colorbar(ax)
+            
+            # Validate date and target
+            is_valid, error_msg = self._validate_date_and_target(asof, self.target)
+            if not is_valid:
+                ax.text(0.5, 0.5, error_msg, ha="center", va="center")
+                ax.set_title("Vol Dashboard - Validation Error")
+                return
+                
             # Pop separate window for dashboard
             try:
                 fig = create_vol_dashboard(
@@ -478,6 +545,7 @@ class PlotManager:
                 ax.set_title("Volatility Dashboard opened (separate window)")
             except Exception as e:
                 ax.text(0.5, 0.5, f"Error: {e}", ha="center", va="center")
+                ax.set_title("Vol Dashboard - Error")
             return
 
         else:
@@ -799,20 +867,84 @@ class PlotManager:
                 pass
 
         try:
-            atm_df, weight_df, _ = compute_and_plot_relative_weight(
-                ax=ax,
-                get_smile_slice=self.get_smile_slice,  # Use bounded slicer
-                tickers=self.tickers,
-                asof=asof,
-                atm_band=atm_band,
-                show_values=True,
-                clip_negative=clip_negative,
-                weight_power=weight_power,
-                target=target,
-                peers=self.peers,
-                max_expiries=max_exp,
-                weight_mode=weight_mode,
-            )
+            # For surface modes, show two variants side-by-side: restricted and wide
+            if isinstance(weight_mode, str) and (
+                weight_mode.endswith("surface") or weight_mode.endswith("surface_grid")
+            ):
+                fig = ax.figure
+                # Clear any existing axes content
+                fig.clf()
+                ax1 = fig.add_subplot(1, 2, 1)
+                ax2 = fig.add_subplot(1, 2, 2)
+
+                # Restricted: strict common date + strict intersection
+                atm_df, weight_df, _ = compute_and_plot_relative_weight(
+                    ax=ax1,
+                    get_smile_slice=self.get_smile_slice,
+                    tickers=self.tickers,
+                    asof=asof,
+                    atm_band=atm_band,
+                    show_values=True,
+                    clip_negative=clip_negative,
+                    weight_power=weight_power,
+                    target=target,
+                    peers=self.peers,
+                    max_expiries=max_exp,
+                    weight_mode=weight_mode,
+                    surface_min_coverage=1.0,
+                    surface_strict_common_date=True,
+                    surface_mny_range=(0.9, 1.1),
+                )
+                ax1.set_title("Surface Corr (restricted)")
+                # Annotate restriction summary
+                try:
+                    ax1.text(0.01, 1.02, "common date, min_coverage=1.0, mny=[0.9,1.1]",
+                              transform=ax1.transAxes, fontsize=8, va="bottom")
+                except Exception:
+                    pass
+
+                # Wide: majority coverage, allow per‑ticker latest
+                atm_df2, weight_df2, _ = compute_and_plot_relative_weight(
+                    ax=ax2,
+                    get_smile_slice=self.get_smile_slice,
+                    tickers=self.tickers,
+                    asof=asof,
+                    atm_band=atm_band,
+                    show_values=True,
+                    clip_negative=clip_negative,
+                    weight_power=weight_power,
+                    target=target,
+                    peers=self.peers,
+                    max_expiries=max_exp,
+                    weight_mode=weight_mode,
+                    surface_min_coverage=0.5,
+                    surface_strict_common_date=False,
+                    surface_mny_range=None,
+                )
+                ax2.set_title("Surface Corr (wide)")
+                try:
+                    ax2.text(0.01, 1.02, "per-ticker latest, min_coverage=0.5, mny=ALL",
+                              transform=ax2.transAxes, fontsize=8, va="bottom")
+                except Exception:
+                    pass
+                # For caching/inspection, store the wide variant
+                weight_df = weight_df2
+                atm_df = atm_df2
+            else:
+                atm_df, weight_df, _ = compute_and_plot_relative_weight(
+                    ax=ax,
+                    get_smile_slice=self.get_smile_slice,  # Use bounded slicer
+                    tickers=self.tickers,
+                    asof=asof,
+                    atm_band=atm_band,
+                    show_values=True,
+                    clip_negative=clip_negative,
+                    weight_power=weight_power,
+                    target=target,
+                    peers=self.peers,
+                    max_expiries=max_exp,
+                    weight_mode=weight_mode,
+                )
 
             # cache for other plots
             self.last_corr_df = weight_df
@@ -863,10 +995,9 @@ class PlotManager:
             fit_x = term_data.get("fit_x")
             fit_y = term_data.get("fit_y")
 
-        plot_atm_term_structure(
+        plot_atm_term_structure_df(
             ax,
             atm_curve,
-            x_units=x_units,
             fit_x=fit_x,
             fit_y=fit_y,
             show_ci=bool(
@@ -894,4 +1025,3 @@ class PlotManager:
             ax.set_xlabel("Time to Expiry (days)" if x_units == "days" else "Time to Expiry (years)")
             ax.set_ylabel("Implied Vol (ATM)")
             title += f" - composite Overlay (N={len(bands.x)})"
-

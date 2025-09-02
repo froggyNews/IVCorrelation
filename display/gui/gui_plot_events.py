@@ -1,3 +1,5 @@
+
+
 def is_smile_active(self) -> bool:
     return (
         self._current_plot_type is not None
