@@ -50,8 +50,6 @@ def weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: 
             isinstance(self.last_relative_weight_df, pd.DataFrame)
             and not self.last_relative_weight_df.empty
             and self.last_relative_weight_meta.get("weight_mode") == weight_mode
-            and self.last_relative_weight_meta.get("clip_negative") == settings.get("clip_negative", True)
-            and self.last_relative_weight_meta.get("weight_power") == settings.get("weight_power", 1.0)
             and self.last_relative_weight_meta.get("pillars", []) == list(pillars)
             and self.last_relative_weight_meta.get("asof") == asof
             and set(self.last_relative_weight_meta.get("tickers", [])) >= set([target] + peers)
@@ -60,8 +58,8 @@ def weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: 
                 self.last_relative_weight_df,
                 self.target,
                 self.peers,
-                clip_negative=settings.get("clip_negative", True),
-                power=settings.get("weight_power", 1.0),
+                clip_negative=True,
+                power=1.0,
             )
             if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
                 w = w.dropna().astype(float)

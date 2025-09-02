@@ -47,18 +47,14 @@ DEFAULT_CI = 0.68           # as a decimal (e.g., 0.68 -> 68%)
 DEFAULT_X_UNITS = "years"
 DEFAULT_WEIGHT_METHOD = "corr"
 DEFAULT_FEATURE_MODE = "iv_atm"
-DEFAULT_PILLARS = [7, 30, 60, 90, 180, 365]
 DEFAULT_OVERLAY = False
 PLOT_TYPES = (
     "Smile (K/S vs IV)",
-    "Term (ATM vs T)",
     "Relative Weight Matrix",
-    "Target vs Composite",
     "ETF Weights",
     "ATM Term Structure",
-    "Term Smile", 
+    "Term Smile",
     "3D Vol Surface",
-    "Vol Dashboard",
 )
 
 def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
@@ -67,8 +63,7 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
         return "smile"
     if plot_type.startswith("Term"):
         return "term"
-    if plot_type.startswith("Target vs Composite"):
-        return "surface"
+    # composite surface selection removed from UI
     if plot_type.startswith("Relative Weight Matrix"):
         if feature_mode in ("iv_atm", "ul"):
             return "term"
@@ -81,8 +76,7 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
         return "smile"
     if plot_type.startswith("3D Vol Surface"):
         return "surface"
-    if plot_type.startswith("Vol Dashboard"):
-        return "surface"
+    # dashboard selection removed from UI
     return "term"
 
 class InputPanel(ttk.Frame):
@@ -227,13 +221,8 @@ class InputPanel(ttk.Frame):
         # =======================
         row3 = ttk.Frame(self); row3.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
 
-        ttk.Label(row3, text="Pillars (days)").grid(row=0, column=0, sticky="w")
-        self.ent_pillars = ttk.Entry(row3, width=18)
-        self.ent_pillars.insert(0, "7,30,60,90,180,365")
-        self.ent_pillars.grid(row=0, column=1, padx=6)
-        self.ent_pillars.bind("<KeyRelease>", lambda e: (self._sync_settings(), self._refresh_visibility()))
-
-        ttk.Label(row3, text="Weight method").grid(row=0, column=2, sticky="w")
+        # Removed explicit Pillars input (handled elsewhere dynamically)
+        ttk.Label(row3, text="Weight method").grid(row=0, column=0, sticky="w")
         self.cmb_weight_method = ttk.Combobox(
             row3,
             values=["corr", "pca", "cosine", "equal", "oi"],
@@ -241,12 +230,12 @@ class InputPanel(ttk.Frame):
             state="readonly",
         )
         self.cmb_weight_method.set(DEFAULT_WEIGHT_METHOD)
-        self.cmb_weight_method.grid(row=0, column=3, padx=6)
+        self.cmb_weight_method.grid(row=0, column=1, padx=6)
         self.cmb_weight_method.bind(
             "<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility())
         )
 
-        ttk.Label(row3, text="Feature mode").grid(row=0, column=4, sticky="w")
+        ttk.Label(row3, text="Feature mode").grid(row=0, column=2, sticky="w")
         self.cmb_feature_mode = ttk.Combobox(
             row3,
             values=["iv_atm", "ul", "surface", "surface_grid"],
@@ -254,47 +243,30 @@ class InputPanel(ttk.Frame):
             state="readonly",
         )
         self.cmb_feature_mode.set(DEFAULT_FEATURE_MODE)
-        self.cmb_feature_mode.grid(row=0, column=5, padx=6)
+        self.cmb_feature_mode.grid(row=0, column=3, padx=6)
         self.cmb_feature_mode.bind(
             "<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility())
         )
-
-        ttk.Label(row3, text="ATM band").grid(row=0, column=6, sticky="w")
-        self.ent_atm_band = ttk.Entry(row3, width=6)
-        self.ent_atm_band.insert(0, f"{DEFAULT_ATM_BAND:.2f}")
-        self.ent_atm_band.grid(row=0, column=7, padx=6)
-        self.ent_atm_band.bind("<KeyRelease>", self._sync_settings)
+        # Removed ATM band input (nonfunctional); use default internally
 
         # =======================
         # Row 4: Weight power, clipping, overlays
         # =======================
         row4 = ttk.Frame(self); row4.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
 
-        ttk.Label(row4, text="Weight power").grid(row=0, column=0, sticky="w")
-        self.var_weight_power = tk.DoubleVar(value=1.0)
-        self.scl_weight_power = ttk.Scale(row4, from_=1.0, to=3.0, variable=self.var_weight_power,
-                                          orient=tk.HORIZONTAL, length=120)
-        self.scl_weight_power.grid(row=0, column=1, padx=6, sticky="w")
-        self.var_weight_power.trace_add("write", lambda *args: self._sync_settings())
-
-        self.var_clip_negative = tk.BooleanVar(value=True)
-        self.chk_clip_negative = ttk.Checkbutton(row4, text="Clip negative weights",
-                                                 variable=self.var_clip_negative)
-        self.chk_clip_negative.grid(row=0, column=2, padx=8, sticky="w")
-        self.var_clip_negative.trace_add("write", lambda *args: self._sync_settings())
-
+        # Removed weight power and clip-negative inputs; clip is always on
         self.var_overlay_synth = tk.BooleanVar(value=bool(overlay_synth))
-        self.chk_overlay_synth = ttk.Checkbutton(row4, text="Overlay synth", variable=self.var_overlay_synth)
-        self.chk_overlay_synth.grid(row=0, column=3, padx=8, sticky="w")
+        self.chk_overlay_synth = ttk.Checkbutton(row4, text="Overlay composite", variable=self.var_overlay_synth)
+        self.chk_overlay_synth.grid(row=0, column=0, padx=8, sticky="w")
         self.var_overlay_synth.trace_add("write", lambda *args: self._sync_settings())
 
         self.var_overlay_peers = tk.BooleanVar(value=bool(overlay_peers))
         self.chk_overlay_peers = ttk.Checkbutton(row4, text="Overlay peers", variable=self.var_overlay_peers)
-        self.chk_overlay_peers.grid(row=0, column=4, padx=4, sticky="w")
+        self.chk_overlay_peers.grid(row=0, column=1, padx=4, sticky="w")
         self.var_overlay_peers.trace_add("write", lambda *args: self._sync_settings())
 
         self.btn_plot = ttk.Button(row4, text="Plot")
-        self.btn_plot.grid(row=0, column=5, padx=8)
+        self.btn_plot.grid(row=0, column=2, padx=8)
 
         # initial sync of settings + visibility
         self._sync_settings()
@@ -428,25 +400,20 @@ class InputPanel(ttk.Frame):
         return self.cmb_feature_mode.get() or DEFAULT_FEATURE_MODE
 
     def get_weight_power(self) -> float:
-        return self.var_weight_power.get()
+        # Control removed; keep default
+        return 1.0
 
     def get_clip_negative(self) -> bool:
-        return self.var_clip_negative.get()
+        # Control removed; always clip
+        return True
 
     def get_pillars(self) -> list[int]:
-        try:
-            txt = self.ent_pillars.get().strip()
-            if not txt:
-                return list(DEFAULT_PILLARS)
-            return [int(p.strip()) for p in txt.split(",") if p.strip().isdigit()]
-        except Exception:
-            return list(DEFAULT_PILLARS)
+        # Control removed; handled elsewhere
+        return []
 
     def get_atm_band(self) -> float:
-        try:
-            return float(self.ent_atm_band.get())
-        except Exception:
-            return DEFAULT_ATM_BAND
+        # Control removed; use default
+        return DEFAULT_ATM_BAND
 
     def get_settings(self) -> dict:
         """Return a snapshot of all current settings."""
@@ -469,8 +436,9 @@ class InputPanel(ttk.Frame):
             pillars = self.get_pillars()
 
             feature_scope = _derive_feature_scope(plot_type, feature_mode)
+            # For relative-weight with ATM/UL, treat as term features by default
             if plot_type.startswith("Relative Weight Matrix") and feature_mode in ("iv_atm", "ul"):
-                feature_scope = "term" if len(pillars) >= 2 else "smile"
+                feature_scope = "term"
 
             self.manager.update(
                 target=self.get_target(),
@@ -481,14 +449,10 @@ class InputPanel(ttk.Frame):
                 T_days=self.get_T_days(),
                 ci=self.get_ci(),
                 x_units=self.get_x_units(),
-                atm_band=self.get_atm_band(),
                 weight_method=weight_method,
                 feature_mode=feature_mode,
-                weight_power=self.get_weight_power(),
-                clip_negative=self.get_clip_negative(),
                 overlay_synth=self.get_overlay_synth(),
                 overlay_peers=self.get_overlay_peers(),
-                pillars=pillars,
                 max_expiries=self.get_max_exp(),
                 feature_scope=feature_scope,
             )
@@ -501,21 +465,10 @@ class InputPanel(ttk.Frame):
         feat = self.get_feature_mode()
         plot = self.get_plot_type()
 
-        show_T = plot.startswith("Smile") or plot.startswith("composite Surface")
-        show_pillars = (
-            plot.startswith("Term")
-            or plot.startswith("composite Surface")
-            or (plot.startswith("Relative Weight Matrix") and feat.startswith("surface"))
-        )
-
-        if plot.startswith("Relative Weight Matrix") and feat in ("iv_atm", "ul"):
-            show_pillars = len(self.get_pillars()) >= 2
-            show_T = not show_pillars
-
-        show_model = (feat == "surface" and (plot.startswith("Smile") or plot.startswith("composite Surface")))
+        show_T = plot.startswith("Smile") or plot.startswith("Term Smile")
+        show_model = (feat == "surface" and plot.startswith("Smile"))
 
         self.ent_days.configure(state=("normal" if show_T else "disabled"))
-        self.ent_pillars.configure(state=("normal" if show_pillars else "disabled"))
         self.cmb_model.configure(state=("readonly" if show_model else "disabled"))
 
         self.cmb_xunits.configure(state=("readonly" if feat.startswith("surface") else "disabled"))

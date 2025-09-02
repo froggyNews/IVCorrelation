@@ -14,7 +14,6 @@ from volModel.multi_model_cache import fit_all_models_with_bands_cached
 from analysis.confidence_bands import Bands, svi_confidence_bands, sabr_confidence_bands, tps_confidence_bands
 from analysis.model_params_logger import append_params
 from analysis.pillars import _fit_smile_get_atm
-from display.plotting.anim_utils import  add_legend_toggles
 import pandas as pd
 from scipy.interpolate import interp1d
 
@@ -95,20 +94,17 @@ def fit_and_plot_smile(
     beta: float = 0.5,              # SABR beta
     label: Optional[str] = None,
     line_kwargs: Optional[Dict] = None,
-    enable_toggles: bool = True,       # legend/keyboard toggles (all models)
-    use_checkboxes: bool = False,      # keep False by default; legend is primary
 ) -> Dict:
     """
     Plot observed points, model fit, and optional CI on moneyness (K/S).
     
-    Supports SVI, SABR, and TPS models with interactive legend toggles.
-    All operations are logged to .txt file via db_logger.
-    Returns dict: {params, rmse, T, S, series_map or None}
+    Supports SVI, SABR, and TPS models.
+    Returns dict: {params, rmse, T, S}
     """
 
     # ---- safety check: ensure axes has valid figure
     if ax is None or ax.figure is None:
-        return {"params": {}, "rmse": np.nan, "T": float(T), "S": float(S), "series_map": None}
+        return {"params": {}, "rmse": np.nan, "T": float(T), "S": float(S)}
 
     # ---- sanitize
     S = float(S)
@@ -120,7 +116,7 @@ def fit_and_plot_smile(
         # Ensure axes has a valid figure before adding text
         if ax.figure is not None:
             ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
-        return {"params": {}, "rmse": np.nan, "T": float(T), "S": S, "series_map": None}
+        return {"params": {}, "rmse": np.nan, "T": float(T), "S": S}
 
     K = K[m]
     iv = iv[m]
@@ -130,14 +126,9 @@ def fit_and_plot_smile(
     m_grid = np.linspace(float(mlo), float(mhi), int(n))
     K_grid = m_grid * S
 
-    # ---- artists map for legend toggles
-    series_map: Dict[str, list] = {}
-
     # ---- observed points
     if show_points:
         pts = ax.scatter(K / S, iv, s=20, alpha=0.85, label="Observed")
-        if enable_toggles:
-            series_map["Observed Points"] = [pts]
 
     # ---- fit + optional CI
     if not params:
@@ -155,15 +146,11 @@ def fit_and_plot_smile(
     line_kwargs.setdefault("lw", 2 if show_points else 1.6)
     fit_lbl = label or (f"{model.upper()} fit")
     fit_line = ax.plot(K_grid / S, y_fit, label=fit_lbl, lw=2.2, alpha=1.0)  # More defined fit line
-    if enable_toggles:
-        series_map[f"{model.upper()} Fit"] = list(fit_line)
 
-    # ---- confidence bands
-    if bands is not None:
+    # ---- target confidence bands disabled per UX (composite CI shown instead)
+    if False and bands is not None:
         ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(bands.level*100)}% CI")
-        ci_mean = ax.plot(bands.x / S, bands.mean, lw=1.8, alpha=0.8, linestyle="--")  # More defined CI mean line
-        if enable_toggles:
-            series_map[f"{model.upper()} Confidence Interval"] = [ci_fill, *ci_mean]
+        ci_mean = ax.plot(bands.x / S, bands.mean, lw=1.8, alpha=0.8, linestyle="--")
 
     # ---- ATM marker (not part of toggles / legend)
     ax.axvline(1.0, color="grey", lw=1, ls="--", alpha=0.85, label="_nolegend_")
@@ -177,12 +164,6 @@ def fit_and_plot_smile(
         if handles and labels:
             ax.legend(loc="best", fontsize=8)
 
-    # ---- legend-first toggle system (primary), keyboard helpers
-    if enable_toggles and series_map and ax.figure is not None:
-        add_legend_toggles(ax, series_map)  # your improved legend system
-        # checkboxes are optional; keep off unless explicitly asked
-
-
     # ---- fit quality
     rmse = float(fit_params.get("rmse", np.nan)) if isinstance(fit_params, dict) else np.nan
 
@@ -191,18 +172,17 @@ def fit_and_plot_smile(
         "rmse": rmse,
         "T": float(T),
         "S": float(S),
-        "series_map": series_map if enable_toggles else None,
     }
 
 
-def plot_composite_etf_smile(
+def plot_composite_index_smile(
     ax: plt.Axes,
     bands: Bands,
     *,
-    label: Optional[str] = "composite ETF",
+    label: Optional[str] = "composite index",
     line_kwargs: Optional[Dict] = None,
 ) -> Bands:
-    """Plot composite ETF smile using pre-computed confidence bands."""
+    """Plot composite index smile using pre-computed confidence bands."""
 
     ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(bands.level*100)}%)")
     # add a line for the mean - make it more defined/prominent
@@ -219,6 +199,9 @@ def plot_composite_etf_smile(
         ax.legend(handles, labels, loc="best", fontsize=8)
 
     return bands
+
+# Back-compat alias (old name)
+plot_composite_etf_smile = plot_composite_index_smile
 
 
 def fit_smile_models_with_bands(S: float, K: np.ndarray, T: float, IV: np.ndarray, 
@@ -282,13 +265,16 @@ def fit_smile_models_with_bands(S: float, K: np.ndarray, T: float, IV: np.ndarra
     return result
 
 
-def plot_composite_smile_overlay(
-    ax: plt.Axes,
-    target_grid: pd.DataFrame,
-    synthetic_grid: pd.DataFrame,
-    T_days: float,
-    label: str = "composite smile (relative-weight)",
-) -> bool:
+
+def plot_composite_smile_overlay(ax: plt.Axes,
+                                 target_grid: pd.DataFrame,
+                                 synthetic_grid: pd.DataFrame,
+                                 T_days: float,
+                                 label: str = "Composite overlay",
+                                 *,
+                                 peer_surfaces: Optional[Dict[str, pd.DataFrame]] = None,
+                                 weights: Optional[Dict[str, float]] = None,
+                                 level: float = 0.68) -> bool:
     """
     Plot composite smile overlay on existing smile plot.
     
@@ -401,10 +387,65 @@ def plot_composite_smile_overlay(
                 alpha=0.95,
                 label=label,
             )
+            # Optional composite CI using peer dispersion around weighted mean
+            try:
+                if peer_surfaces and weights:
+                    # normalize weights across available peers
+                    peers = [p for p in weights.keys() if p in peer_surfaces]
+                    if len(peers) >= 2:
+                        w_vals = np.array([float(weights[p]) for p in peers], dtype=float)
+                        w_vals = np.where(np.isfinite(w_vals) & (w_vals > 0), w_vals, 0.0)
+                        if w_vals.sum() > 0:
+                            w = w_vals / w_vals.sum()
+                            # helper: sample peer at nearest tenor and align to x_mny
+                            def sample_peer(df_peer: pd.DataFrame) -> np.ndarray:
+                                cols = _cols_to_days(df_peer.columns)
+                                idx = _nearest_tenor_idx(cols, T_days)
+                                col = df_peer.columns[idx]
+                                if df_peer.index.equals(target_grid.index):
+                                    y = df_peer[col].astype(float).to_numpy()
+                                    return y
+                                # align by interpolation to x_mny
+                                try:
+                                    pmny = _mny_from_index_labels(df_peer.index)
+                                    piv = df_peer[col].astype(float).to_numpy()
+                                    valid = np.isfinite(pmny) & np.isfinite(piv)
+                                    if np.sum(valid) >= 2:
+                                        f = interp1d(pmny[valid], piv[valid], kind='linear', bounds_error=False, fill_value=np.nan)
+                                        return f(x_mny)
+                                except Exception:
+                                    pass
+                                # fallback: NaNs
+                                return np.full_like(x_mny, np.nan)
+
+                            Y = np.vstack([sample_peer(peer_surfaces[p]) for p in peers])  # [n_peers x n_points]
+                            # compute weighted mean (should match y_syn) and weighted std dev
+                            mu = np.nansum((w[:, None] * Y), axis=0)
+                            # population variance with weights: sum(w*(x-mu)^2)/sum(w)
+                            var = np.nansum(w[:, None] * (Y - mu) ** 2, axis=0)
+                            std = np.sqrt(np.maximum(var, 0.0))
+                            # z-multiplier approx from level
+                            if level >= 0.99:
+                                z = 2.58
+                            elif level >= 0.95:
+                                z = 1.96
+                            elif level >= 0.90:
+                                z = 1.64
+                            else:
+                                z = 1.0
+                            lo = mu - z * std
+                            hi = mu + z * std
+                            mask = final_valid & np.isfinite(lo) & np.isfinite(hi)
+                            if np.sum(mask) >= 2:
+                                ax.fill_between(x_mny[mask], lo[mask], hi[mask], alpha=0.16,
+                                                label=f"Composite CI ({int(level*100)}%)")
+            except Exception as e:
+                print(f"DEBUG: composite CI failed: {e}")
             return True
-            
+        else:
+            print("DEBUG: composite overlay skipped (insufficient valid points after alignment)")
     except Exception:
-        pass
+        print("DEBUG: composite overlay failed (exception)")
     
     return False
 
@@ -546,11 +587,10 @@ def plot_smile_with_composite(ax: plt.Axes, df: pd.DataFrame, target: str, asof:
         bands=bands,
         moneyness_grid=(0.7, 1.3, 121),
         show_points=True,
-        enable_toggles=True,
     )
-    
-    # Set title
-    title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
+    # Title and caption
+    T_used_days = int(round(T_used * 365.25))
+    title = f"{target}  {asof}  T≈{T_used:.3f}y (~{T_used_days}d)"
     
     # Ensure correct axis labels (fix for label pollution from term plots)
     ax.set_xlabel("Moneyness (K/S)")
@@ -587,21 +627,35 @@ def plot_smile_with_composite(ax: plt.Axes, df: pd.DataFrame, target: str, asof:
 
             if peers_map and target_key is not None and target_key in surfaces[target]:
                 from analysis.compositeETFBuilder import combine_surfaces
-                synth_by_date = combine_surfaces(peers_map, weights)
+                synth_by_date = combine_surfaces(peer_surfaces, weights)
+                
+                if asof in synth_by_date:
+                    target_grid = surfaces[target][asof]
+                    synthetic_grid = synth_by_date[asof]
+                    
+                    success = plot_composite_smile_overlay(
+                        ax, target_grid, synthetic_grid, T_days,
+                        label="Composite overlay",
+                        peer_surfaces=peer_surfaces,
+                        weights=weights,
+                        level=ci_level or 0.68
+                    )
+                    if success:
+                        ax.legend(loc="best", fontsize=8)
+                else:
+                    print("DEBUG: composite overlay skipped (no synthetic grid for asof)")
+            else:
+                print("DEBUG: composite overlay skipped (no peer surfaces)")
+                        
 
-                # Choose date to use: prefer target_key if available; else latest in synth
-                date_used = target_key if target_key in synth_by_date else (max(synth_by_date.keys()) if synth_by_date else None)
-                if date_used is not None and date_used in surfaces[target]:
-                    target_grid = surfaces[target][date_used]
-                    synthetic_grid = synth_by_date.get(date_used)
-                    if synthetic_grid is not None:
-                        success = plot_composite_smile_overlay(ax, target_grid, synthetic_grid, T_days)
-                        if success:
-                            ax.legend(loc="best", fontsize=8)
         except Exception:
-            pass
+            print("DEBUG: composite overlay failed (exception in combine or overlay)")
     
     ax.set_title(title)
-    
-    return info, last_fit_info
+    # Add RMSE as a small caption below the plot
+    try:
+        ax.text(0.5, -0.12, f"RMSE={info['rmse']:.4f}", transform=ax.transAxes, ha="center", va="top", fontsize=8)
+    except Exception:
+        pass
 
+    return info, last_fit_info
