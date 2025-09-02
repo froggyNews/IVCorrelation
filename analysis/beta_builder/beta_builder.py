@@ -33,7 +33,7 @@ def build_peer_weights(
     *,
     get_smile_slice=None,
     asof: str | None = None,
-    pillars_days: Iterable[int] = (7, 30, 60, 90),
+    pillars_days: Iterable[int] = (7, 14, 21, 28, 42, 56, 70, 84, 98, 112, 140, 182, 252, 365),
     tenors: Iterable[int] | None = None,
     mny_bins: Iterable[Tuple[float, float]] | None = None,
     clip_negative: bool = True,

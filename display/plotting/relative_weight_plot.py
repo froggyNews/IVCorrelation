@@ -16,7 +16,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from analysis.beta_builder.unified_weights import compute_unified_weights
+from analysis.beta_builder.unified_weights import (
+    compute_unified_weights,
+    surface_feature_matrix,
+    underlying_returns_matrix,
+)
 from analysis.model_params_logger import compute_or_load
 
 
@@ -81,7 +85,7 @@ def _relative_weight_by_expiry_rank(
     for t in tickers:
         try:
             df = get_slice(
-                t, asof_date=asof, T_target_years=None, call_put=None, nearest_by="T"
+                t, asof_date=asof, T_target_years=None, call_put=None
             )
         except Exception:
             df = None
@@ -104,6 +108,96 @@ def _relative_weight_by_expiry_rank(
     else:
         rel_w_df = atm_rank_df.transpose().corr(method="pearson", min_periods=2)
     return atm_rank_df, rel_w_df
+
+
+def _feature_matrix_for_mode(
+    get_slice,
+    tickers: Iterable[str],
+    asof: str,
+    *,
+    weight_mode: str | None = None,
+    max_expiries: int = 6,
+    atm_band: float = 0.05,
+    surface_min_coverage: float | None = None,
+    surface_strict_common_date: bool = False,
+    surface_mny_range: tuple[float, float] | None = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Build a feature matrix based on the feature specified in weight_mode,
+    then compute a correlation matrix across tickers.
+
+    Only correlation is used as the similarity metric.
+
+    Returns
+    -------
+    (features_df, corr_df)
+        features_df has index=tickers, columns=feature dimensions.
+        corr_df is a ticker-by-ticker correlation matrix.
+    """
+    mode = (weight_mode or "corr_iv_atm").lower().strip()
+    # Extract feature part: method_feature
+    if "_" in mode:
+        _, feature = mode.split("_", 1)
+    else:
+        feature = "iv_atm"
+
+    tickers = [t.upper() for t in tickers]
+
+    # Map several aliases
+    feat = feature
+    if feat in {"atm", "iv", "iv_atm"}:
+        # Use simple ATM-by-expiry-rank features to avoid pillar dependence
+        feats, _ = _relative_weight_by_expiry_rank(
+            get_slice=get_slice,
+            tickers=tickers,
+            asof=asof,
+            max_expiries=max_expiries,
+            atm_band=atm_band,
+        )
+        feat_df = feats
+    elif feat in {"iv_atm_ranks", "atm_ranks", "atm_ranked"}:
+        feats, _ = _relative_weight_by_expiry_rank(
+            get_slice=get_slice,
+            tickers=tickers,
+            asof=asof,
+            max_expiries=max_expiries,
+            atm_band=atm_band,
+        )
+        feat_df = feats
+    elif feat in {"surface", "surface_full", "surface_grid", "surface_vector"}:
+        # Build surface grid features (standardized inside helper)
+        grids, X, names = surface_feature_matrix(
+            tickers,
+            asof,
+            tenors=None,
+            mny_bins=None,
+            standardize=True,
+            min_coverage=(surface_min_coverage if surface_min_coverage is not None else 0.5),
+            strict_common_date=surface_strict_common_date,
+            mny_range=surface_mny_range,
+        )
+        idx = list(grids.keys()) if isinstance(grids, dict) else tickers
+        feat_df = pd.DataFrame(X, index=idx, columns=names or [])
+    elif feat in {"underlying", "underlying_px", "ul", "ul_px"}:
+        feat_df = underlying_returns_matrix(tickers)
+    else:
+        # Default to ATM-by-expiry-rank
+        feats, _ = _relative_weight_by_expiry_rank(
+            get_slice=get_slice,
+            tickers=tickers,
+            asof=asof,
+            max_expiries=max_expiries,
+            atm_band=atm_band,
+        )
+        feat_df = feats
+
+    # Compute correlation across tickers (rows) by correlating columns
+    if feat_df is None or feat_df.empty or len(feat_df.index) < 2:
+        corr = pd.DataFrame(index=feat_df.index if feat_df is not None else [],
+                            columns=feat_df.index if feat_df is not None else [],
+                            dtype=float)
+    else:
+        corr = feat_df.transpose().corr(method="pearson", min_periods=2)
+    return feat_df, corr
 
 
 def _maybe_compute_weights(
@@ -154,6 +248,10 @@ def compute_and_plot_relative_weight(
     max_expiries: int = 6,
     weight_mode: str = "corr",
     weights: Optional[pd.Series | Dict[str, float]] = None,
+    no_cache: bool = False,
+    surface_min_coverage: float | None = None,
+    surface_strict_common_date: bool = False,
+    surface_mny_range: tuple[float, float] | None = None,
     **weight_config,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.Series]]:
     """
@@ -167,24 +265,56 @@ def compute_and_plot_relative_weight(
     can be supplied, along with any extra keyword arguments understood by
     the unified weight system.
     """
+    # PCA-based modes are not meaningful for a correlation heatmap. Skip cleanly.
+    if (weight_mode or "").lower().startswith("pca"):
+        try:
+            ax.clear()
+            ax.text(0.5, 0.5, "Relative-weight matrix is correlation-only\nSkipped for PCA mode",
+                    ha="center", va="center")
+        except Exception:
+            pass
+        return pd.DataFrame(), pd.DataFrame(), None
+
     tickers = [t.upper() for t in tickers]
     payload = {
         "tickers": sorted(tickers),
         "asof": pd.to_datetime(asof).floor("min").isoformat(),
         "atm_band": atm_band,
         "max_expiries": max_expiries,
+        "feature": (weight_mode.split("_", 1)[1] if "_" in weight_mode else "iv_atm") if weight_mode else "iv_atm",
     }
 
     def _builder() -> Tuple[pd.DataFrame, pd.DataFrame]:
-        return _relative_weight_by_expiry_rank(
+        # Always compute correlation on selected feature; ignore PCA/cosine
+        return _feature_matrix_for_mode(
             get_slice=get_smile_slice,
             tickers=tickers,
             asof=asof,
+            weight_mode=weight_mode or "corr_iv_atm",
             max_expiries=max_expiries,
             atm_band=atm_band,
+            surface_min_coverage=surface_min_coverage,
+            surface_strict_common_date=surface_strict_common_date,
+            surface_mny_range=surface_mny_range,
         )
 
-    atm_df, rel_w_df = compute_or_load("relative_weight", payload, _builder)
+    if no_cache:
+        atm_df, rel_w_df = _builder()
+    else:
+        val = compute_or_load("relative_weight", payload, _builder)
+        # Guard against stale/invalid cache entries
+        if not isinstance(val, tuple) or len(val) != 2:
+            atm_df, rel_w_df = _builder()
+        else:
+            atm_df, rel_w_df = val
+
+    # Enforce exact requested ticker ordering/slicing in outputs
+    req = [t.upper() for t in tickers]
+    if isinstance(atm_df, pd.DataFrame) and not atm_df.empty:
+        atm_df = atm_df.reindex(req)
+    if isinstance(rel_w_df, pd.DataFrame) and not rel_w_df.empty:
+        keep = [t for t in req if t in rel_w_df.index]
+        rel_w_df = rel_w_df.loc[keep, keep]
 
     # Normalise/compute weights
     w_series: Optional[pd.Series]

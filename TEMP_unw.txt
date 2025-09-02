@@ -1,0 +1,386 @@
+    X = _impute_col_median(np.vstack(feats))
+    if standardize:
+        X, _, _ = _zscore_cols(X)
+    return {t: grids[t] for t in ok}, X, feat_names or []
+
+def underlying_returns_matrix(tickers: Iterable[str]) -> pd.DataFrame:
+    from data.db_utils import get_conn
+    try:
+        from data.data_pipeline import ensure_underlying_price_data
+        _ = ensure_underlying_price_data({t.upper() for t in tickers})
+    except Exception:
+        pass
+    conn = get_conn()
+    try:
+        df = pd.read_sql_query("SELECT asof_date, ticker, close FROM underlying_prices", conn)
+    except Exception:
+        df = pd.DataFrame()
+    if df.empty:
+        df = pd.read_sql_query("SELECT asof_date, ticker, spot AS close FROM options_quotes", conn)
+    if df.empty:
+        return pd.DataFrame()
+    px = (
+        df.groupby(["asof_date", "ticker"])["close"]
+        .median()
+        .unstack("ticker")
+        .sort_index()
+    )
+    ret = np.log(px / px.shift(1)).dropna(how="all")
+    return ret.T
+def _ul_pca_factor_weights(df_ul: pd.DataFrame, target: str, peers: list[str],
+                           k: Optional[int], energy: float) -> pd.Series:
+    """
+    df_ul: rows=tickers, cols=time (log returns), as built by underlying_returns_matrix()
+    Implements:
+      R_peer (T x N)  = peer returns with time along rows
+      R_peer = U S V^T, factors F = U S (T x K), loadings L = V[:, :K] (N x K)
+      beta from OLS: r_tgt ~ F
+      peer scores c = L @ beta  -> clip >=0 -> simplex normalize -> weights
+    """
+    # Ensure target + peers exist
+    ticks = [t for t in [target] + peers if t in df_ul.index]
+    if len(ticks) < 2:
+        return pd.Series(dtype=float)
+
+    # Build time x peers matrix
+    peer_list = [p for p in peers if p in df_ul.index]
+    R_peer = df_ul.loc[peer_list].to_numpy(float).T  # shape (T, N)
+    if R_peer.size == 0 or R_peer.shape[1] == 0:
+        return pd.Series(dtype=float)
+
+    # Center over time (demean columns = peers); no scaling per LaTeX
+    R_peer = R_peer - np.nanmean(R_peer, axis=0, keepdims=True)
+    R_peer = np.nan_to_num(R_peer, nan=0.0)
+
+    # SVD on (T x N): R = U S V^T
+    U, s, Vt = np.linalg.svd(R_peer, full_matrices=False)
+
+    # choose K
+    if k is None or k <= 0 or k > len(s):
+        if len(s):
+            c = np.cumsum(s**2)
+            tot = c[-1] if np.isfinite(c[-1]) and c[-1] > 0 else 0.0
+            k = int(np.searchsorted(c / tot, float(energy), side="left") + 1) if tot > 0 else len(s)
+        else:
+            k = 1
+
+    U_k = U[:, :k]                  # (T, K)
+    S_k = s[:k]                     # (K,)
+    V_k = Vt[:k, :].T               # (N, K)  loadings
+
+    # Factors F = U_k S_k (T x K)
+    F = U_k * S_k  # broadcast multiply
+
+    # Target returns (T,)
+    r_tgt = df_ul.loc[target].to_numpy(float)
+    r_tgt = r_tgt - np.nanmean(r_tgt)
+    r_tgt = np.nan_to_num(r_tgt, nan=0.0)
+
+    # OLS beta: minimize ||F beta - r_tgt||_2
+    # Solve with stable least squares
+    beta, *_ = np.linalg.lstsq(F, r_tgt, rcond=None)  # (K,)
+
+    # Map factor exposures back to peers via loadings
+    c = V_k @ beta   # (N,)
+    c = np.clip(c, 0.0, None)
+    ssum = float(c.sum())
+    w = c / ssum if ssum > 0 else np.full_like(c, 1.0 / max(len(c), 1))
+
+    return pd.Series(w, index=peer_list)
+
+
+class UnifiedWeightComputer:
+    def _choose_asof(self, target: str, peers: list[str], config: WeightConfig) -> Optional[str]:
+        if config.asof:
+            return config.asof
+        if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+            from data.db_utils import get_conn
+            tickers = [target] + peers
+            conn = get_conn()
+            placeholders = ','.join('?' * len(tickers))
+            q = (
+                "SELECT asof_date, COUNT(DISTINCT ticker) AS n "
+                "FROM options_quotes WHERE ticker IN (" + placeholders + ") "
+                "GROUP BY asof_date "
+                "HAVING SUM(CASE WHEN ticker = ? THEN 1 ELSE 0 END) > 0 "
+                "ORDER BY n DESC, asof_date DESC LIMIT 1"
+            )
+            params = [t.upper() for t in tickers] + [target.upper()]
+            df = pd.read_sql_query(q, conn, params=params)
+            if not df.empty:
+                return pd.to_datetime(df["asof_date"].iloc[0]).strftime("%Y-%m-%d")
+            try:
+                from analysis.analysis_pipeline import get_most_recent_date_global, available_dates
+                d = get_most_recent_date_global()
+                if d:
+                    return d
+                dates = available_dates(ticker=target, most_recent_only=True)
+                if dates:
+                    return dates[0]
+            except Exception:
+                return None
+        return None
+
+    def compute_weights(self, target: str, peers: Iterable[str], config: WeightConfig) -> pd.Series:
+        target = (target or "").upper()
+        peers_list = [p.upper() for p in peers]
+        if not peers_list:
+            return pd.Series(dtype=float)
+
+        if config.method == WeightMethod.EQUAL:
+            return equal_weights(peers_list)
+        if config.method == WeightMethod.OPEN_INTEREST:
+            return open_interest_weights(peers_list, config.asof)
+
+        asof = None
+        if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+            asof = self._choose_asof(target, peers_list, config)
+            if asof is None:
+                raise ValueError("no surface/ATM date available to build features")
+
+        feature_df = self._build_feature_matrix(target, peers_list, asof, config)
+        if feature_df is None or feature_df.empty:
+            if config.feature_set != FeatureSet.UNDERLYING_PX:
+                ul_cfg = WeightConfig(
+                    method=config.method,
+                    feature_set=FeatureSet.UNDERLYING_PX,
+                    clip_negative=config.clip_negative,
+                    power=config.power,
+                )
+                feature_df = self._build_feature_matrix(target, peers_list, None, ul_cfg)
+                if feature_df is None or feature_df.empty:
+                    return equal_weights(peers_list)
+                config = ul_cfg
+            else:
+                return equal_weights(peers_list)
+
+        try:
+            if config.method == WeightMethod.CORRELATION:
+                # Mirror PCA's per-feature branches for clarity/robustness
+                if config.feature_set == FeatureSet.UNDERLYING_PX:
+                    # UL: correlation over returns matrix
+                    return corr_weights_from_matrix(
+                        feature_df, target, peers_list,
+                        clip_negative=config.clip_negative, power=config.power
+                    )
+
+                if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS):
+                    # ATM: use dedicated helpers that apply lenient coverage rules
+                    tickers = [target] + peers_list
+                    from analysis.analysis_pipeline import get_smile_slice as _get_smile_slice
+                    if config.feature_set == FeatureSet.ATM:
+                        atm_df, corr_df = _compute_atm_corr(
+                            get_smile_slice=_get_smile_slice,
+                            tickers=tickers,
+                            asof=asof,
+                            pillars_days=config.pillars_days,
+                            atm_band=config.atm_band,
+                            tol_days=config.atm_tol_days,
+                        )
+                    else:
+                        atm_df, corr_df = _compute_atm_corr_pf(
+                            get_smile_slice=_get_smile_slice,
+                            tickers=tickers,
+                            asof=asof,
+                            max_expiries=config.max_expiries,
+                            atm_band=config.atm_band,
+                        )
+                    return _corr_weights_from_corr_df(
+                        corr_df, target, peers_list,
+                        clip_negative=config.clip_negative, power=config.power
+                    )
+
+                if config.feature_set in (FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+                    # Surface: flatten aligned grids and correlate across features
+                    return corr_weights_from_matrix(
+                        feature_df, target, peers_list,
+                        clip_negative=config.clip_negative, power=config.power
+                    )
+
+                # Fallback
+                return corr_weights_from_matrix(
+                    feature_df, target, peers_list,
+                    clip_negative=config.clip_negative, power=config.power
+                )
+            if config.method == WeightMethod.COSINE:
+                return cosine_similarity_weights_from_matrix(feature_df, target, peers_list,
+                    clip_negative=config.clip_negative, power=config.power)
+            if config.method == WeightMethod.PCA:
+                # Build matrix once
+                feature_df = feature_df  # already built above
+
+                # --- ATM: unchanged (factorization weights) ---
+                if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS, FeatureSet.UNDERLYING_PX):
+                    return pca_weights_from_feature_df(feature_df, target, peers_list, k=config.pca_k, nonneg=True)
+
+                # --- SURFACE / SURFACE_VECTOR: LaTeX projection path (opt-in) ---
+                if config.feature_set in (FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR) and config.pca_project_surface:
+                    # Rebuild SURFACE features WITHOUT standardization; we need raw space for μ-centering
+                    grids, X_raw, names = surface_feature_matrix(
+                        [target] + peers_list,
+                        asof,
+                        tenors=config.tenors,
+                        mny_bins=config.mny_bins,
+                        standardize=False,   # IMPORTANT: raw feature space
+                    )
+                    if X_raw.size == 0 or X_raw.shape[0] < 2:
+                        raise ValueError("No peer data available for PCA projection")
+
+                    # Arrange as: features × peers (columns); target feature vector y
+                    # Our surface_feature_matrix returns rows=tickers, cols=features
+                    # So transpose peers to (features, n_peers), and take target row as (features,)
+                    import numpy as _np
+                    tick_order = list(grids.keys())
+                    if tick_order[0] != target:
+                        # safety: enforce target-first ordering
+                        idx_map = {t: i for i, t in enumerate(tick_order)}
+                        order = [target] + [p for p in peers_list if p in idx_map]
+                        X_raw = X_raw[_np.array([idx_map[t] for t in order], dtype=int), :]
+                        tick_order = order
+
+                    y_vec = X_raw[0, :].astype(float)
+                    Xp_raw = X_raw[1:, :].astype(float)  # peers rows
+                    if Xp_raw.shape[0] == 0:
+                        raise ValueError("No peer data available for PCA projection")
+
+                    # features x peers
+                    Xp_cols = Xp_raw.T
+                    # Strict LaTeX projection in feature space
+                    y_hat, _details = pca_surface_project(
+                        peers_feature_matrix=Xp_cols,
+                        target_feature_vector=y_vec,
+                        k=config.pca_k,
+                        energy=config.pca_energy,
+                    )
+
+                    # Convert reconstructed target y_hat into peer weights using your SVD-LS + nonneg + simplex
+                    # (standardize peers and y_hat consistently inside pca_regress_weights)
+                    w = pca_regress_weights(Xp_raw, y_hat, k=config.pca_k, nonneg=True, energy=config.pca_energy)
+
+                    import pandas as pd
+                    idx = [p for p in peers_list if p in tick_order[1:]]
+                    ser = pd.Series(w, index=idx).clip(lower=0.0)
+                    ssum = float(ser.sum())
+                    if not np.isfinite(ssum) or ssum <= 0:
+                        # Final fallback to market-mode PC1
+                        try:
+                            w_m = pca_market_weights(Xp_raw)
+                            ser = pd.Series(w_m, index=idx).clip(lower=0.0)
+                            ssum = float(ser.sum())
+                        except Exception:
+                            ser = pd.Series(0.0, index=idx)
+                            ssum = 0.0
+                    ser = ser / ssum if ssum > 0 else ser
+                    return ser.reindex(peers_list).fillna(0.0)
+
+                # --- SURFACE default: keep your old factorization weights ---
+                return pca_weights_from_feature_df(feature_df, target, peers_list, k=config.pca_k, nonneg=True)
+            
+            # --- UNDERLYING_PX: LaTeX factor path (opt-in) ---
+            if config.feature_set == FeatureSet.UNDERLYING_PX and config.pca_ul_via_factors:
+                # feature_df here is rows=tickers, cols=time from underlying_returns_matrix()
+                ser = _ul_pca_factor_weights(
+                    feature_df, target, peers_list,
+                    k=config.pca_ul_k, energy=config.pca_ul_energy
+                )
+                if ser.empty:
+                    return equal_weights(peers_list)
+                # finalize, keep original peer order
+                return ser.reindex(peers_list).fillna(0.0)
+
+            # --- UNDERLYING_PX default: keep your existing factorization weights ---
+            if config.feature_set == FeatureSet.UNDERLYING_PX:
+                return pca_weights_from_feature_df(feature_df, target, peers_list, k=config.pca_k, nonneg=True)
+                raise ValueError(f"Unsupported method: {config.method}")
+        except Exception:
+            return equal_weights(peers_list)
+
+    def _build_feature_matrix(self, target: str, peers_list: list[str], asof: Optional[str], config: WeightConfig):
+        tickers = [target] + peers_list
+        if config.feature_set == FeatureSet.ATM:
+            atm_df, _, _ = atm_feature_matrix(
+                tickers, asof, config.pillars_days, atm_band=config.atm_band, tol_days=config.atm_tol_days
+            )
+            return atm_df
+        if config.feature_set == FeatureSet.ATM_RANKS:
+            atm_df, _ = _atm_rank_feature_matrix(tickers, asof, max_expiries=config.max_expiries, atm_band=config.atm_band)
+            return atm_df
+        if config.feature_set in (FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+            grids, X, names = surface_feature_matrix(tickers, asof, tenors=config.tenors, mny_bins=config.mny_bins)
+            return pd.DataFrame(X, index=list(grids.keys()), columns=names)
+        if config.feature_set == FeatureSet.UNDERLYING_PX:
+            df = underlying_returns_matrix(tickers)
+            if df.shape[1] < 2:
+                return None
+            return df
+        return None
+
+_weight_computer = UnifiedWeightComputer()
+
+def compute_unified_weights(target: str, peers: Iterable[str], mode: Union[str, WeightConfig], **kwargs) -> pd.Series:
+    if isinstance(mode, str):
+        cfg = WeightConfig.from_legacy_mode(mode, **kwargs)
+    else:
+        cfg = mode
+    
+    # Try cached computation first
+    try:
+        from analysis.model_params_logger import compute_or_load
+        
+        # Create cache payload
+        payload = {
+            "target": target.upper(),
+            "peers": sorted([p.upper() for p in peers]),
+            "method": cfg.method.value,
+            "feature_set": cfg.feature_set.value,
+            "pillars_days": cfg.pillars_days,
+            "tenors": cfg.tenors,
+            "mny_bins": cfg.mny_bins,
+            "clip_negative": cfg.clip_negative,
+            "power": cfg.power,
+            "asof": cfg.asof,
+            "atm_band": cfg.atm_band,
+            "atm_tol_days": cfg.atm_tol_days,
+            "max_expiries": cfg.max_expiries,
+        }
+        
+        def _builder():
+            return _weight_computer.compute_weights(target, peers, cfg)
+        
+        return compute_or_load("weights", payload, _builder, ttl_sec=1800)  # 30min cache
+    except Exception:
+        # Fallback to direct computation if caching fails
+        return _weight_computer.compute_weights(target, peers, cfg)
+
+def compute_peer_weights_unified(
+    target: str,
+    peers: Iterable[str],
+    weight_mode: str = "corr_iv_atm",
+    asof: str | None = None,
+    pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
+    tenor_days: Iterable[int] = (7, 30, 60, 90, 180, 365),
+    mny_bins: Tuple[Tuple[float, float], ...] = ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+    max_expiries: int = 6,
+):
+    return compute_unified_weights(
+        target=target,
+        peers=peers,
+        mode=weight_mode,
+        asof=asof,
+        pillars_days=tuple(pillar_days),
+        tenors=tuple(tenor_days),
+        mny_bins=tuple(mny_bins),
+        max_expiries=max_expiries,
+    )
+
+def normalize(w: pd.Series, peers: Iterable[str]) -> pd.Series | None:
+    if w is None or w.empty:
+        return None
+    w = w.dropna().astype(float)
+    w = w[w.index.isin(peers)]
+    if w.empty or not np.isfinite(w.to_numpy(dtype=float)).any():
+        return None
+    s = float(w.sum())
+    if s <= 0 or not np.isfinite(s):
+        return None
+    return (w / s).reindex(peers).fillna(0.0).astype(float)

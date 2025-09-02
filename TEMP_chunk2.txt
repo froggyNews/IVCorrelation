@@ -1,0 +1,87 @@
+    try:
+        if peers and args.weights_grids:
+            features = [f.strip() for f in args.features.split(',') if f.strip()]
+            # PCA grid
+            fig, axes = plt.subplots(1, len(features), figsize=(5*len(features), 4))
+            axes = np.atleast_1d(axes)
+            for ax, feat in zip(axes, features):
+                mode = f"pca_{feat}"
+                try:
+                    w = compute_unified_weights(target=target, peers=peers, mode=mode, asof=asof)
+                    plot_weights(ax, w)
+                    ax.set_title(f"PCA Weights: {feat}")
+                except Exception as e:
+                    ax.clear(); ax.text(0.5,0.5,f"Error: {e}",ha='center',va='center')
+            fig.suptitle(f"{target} PCA Weights ({asof or 'latest'})")
+            _savefig(fig, out_dir / "weights_grid_pca.png")
+
+            # Correlation grid
+            fig, axes = plt.subplots(1, len(features), figsize=(5*len(features), 4))
+            axes = np.atleast_1d(axes)
+            for ax, feat in zip(axes, features):
+                mode = f"corr_{feat}"
+                try:
+                    w = compute_unified_weights(target=target, peers=peers, mode=mode, asof=asof)
+                    plot_weights(ax, w)
+                    ax.set_title(f"Corr Weights: {feat}")
+                except Exception as e:
+                    ax.clear(); ax.text(0.5,0.5,f"Error: {e}",ha='center',va='center')
+            fig.suptitle(f"{target} Correlation Weights ({asof or 'latest'})")
+            _savefig(fig, out_dir / "weights_grid_corr.png")
+        elif args.weights_grids and not peers:
+            print("No peers provided; skipping weights grids.")
+    except Exception as e:
+        print(f"Weights grids error: {e}")
+
+    # 9) Slide 10 grids: PCA and Correlation for (iv_atm, surface_grid, ul) with blue theme
+    try:
+        if getattr(args, "slide10", False):
+            slide_target = target
+            slide_peers = [t.strip().upper() for t in (getattr(args, "slide10_peers", "CVS,T") or "").split(",") if t.strip()]
+            features = [("iv_atm", "ATM"), ("surface_grid", "Surface"), ("ul", "UL")]
+
+            import matplotlib as mpl
+            plt.style.use("seaborn-v0_8-whitegrid")
+            mpl.rcParams.update({
+                "figure.facecolor": "#f6f9ff",
+                "axes.facecolor": "#f6f9ff",
+                "axes.labelcolor": "#0d2b52",
+                "axes.titlecolor": "#0d2b52",
+            })
+
+            # PCA grid
+            fig, axes = plt.subplots(1, 3, figsize=(12, 3.6), constrained_layout=True)
+            for ax, (feat, label) in zip(axes, features):
+                try:
+                    mode = f"pca_{feat}"
+                    w = compute_unified_weights(target=slide_target, peers=slide_peers, mode=mode, asof=asof)
+                    plot_weights(ax, w)
+                    ax.set_title(f"PCA • {label}")
+                except Exception as e:
+                    ax.clear(); ax.text(0.5, 0.5, f"Error: {e}", ha="center", va="center")
+            fig.suptitle(f"PCA Weights • {slide_target} @ {asof or 'latest'}")
+            _savefig(fig, out_dir / f"slide10_weights_grid_pca.png")
+            plt.close(fig)
+
+            # Correlation grid
+            fig, axes = plt.subplots(1, 3, figsize=(12, 3.6), constrained_layout=True)
+            for ax, (feat, label) in zip(axes, features):
+                try:
+                    mode = f"corr_{feat}"
+                    w = compute_unified_weights(target=slide_target, peers=slide_peers, mode=mode, asof=asof)
+                    plot_weights(ax, w)
+                    ax.set_title(f"Correlation • {label}")
+                except Exception as e:
+                    ax.clear(); ax.text(0.5, 0.5, f"Error: {e}", ha="center", va="center")
+            fig.suptitle(f"Correlation Weights • {slide_target} @ {asof or 'latest'}")
+            _savefig(fig, out_dir / f"slide10_weights_grid_corr.png")
+            plt.close(fig)
+    except Exception as e:
+        print(f"Slide10 grids error: {e}")
+
+    print(f"Done. Plots saved to: {out_dir}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

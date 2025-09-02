@@ -17,7 +17,7 @@ Design:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple, List, Mapping, Union, Callable
@@ -75,15 +75,15 @@ _RO_CONN = None
 # -----------------------------------------------------------------------------
 # Config (GUI friendly)
 # -----------------------------------------------------------------------------
+
 @dataclass(frozen=True)
 class PipelineConfig:
-    """Configuration for surface building and caching (GUI friendly)."""
-    tenors: Tuple[int, ...] = DEFAULT_TENORS
-    mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS
-    pillar_days: Tuple[int, ...] = tuple(DEFAULT_PILLARS_DAYS)
+    tenors: Tuple[int, ...] = field(default_factory=lambda: DEFAULT_TENORS)
+    mny_bins: Tuple[Tuple[float, float], ...] = field(default_factory=lambda: DEFAULT_MNY_BINS)
+    pillar_days: Tuple[int, ...] = field(default_factory=lambda: tuple(DEFAULT_PILLARS_DAYS))
     use_atm_only: bool = False
-    max_expiries: Optional[int] = None  # Limit expiries in smiles/surfaces (perf)
-    cache_dir: str = "data/cache"       # Optional disk cache for GUI speed
+    max_expiries: Optional[int] = None
+    cache_dir: str = "data/cache"
 
     def ensure_cache_dir(self) -> None:
         if self.cache_dir:

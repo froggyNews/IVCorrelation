@@ -335,7 +335,7 @@ def plot_3d_vol_surface(ticker: str, asof: str,
         # Get surface for the specified date
         asof_dt = pd.to_datetime(asof)
         if asof_dt not in surfaces[ticker]:
-            print(f"No surface data for {ticker} on {asof}")
+            print(f"No surface data for {ticker} on {asof_dt}")
             return None
         
         surface_df = surfaces[ticker][asof_dt]
@@ -362,6 +362,16 @@ def plot_3d_vol_surface(ticker: str, asof: str,
                 save_path=save_path
             )
         
+        # Debug: check if figure was created successfully
+        if fig is None:
+            print(f"Warning: {mode} surface plot returned None figure")
+            return None
+            
+        # Ensure figure has proper attributes
+        if not hasattr(fig, 'dpi'):
+            print(f"Warning: Figure missing dpi attribute")
+            fig.dpi = 100  # Set default DPI
+            
         return fig
         
     except Exception as e:

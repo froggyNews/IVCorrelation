@@ -55,7 +55,7 @@ class compositeETFConfig:
     max_expiries: int = 6
     tenors: Tuple[int, ...] = DEFAULT_TENORS
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS
-    tolerance_days: float = 7.0
+    tolerance_days: float = 15.0
     lookback: int = 60
     weight_mode: WeightMode = "corr"
     weight_power: float = 1.0

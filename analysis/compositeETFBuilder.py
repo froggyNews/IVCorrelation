@@ -25,14 +25,15 @@ import sqlite3
 
 from data.db_utils import get_conn
 from analysis.pillars import load_atm, nearest_pillars
+import numpy as np
+
+# Wider range: 0.5x to 1.5x moneyness
+wide_bins = [(round(x,2), round(x+0.1,2)) for x in np.arange(0.8, 1.3, 0.1)]
+dense_tenors = (7, 14, 21, 28, 42, 56, 70, 84, 98, 112, 140, 182, 252, 365)
 
 # If you already publish these elsewhere, import them instead:
-DEFAULT_TENORS: Tuple[int, ...] = (7, 14, 28, 56, 94, 112, 182, 252)
-DEFAULT_MNY_BINS: Tuple[Tuple[float, float], ...] = (
-    (0.80, 0.90),
-    (0.95, 1.05),
-    (1.10, 1.25),
-)
+DEFAULT_TENORS: Tuple[int, ...] = dense_tenors
+DEFAULT_MNY_BINS: Tuple[Tuple[float, float], ...] = wide_bins
 
 
 # ---------- helpers ----------

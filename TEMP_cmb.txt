@@ -1,0 +1,12 @@
+    rows = []
+    for r in atm_df.columns:
+        ivs, ws = [], []
+        for t in tickers:
+            if t in atm_df.index:
+                v = atm_df.at[t, r]
+                if pd.notna(v):
+                    ivs.append(float(v))
+                    ws.append(float(w_norm.get(t, 0.0)))
+        if ws:
+            rows.append({"rank": int(r), "synth_iv": float(np.dot(ws, ivs)) / float(np.sum(ws))})
+    return pd.DataFrame(rows)

@@ -187,8 +187,10 @@ class BrowserApp(tk.Tk):
                     self.inputs.btn_download.config(state=tk.NORMAL)
                 self.after(0, done)
             except Exception as e:
-                def handle():
-                    messagebox.showerror("Download error", str(e))
+                # Capture the error message in a local so it survives outside the except scope
+                _err_msg = str(e)
+                def handle(msg=_err_msg):
+                    messagebox.showerror("Download error", msg)
                     self.status.config(text="Download failed")
                     self.inputs.btn_download.config(state=tk.NORMAL)
                 self.after(0, handle)

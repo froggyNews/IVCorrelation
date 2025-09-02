@@ -1,0 +1,250 @@
+    ax.clear()
+    for t in rebased.columns:
+        ax.plot(rebased.index, rebased[t].astype(float), label=t, lw=1.8)
+    ax.set_title(f"Underlying Prices (1y) ending {end_dt.date()}")
+    ax.set_ylabel("Rebased (start=100)")
+    ax.set_xlabel("Date")
+    handles, labels = ax.get_legend_handles_labels()
+    if handles and labels:
+        ax.legend(loc="best", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    return px
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Generate plots for target and peers")
+    p.add_argument("--target", required=True, help="Target ticker")
+    p.add_argument("--peers", default="", help="Comma-separated peer tickers")
+    p.add_argument("--asof", default=None, help="As-of date (YYYY-MM-DD)")
+    p.add_argument("--weight-mode", default="corr_iv_atm", help="Weight mode (method_feature)")
+    p.add_argument("--latest", action="store_true", help="Ignore --asof and use most recent available date")
+    p.add_argument("--out-dir", default="plots_out", help="Output directory for PNGs")
+    p.add_argument("--max-expiries", type=int, default=6, help="Max expiries used for ATM term structure, relative-weight matrix, and surfaces (not used for term smile)")
+    p.add_argument("--atm-band", type=float, default=0.05, help="ATM band for matrix ATM extraction")
+    p.add_argument("--t-days", type=float, default=30.0, help="Target days for term smile plot (nearest expiry)")
+    p.add_argument("--tolerance-days", type=float, default=7.0, help="Tolerance for matching target maturity in term smile")
+    p.add_argument("--surface-mode", choices=["3d", "heatmap"], default="heatmap", help="Surface rendering mode")
+    p.add_argument("--no-cache", action="store_true", help="Bypass cache for relative-weight matrix build")
+    p.add_argument("--weights-grids", action="store_true", help="Also render 1xN PCA and Correlation weights grids (e.g., iv_atm, surface_grid, ul)")
+    p.add_argument("--features", default="iv_atm,surface_grid,ul", help="Comma-separated feature list for grids (e.g., iv_atm,surface_grid,ul)")
+    args = p.parse_args()
+
+    target = (args.target or "").upper()
+    peers = [t.strip().upper() for t in args.peers.split(",") if t.strip()]
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    asof = _resolve_asof(target, None if args.latest else args.asof)
+
+    # Pre-flight: repair DB if corrupted to avoid cascading failures
+    required = [target] + ([t for t in args.peers.split(',') if t] if args.peers else [])
+    if not _auto_repair_db_if_corrupt(required_tickers=required, max_expiries=int(args.max_expiries)):
+        print("Fatal: database is corrupted and could not be auto-repaired.")
+        return 2
+    if not asof:
+        print("No asof date available; some plots may be skipped.")
+
+    # 1) Weights bar chart
+    try:
+        if peers:
+            w = compute_unified_weights(target=target, peers=peers, mode=args.weight_mode, asof=asof)
+            fig, ax = plt.subplots(figsize=(6, 4))
+            plot_weights(ax, w)
+            ax.set_title(f"ETF Weights: {target} ({asof or 'latest'})")
+            _savefig(fig, out_dir / "weights.png")
+        else:
+            print("No peers provided; skipping weights plot.")
+    except Exception as e:
+        print(f"Weights plot error: {e}")
+
+    # 2) Relative-weight correlation matrix (skip for PCA modes)
+    try:
+        if asof:
+            if args.weight_mode and args.weight_mode.lower().startswith("pca"):
+                print("Skipping relative-weight matrix for PCA mode")
+            else:
+                tickers = [target] + peers if peers else [target]
+                fig, ax = plt.subplots(figsize=(7.5, 6))
+                # If using surface-based features, prefer a usable surface asof
+                if args.weight_mode and (args.weight_mode.endswith("surface") or args.weight_mode.endswith("surface_grid")):
+                    asof = _resolve_surface_asof_for_tickers(tickers, asof, args.max_expiries)
+                # For surface features, render two variants: restricted and wide
+                is_surface = args.weight_mode.endswith("surface") or args.weight_mode.endswith("surface_grid")
+                if is_surface:
+                    # Restricted: strict common date, strict intersection (min_coverage=1.0)
+                    fig1, ax1 = plt.subplots(figsize=(7.5, 6))
+                    feat1, corr1, w1 = compute_and_plot_relative_weight(
+                        ax=ax1,
+                        get_smile_slice=get_smile_slice,
+                        tickers=tickers,
+                        asof=asof,
+                        target=target,
+                        peers=peers,
+                        atm_band=args.atm_band,
+                        show_values=True,
+                        clip_negative=True,
+                        weight_power=1.0,
+                        max_expiries=args.max_expiries,
+                        weight_mode=args.weight_mode,
+                        no_cache=bool(args.no_cache),
+                        surface_min_coverage=1.0,
+                        surface_strict_common_date=True,
+                    )
+                    ax1.set_title(f"Relative Weight Matrix (surface, restricted) {asof}")
+                    _savefig(fig1, out_dir / "relative_weight_matrix_surface_restricted.png")
+
+                    # Plot weights (restricted)
+                    if w1 is not None:
+                        figw1, aw1 = plt.subplots(figsize=(6, 4))
+                        plot_weights(aw1, w1)
+                        aw1.set_title("Surface Weights (restricted)")
+                        _savefig(figw1, out_dir / "weights_surface_restricted.png")
+
+                    # Wide: majority coverage (min_coverage=0.5), allow per‑ticker latest
+                    fig2, ax2 = plt.subplots(figsize=(7.5, 6))
+                    feat2, corr2, w2 = compute_and_plot_relative_weight(
+                        ax=ax2,
+                        get_smile_slice=get_smile_slice,
+                        tickers=tickers,
+                        asof=asof,
+                        target=target,
+                        peers=peers,
+                        atm_band=args.atm_band,
+                        show_values=True,
+                        clip_negative=True,
+                        weight_power=1.0,
+                        max_expiries=args.max_expiries,
+                        weight_mode=args.weight_mode,
+                        no_cache=bool(args.no_cache),
+                        surface_min_coverage=0.5,
+                        surface_strict_common_date=False,
+                    )
+                    ax2.set_title(f"Relative Weight Matrix (surface, wide) {asof}")
+                    _savefig(fig2, out_dir / "relative_weight_matrix_surface_wide.png")
+
+                    # Plot weights (wide)
+                    if w2 is not None:
+                        figw2, aw2 = plt.subplots(figsize=(6, 4))
+                        plot_weights(aw2, w2)
+                        aw2.set_title("Surface Weights (wide)")
+                        _savefig(figw2, out_dir / "weights_surface_wide.png")
+                else:
+                    compute_and_plot_relative_weight(
+                        ax=ax,
+                        get_smile_slice=get_smile_slice,
+                        tickers=tickers,
+                        asof=asof,
+                        target=target,
+                        peers=peers,
+                        atm_band=args.atm_band,
+                        show_values=True,
+                        clip_negative=True,
+                        weight_power=1.0,
+                        max_expiries=args.max_expiries,
+                        weight_mode=args.weight_mode,
+                        no_cache=bool(args.no_cache),
+                    )
+                    ax.set_title(f"Relative Weight Matrix ({asof})")
+                    _savefig(fig, out_dir / "relative_weight_matrix.png")
+        else:
+            print("No asof resolved; skipping relative-weight matrix.")
+    except Exception as e:
+        print(f"Relative-weight plot error: {e}")
+
+    # 3) ATM Term Structure (simple extractor) with peer overlays
+    try:
+        if asof:
+            fig, ax = plt.subplots(figsize=(7, 4.5))
+            tgt_ts = plot_atm_term_structure(ax, target, asof, max_expiries=int(args.max_expiries))
+            if peers:
+                for p in peers:
+                    try:
+                        plot_atm_term_structure(
+                            ax, p, asof,
+                            max_expiries=int(args.max_expiries),
+                            show_points=False,
+                            line_kwargs={"alpha": 0.7, "label": p},
+                        )
+                    except Exception:
+                        continue
+                # Consolidated legend and title
+                handles, labels = ax.get_legend_handles_labels()
+                if handles and labels:
+                    ax.legend(loc="best", fontsize=8)
+                ax.set_title(f"ATM Term Structure ({asof}) — {target} vs peers")
+            _savefig(fig, out_dir / "term_structure.png")
+        else:
+            print("No asof resolved; skipping term structure.")
+    except Exception as e:
+        print(f"Term structure plot error: {e}")
+
+    # 4) Term Smile at target days (overlay peers if provided)
+    try:
+        if asof:
+            fig, ax = plt.subplots(figsize=(7, 4.5))
+            tgt_info = plot_term_smile(ax, target, asof, target_days=float(args.t_days), tolerance_days=float(args.tolerance_days))
+            # Overlay peers as lines (no points) if provided
+            if peers:
+                for p in peers:
+                    try:
+                        plot_term_smile(
+                            ax, p, asof,
+                            target_days=float(args.t_days),
+                            tolerance_days=float(args.tolerance_days),
+                            show_points=False,
+                            line_kwargs={"alpha": 0.7, "label": p},
+                        )
+                    except Exception:
+                        continue
+                # Reset a clean, combined title after overlays
+                actual_days = None
+                try:
+                    actual_days = int(round(float(tgt_info.get("actual_days", args.t_days))))
+                except Exception:
+                    actual_days = int(float(args.t_days))
+                ax.set_title(f"Term Smile ~{actual_days}d ({asof}) — {target} vs peers")
+                # Ensure legend includes all lines
+                handles, labels = ax.get_legend_handles_labels()
+                if handles and labels:
+                    ax.legend(loc="best", fontsize=8)
+            _savefig(fig, out_dir / "term_smile.png")
+        else:
+            print("No asof resolved; skipping term smile.")
+    except Exception as e:
+        print(f"Term smile plot error: {e}")
+
+    # 5) Surface (3D or heatmap)
+    try:
+        if asof:
+            # Resolve a usable surface asof for the target, pull if missing
+            asof_surf = _resolve_surface_asof_for_tickers([target], asof, args.max_expiries)
+            fig = plot_3d_vol_surface(target, asof_surf, mode=args.surface_mode, max_expiries=args.max_expiries)
+            if fig is not None:
+                _savefig(fig, out_dir / f"surface_{args.surface_mode}.png")
+            else:
+                print("Surface plot returned None; skipping save.")
+        else:
+            print("No asof resolved; skipping surface.")
+    except Exception as e:
+        print(f"Surface plot error: {e}")
+
+    # 6) Volatility Dashboard (composite view)
+    try:
+        if asof:
+            fig = create_vol_dashboard(target, asof, target_days=float(args.t_days))
+            _savefig(fig, out_dir / "vol_dashboard.png")
+        else:
+            print("No asof resolved; skipping dashboard.")
+    except Exception as e:
+        print(f"Dashboard error: {e}")
+
+    # 7) Underlying price history (1y) for target+peers
+    try:
+        tickers_all = [target] + peers if peers else [target]
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        plot_peer_underlyings_1y(ax, tickers_all, asof)
+        _savefig(fig, out_dir / "underlyings_1y.png")
+    except Exception as e:
+        print(f"Underlying 1y plot error: {e}")
+
+    # 8) 1x3 grids of weights for PCA and Correlation methods

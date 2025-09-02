@@ -265,6 +265,7 @@ def fit_smile_models_with_bands(S: float, K: np.ndarray, T: float, IV: np.ndarra
     return result
 
 
+
 def plot_composite_smile_overlay(ax: plt.Axes,
                                  target_grid: pd.DataFrame,
                                  synthetic_grid: pd.DataFrame,
@@ -288,17 +289,58 @@ def plot_composite_smile_overlay(ax: plt.Axes,
         bool: True if overlay was successfully plotted
     """
     try:
-        # Find nearest tenor columns
+        # Determine tenor selection/interpolation
         tgt_cols = _cols_to_days(target_grid.columns)
         syn_cols = _cols_to_days(synthetic_grid.columns)
         i_tgt = _nearest_tenor_idx(tgt_cols, T_days)
-        i_syn = _nearest_tenor_idx(syn_cols, T_days)
-        
         col_tgt = target_grid.columns[i_tgt]
-        col_syn = synthetic_grid.columns[i_syn]
-        
+
+        # SVI-based interpolation across tenor for synthetic grid
         x_mny = _mny_from_index_labels(target_grid.index)
-        y_syn = synthetic_grid[col_syn].astype(float).to_numpy()
+        syn_days = np.asarray(syn_cols, dtype=float)
+        # Default: nearest column
+        i_syn_near = _nearest_tenor_idx(syn_cols, T_days)
+        col_syn_near = synthetic_grid.columns[i_syn_near]
+        y_syn = synthetic_grid[col_syn_near].astype(float).to_numpy()
+
+        # Try bracketing columns for interpolation
+        try:
+            ty = float(T_days) / 365.25
+            # indices sorted by days
+            order = np.argsort(syn_days)
+            syn_days_sorted = syn_days[order]
+            cols_sorted = [synthetic_grid.columns[i] for i in order]
+            # find lower and upper neighbors
+            lo_idx = np.searchsorted(syn_days_sorted, float(T_days), side="right") - 1
+            hi_idx = lo_idx + 1
+            if lo_idx >= 0 and hi_idx < len(syn_days_sorted):
+                d_lo = syn_days_sorted[lo_idx]
+                d_hi = syn_days_sorted[hi_idx]
+                if d_hi > d_lo:
+                    alpha = (float(T_days) - d_lo) / (d_hi - d_lo)
+                    # Build synthetic grid moneyness numeric
+                    syn_mny = _mny_from_index_labels(synthetic_grid.index)
+                    # Fetch IV vectors
+                    y_lo = synthetic_grid[cols_sorted[lo_idx]].astype(float).to_numpy()
+                    y_hi = synthetic_grid[cols_sorted[hi_idx]].astype(float).to_numpy()
+                    # Fit SVI on each neighbor and interpolate params
+                    from volModel.sviFit import fit_svi_slice, svi_smile_iv
+                    S = 1.0
+                    T_lo = float(d_lo) / 365.25
+                    T_hi = float(d_hi) / 365.25
+                    mask_lo = np.isfinite(syn_mny) & np.isfinite(y_lo)
+                    mask_hi = np.isfinite(syn_mny) & np.isfinite(y_hi)
+                    if np.sum(mask_lo) >= 5 and np.sum(mask_hi) >= 5:
+                        p_lo = fit_svi_slice(S, syn_mny[mask_lo] * S, T_lo, y_lo[mask_lo])
+                        p_hi = fit_svi_slice(S, syn_mny[mask_hi] * S, T_hi, y_hi[mask_hi])
+                        p_int = (1.0 - alpha) * np.asarray(p_lo, dtype=float) + alpha * np.asarray(p_hi, dtype=float)
+                        y_syn_full = svi_smile_iv(S, syn_mny * S, ty, p_int)
+                        y_syn = np.asarray(y_syn_full, dtype=float)
+                    else:
+                        # Fallback to linear IV interpolation in tenor
+                        y_syn = (1.0 - alpha) * y_lo + alpha * y_hi
+        except Exception:
+            pass
         
         # Improved grid alignment for composite smile
         if not target_grid.index.equals(synthetic_grid.index):
@@ -562,13 +604,28 @@ def plot_smile_with_composite(ax: plt.Axes, df: pd.DataFrame, target: str, asof:
     last_fit_info = log_smile_parameters(asof, target, expiry_dt, all_results, S, T_used, dfe)
     
     # Add composite overlay if requested
-    if overlay_synth and surfaces and weights and target in surfaces and asof in surfaces[target]:
+    if overlay_synth and surfaces and weights and target in surfaces:
         try:
-            # Extract peer surfaces for the given asof
-            peer_tickers = list(weights.keys())
-            peer_surfaces = {t: surfaces[t][asof] for t in peer_tickers if t in surfaces and asof in surfaces[t]}
-            
-            if peer_surfaces:
+            import pandas as pd
+            # Resolve date keys robustly (surfaces dict uses pd.Timestamp keys)
+            asof_ts = pd.to_datetime(asof).normalize()
+
+            def _resolve_key(dct):
+                # map normalized day -> actual key
+                norm_map = {pd.to_datetime(k).normalize(): k for k in dct.keys()}
+                return norm_map.get(asof_ts, (max(dct.keys()) if dct else None))
+
+            target_key = _resolve_key(surfaces.get(target, {}))
+            # Build peer surfaces mapping with per-ticker resolved keys
+            peer_tickers = [t for t in weights.keys() if t in surfaces]
+            peers_map = {}
+            for t in peer_tickers:
+                k = _resolve_key(surfaces[t])
+                if k is not None and k in surfaces[t]:
+                    # combine_surfaces expects dict[ticker][date]->DF
+                    peers_map[t.upper()] = {k: surfaces[t][k]}
+
+            if peers_map and target_key is not None and target_key in surfaces[target]:
                 from analysis.compositeETFBuilder import combine_surfaces
                 synth_by_date = combine_surfaces(peer_surfaces, weights)
                 
@@ -590,6 +647,7 @@ def plot_smile_with_composite(ax: plt.Axes, df: pd.DataFrame, target: str, asof:
             else:
                 print("DEBUG: composite overlay skipped (no peer surfaces)")
                         
+
         except Exception:
             print("DEBUG: composite overlay failed (exception in combine or overlay)")
     
