@@ -236,13 +236,11 @@ class BrowserApp(tk.Tk):
             T_days=self.inputs.get_T_days(),
             ci=self.inputs.get_ci(),
             x_units=self.inputs.get_x_units(),
-            atm_band=self.inputs.get_atm_band(),
             weight_method=self.inputs.get_weight_method(),
             feature_mode=self.inputs.get_feature_mode(),
             overlay_synth=self.inputs.get_overlay_synth(),
             overlay_peers=self.inputs.get_overlay_peers(),
             peers=self.inputs.get_peers(),
-            pillars=self.inputs.get_pillars(),
             max_expiries=self.inputs.get_max_exp(),
         )
         if not settings["target"] or not settings["asof"]:

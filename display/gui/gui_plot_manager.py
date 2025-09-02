@@ -39,14 +39,12 @@ from display.plotting.weights_plot import plot_weights
 from analysis.compositeETFBuilder import build_surface_grids, combine_surfaces
 from display.plotting.surface_viewer import (
     show_whole_surface,         # single surface (3D or heatmap)
-    show_surfaces_compare,      # target vs composite (3D + optional diff)
     show_smile_overlay,         # 2D smile overlay at nearest tenor
 )
 from display.plotting.vol_structure_plots import (
     plot_atm_term_structure,    # ATM IV vs TTE
     plot_term_smile,            # IV vs Strike for fixed maturity
     plot_3d_vol_surface,        # 3D surface for single ticker
-    create_vol_dashboard,       # comprehensive dashboard
 )
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
@@ -76,7 +74,7 @@ DEFAULT_WEIGHT_METHOD = "corr"
 DEFAULT_FEATURE_MODE = "iv_atm"
 
 from display.gui.gui_plot_events import is_smile_active, next_expiry, prev_expiry
-from display.gui.gui_plot_cache import get_target_and_composite_grid, get_target_pillars, get_surface_grids
+from display.gui.gui_plot_cache import get_target_pillars, get_surface_grids
 
     # -------------------- correlation matrix --------------------
 # ---------------------------------------------------------------------------
@@ -193,7 +191,8 @@ class PlotManager:
         T_days = settings["T_days"]
         ci = settings["ci"]
         x_units = settings["x_units"]
-        atm_band = settings.get("atm_band", DEFAULT_ATM_BAND)
+        # Use default ATM band (UI control removed)
+        atm_band = DEFAULT_ATM_BAND
         weight_method = settings.get("weight_method", DEFAULT_WEIGHT_METHOD)
         feature_mode = settings.get("feature_mode", DEFAULT_FEATURE_MODE)
         # backward compatibility: allow legacy weight_mode field
@@ -401,31 +400,7 @@ class PlotManager:
             self._plot_relative_weight_matrix(ax, self.target, self.peers, asof, self.target_pillars, weight_mode, atm_band)
             return
 
-        # --- composite Surface ---
-        elif plot_type.startswith("Target vs Composite"):
-            self._clear_correlation_colorbar(ax)
-            
-            w_ser = self.weights
-            w_map = {k: float(v) for k, v in (w_ser or pd.Series(dtype=float)).dropna().items() if float(v) > 0.0}
-            if not w_map:
-                ax.text(0.5, 0.5, "No positive weights", ha="center", va="center"); return
-
-            tgt_grid, syn_grid, date_used = get_target_and_composite_grid(self,
-                self.target, self.peers, asof, w_map, self._current_max_expiries or 6
-            )
-            if tgt_grid is None or syn_grid is None:
-                ax.text(0.5, 0.5, "Missing target/composite surface", ha="center", va="center"); return
-
-            # pop separate window with 3D compare (+ diff)
-            show_surfaces_compare(
-                tgt_grid, syn_grid,
-                title_target=f"{self.target} Surface ({date_used.date()})",
-                title_composite=f"Composite Surface ({date_used.date()})",
-                show_diff=bool(settings.get("show_diff", True)),
-                rv_table=None,   # pass artifacts.rv_metrics if you have it
-            )
-            ax.set_title("Compare view opened (separate window)")
-            return
+        # Removed: Target vs Composite (no longer available in UI)
 
         # --- ETF Weights only ---
         elif plot_type.startswith("ETF Weights"):
@@ -464,21 +439,7 @@ class PlotManager:
                 ax.text(0.5, 0.5, f"Error: {e}", ha="center", va="center")
             return
 
-        # --- Vol Dashboard ---
-        elif plot_type.startswith("Vol Dashboard"):
-            self._clear_correlation_colorbar(ax)
-            # Pop separate window for dashboard
-            try:
-                fig = create_vol_dashboard(
-                    self.target,
-                    asof,
-                    target_days=T_days,
-                    figsize=(15, 10)
-                )
-                ax.set_title("Volatility Dashboard opened (separate window)")
-            except Exception as e:
-                ax.text(0.5, 0.5, f"Error: {e}", ha="center", va="center")
-            return
+        # Removed: Vol Dashboard (no longer available in UI)
 
         else:
             ax.text(0.5, 0.5, f"Unknown plot: {plot_type}", ha="center", va="center")
@@ -599,6 +560,14 @@ class PlotManager:
 
         fit_map = self._smile_ctx.get("fit_by_expiry", {})
         pre = fit_map.get(T0)
+        # Ensure we have a complete set of model params cached for this expiry
+        if isinstance(pre, dict) and any(k not in pre for k in ("svi", "sabr", "tps")):
+            try:
+                all_params = fit_all_models_cached(S, K, T0, IV, use_cache=True)
+                pre.update(all_params)
+                fit_map[T0] = pre
+            except Exception:
+                pass
         pre_params = pre.get(model) if isinstance(pre, dict) else None
         if pre_params is None:
             # Use cached multi-model fitting
@@ -666,7 +635,6 @@ class PlotManager:
             moneyness_grid=(0.7, 1.3, 121),
             show_points=True,
             label=f"{target} {model.upper()}",
-            enable_toggles=True,
         )
 
         if fit_map:
@@ -770,9 +738,7 @@ class PlotManager:
     ):
         """Plot relative weight correlation matrix with improved error reporting."""
 
-        settings = getattr(self, "last_settings", {})
-        weight_power = settings.get("weight_power", 1.0)
-        clip_negative = settings.get("clip_negative", True)
+        # UI no longer exposes weight power or clip-negative; use fixed defaults
 
         max_exp = self._current_max_expiries or 6
 
@@ -806,8 +772,8 @@ class PlotManager:
                 asof=asof,
                 atm_band=atm_band,
                 show_values=True,
-                clip_negative=clip_negative,
-                weight_power=weight_power,
+                clip_negative=True,
+                weight_power=1.0,
                 target=target,
                 peers=self.peers,
                 max_expiries=max_exp,
@@ -822,8 +788,6 @@ class PlotManager:
                 "tickers": list(self.tickers),
                 "pillars": list(pillars or []),  # These are now dynamic target expiry pillars
                 "weight_mode": weight_mode,
-                "weight_power": weight_power,
-                "clip_negative": clip_negative,
             }
 
             # Better error reporting for empty results
@@ -894,4 +858,3 @@ class PlotManager:
             ax.set_xlabel("Time to Expiry (days)" if x_units == "days" else "Time to Expiry (years)")
             ax.set_ylabel("Implied Vol (ATM)")
             title += f" - composite Overlay (N={len(bands.x)})"
-

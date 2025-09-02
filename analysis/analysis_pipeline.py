@@ -505,43 +505,54 @@ def prepare_smile_data(
 
         tenor_d = int((expiry_dt - asof_ts).days) if expiry_dt is not None else int(round(T_val * 365.25))
 
-        # ---- fit models (pull from cache if available) --------------------
-        svi_params = _cached(tenor_d, "svi")
-        sabr_params = _cached(tenor_d, "sabr")
-        tps_params = _cached(tenor_d, "tps")
-        sens_params = _cached(tenor_d, "sens")
-
-        # Lazy imports only when needed
-        if svi_params is None:
-            from volModel.sviFit import fit_svi_slice
-            svi_params = fit_svi_slice(S, K, T_val, IV)
-            if append_params:
+        # ---- fit models using unified multi-model cache -------------------
+        # Always ensure a consistent set of model params comes from the same
+        # cached computation to avoid mismatches (e.g., SABR missing).
+        try:
+            from volModel.multi_model_cache import fit_all_models_cached
+            all_models = fit_all_models_cached(S, K, T_val, IV, beta=0.5, use_cache=True)
+            svi_params = all_models.get("svi") or _cached(tenor_d, "svi")
+            sabr_params = all_models.get("sabr") or _cached(tenor_d, "sabr")
+            tps_params = all_models.get("tps") or _cached(tenor_d, "tps")
+        except Exception:
+            # Fallback to previous per-model path
+            svi_params = _cached(tenor_d, "svi")
+            sabr_params = _cached(tenor_d, "sabr")
+            tps_params = _cached(tenor_d, "tps")
+            # Lazy imports only when needed
+            if svi_params is None:
+                from volModel.sviFit import fit_svi_slice
+                svi_params = fit_svi_slice(S, K, T_val, IV)
+            if sabr_params is None:
+                from volModel.sabrFit import fit_sabr_slice
+                sabr_params = fit_sabr_slice(S, K, T_val, IV)
+            if tps_params is None:
                 try:
-                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
-                                  "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
+                    from volModel.polyFit import fit_tps_slice
+                    tps_params = fit_tps_slice(S, K, T_val, IV)
                 except Exception:
-                    pass
+                    tps_params = {}
 
-        if sabr_params is None:
-            from volModel.sabrFit import fit_sabr_slice
-            sabr_params = fit_sabr_slice(S, K, T_val, IV)
-            if append_params:
-                try:
-                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
-                                  "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
-                except Exception:
-                    pass
-
-        if tps_params is None:
+        # Persist params (best-effort)
+        if append_params:
             try:
-                from volModel.polyFit import fit_tps_slice
-                tps_params = fit_tps_slice(S, K, T_val, IV)
-                if append_params:
-                    append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
-                                  "tps", tps_params, meta={"rmse": tps_params.get("rmse")})
+                append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
+                              "svi", svi_params, meta={"rmse": (svi_params or {}).get("rmse")})
             except Exception:
-                tps_params = {}
+                pass
+            try:
+                append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
+                              "sabr", sabr_params, meta={"rmse": (sabr_params or {}).get("rmse")})
+            except Exception:
+                pass
+            try:
+                append_params(asof, target, str(expiry_dt) if expiry_dt is not None else None,
+                              "tps", tps_params, meta={"rmse": (tps_params or {}).get("rmse")})
+            except Exception:
+                pass
 
+        # Sensitivities (cheap) ------------------------------------------------
+        sens_params = _cached(tenor_d, "sens")
         if sens_params is None:
             # very cheap single-pass sensitivities - need S, T, K, sigma for _fit_smile_get_atm
             dfe = df.loc[row_mask, ["K", "S", "T", "sigma"]].copy()
