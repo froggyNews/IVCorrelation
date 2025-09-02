@@ -1,0 +1,10 @@
+mode,ticker,weight
+corr_iv_atm,RGTI,1.0
+corr_surface_grid,QBTS,1.0
+corr_ul,QUBT,0.3101014016149358
+corr_ul,RGTI,0.3450548824744072
+corr_ul,QBTS,0.34484371591065704
+pca_iv_atm,QBTS,1.0
+pca_surface_grid,RGTI,0.8041890147239714
+pca_surface_grid,QUBT,0.19581098527602858
+pca_ul,QUBT,1.0

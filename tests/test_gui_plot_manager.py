@@ -29,7 +29,7 @@ def _base_settings(plot_type):
         "feature_mode": "iv_atm",
         "peers": [],
         "pillars": [],
-        "overlay_synth": False,
+        "overlay_composite": False,
         "overlay_peers": False,
         "max_expiries": 6,
     }
@@ -61,7 +61,7 @@ def test_plot_smile_with_data_calls_fit(monkeypatch):
         "fit_by_expiry": {0.1: {"svi": np.array([1, 2, 3, 4, 5])}},
         "tgt_surface": None,
         "syn_surface": None,
-        "peer_slices": {},
+        "composite_slices": {},
         "expiry_arr": np.array([0.1]),
     }
 

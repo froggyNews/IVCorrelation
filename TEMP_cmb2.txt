@@ -16,7 +16,7 @@ def combine_surfaces(
 ) -> Dict[pd.Timestamp, pd.DataFrame]:
     """
     Weighted grid combination into a composite surface (per date):
-        sigma_synth(K,T) = sum_i rho_i * w_i(K,T) * sigma_i(K,T) / sum_i rho_i * w_i(K,T)
+        sigma_composite(K,T) = sum_i rho_i * w_i(K,T) * sigma_i(K,T) / sum_i rho_i * w_i(K,T)
     """
     # Normalize top-level weights
     rhos = {k.upper(): float(v) for k, v in dict(rhos).items()}
@@ -156,7 +156,7 @@ def build_composite_iv_by_rank(
 ) -> pd.DataFrame:
     """
     Combine peer ATM vols by expiry order (rank) into a single curve for `asof`.
-    Returns DataFrame with columns: ["rank", "synth_iv"].
+    Returns DataFrame with columns: ["rank", "composite_iv"].
     """
     from analysis.analysis_pipeline import get_smile_slice  # local import to avoid hard dep at import time
     from .beta_builder.correlation import compute_atm_corr_pillar_free
@@ -176,7 +176,7 @@ def build_composite_iv_by_rank(
         atm_band=atm_band,
     )
     if atm_df.empty:
-        return pd.DataFrame(columns=["rank", "synth_iv"])
+        return pd.DataFrame(columns=["rank", "composite_iv"])
 
     rows = []
     for r in atm_df.columns:
@@ -188,5 +188,5 @@ def build_composite_iv_by_rank(
                     ivs.append(float(v))
                     ws.append(float(w_norm.get(t, 0.0)))
         if ws:
-            rows.append({"rank": int(r), "synth_iv": float(np.dot(ws, ivs)) / float(np.sum(ws))})
+            rows.append({"rank": int(r), "composite_iv": float(np.dot(ws, ivs)) / float(np.sum(ws))})
     return pd.DataFrame(rows)

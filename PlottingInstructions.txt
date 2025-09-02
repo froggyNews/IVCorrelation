@@ -26,7 +26,7 @@ How to run
 * Train/evaluate on surface tensors (1m example):
 python src/main_runner.py --tickers QBTS IONQ RGTI QUBT --start 2025-06-02 --end 2025-08-06 --timeframe 1m --use-surface --surface-k-bins 12 --surface-t-bins 8 --surface-agg median
 * Generate plots + surface weights:
-python scripts/run_plots.py --tickers QBTS IONQ RGTI QUBT --start 2025-06-02 --end 2025-08-06 --db data/iv_data_1m.db --timeframe 1m --surface-weights-target QBTS --surface-k-bins 12 --surface-t-bins 8 --surface-agg median
+python scripts/run_plots.py --tickers QBTS IONQ RGTI QUBT --start 2025-06-02 --end 2025-08-06 --db data/iv_data_1m.db --timeframe 1m --surface-weights-target IONQ --surface-k-bins 12 --surface-t-bins 8 --surface-agg median
 Outputs
 * Models: outputs/models/pooled_{iv_ret_fwd|iv_clip}_<ts>.json
 * Evaluations: outputs/evaluations/*_evaluation.json with RMSE/R2
@@ -41,6 +41,15 @@ o Suggests no immediate co-movement, meaning option markets are not reacting in 
 * At 1-hour granularity (second figure you just uploaded):
 o Level correlations are stronger (e.g., IONQ–RGTI ~0.47, IONQ–QUBT ~0.47).
 o Return correlations also show moderate co-movement (IONQ–QUBT ~0.27, RGTI–QUBT ~0.34).
-o This indicates that over longer horizons, common factors start to show through — the vol regimes between peers are somewhat aligned, and shocks in one ticker are more likely to spill into others.
-python scripts/generate_plots.py --target IONQ --peers RGTI,QUBT,QBTS --asof 2025-08-29 --weight-mode pca_ul --out-dir plots/IONQ_ul_pcapython scripts/generate_plots.py --target IONQ --peers RGTI,QUBT,QBTS --asof 2025-08-29 --weight-mode pca_iv_atm --out-dir plots/IONQ_atm_pcapython scripts/generate_plots.py --target IONQ --peers RGTI,QUBT,QBTS --asof 2025-08-29 --weight-mode pca_surface --out-dir plots/IONQ_surface_pca
+o This indicates that over longer horizons, common factors start to show through — the vol regimes between peers are somewhat aligned, and shocks in for overlay all, ensure that the target points are scattered lightlyticker are more likely to spill into others.
+python scripts/generate_plots.py --target IONQ --peers RGTI,QUBT,QBTS --asof 2025-08-29 --weight-mode pca_ul --out-dir plots/IONQ_ul_pcapython scripts/generate_plots.py --target IONQ --peers RGTI,QUBT,QBTS --asof 2025-08-29 --weight-mode pca_iv_atm --out-dir plots/IONQ_atm_pcapython scripts/generate_plots.py --target IONQ --peers RGTI,QUBT,QBTS --asof 2025-08-29 --weight-mode pca_surface --out-dir plots/IO & venv/Scripts/python.exe src/rolling_surface_eval.py --tickers IONQ QUBT RGTI QBTS --target IONQ --start 2025-06-02 --end 2025-06-06 --db data/iv_data_1m.db --window 390 --surface-mode full --plot-metrics --plot-weights --weights-method corr --save-csv --plots-dir plotsNQ_surface_pca
+python scripts/generate_plots.py --target IONQ --peers slide10_peers --asof 2025-08-28 --weight-mode corr_iv_atm --slide10-smile --slide10-days 28 --slide10-ci 68 --out-dir outputs
 
+src/rolling_surface_eval.py --tickers “IONQ, QUBT, QBTS, RGTI” --target IONQ --start 2025-06-02 --end 2025-06-06 --db data/iv_data_1m.db --window 390 --surface-mode full --plot-metrics --plot-weights --weights-method corr --plots-dir plots --export-dpi 300 --export-formats png --save-csv
+
+* 
+src/rolling_surface_eval.py --tickers IONQ QUBT RGTI QBTS --target IONQ --start 2025-06-02 --end 2025-08-06 --db data/iv_data_1m.db --window 390 --surface-mode full --plot-metrics --plot-weights --weights-method corr --save-csv --plots-dir plots
+* 
+
+python scripts/run_all_plots.py --target IONQ --peers "RGTI, QUBT, QBTS" --asof 2025-09-02 --max-expiries 12 --out-root output/903_b
+in run plots, create a plot for synthetic overlays that does a smile plot with correlation: IV ATM, surface, UL, and then PCA methods for IV ATM, surface, and IV

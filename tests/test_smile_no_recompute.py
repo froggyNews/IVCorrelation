@@ -31,7 +31,7 @@ def test_smile_no_recompute_on_model_switch(monkeypatch):
             "idx0": 0,
             "tgt_surface": None,
             "syn_surface": None,
-            "peer_slices": {},
+            "composite_slices": {},
             "expiry_arr": np.array([0.1]),
             "fit_by_expiry": {0.1: {"svi": {"a": 1}, "sabr": {"alpha": 1}, "tps": {}, "sens": {}}},
         }
@@ -53,7 +53,7 @@ def test_smile_no_recompute_on_model_switch(monkeypatch):
         "atm_band": 0.05,
         "weight_method": "corr",
         "feature_mode": "iv_atm",
-        "overlay_synth": False,
+        "overlay_composite": False,
         "overlay_peers": False,
         "peers": [],
         "pillars": [],

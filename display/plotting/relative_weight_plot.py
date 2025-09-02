@@ -384,22 +384,23 @@ def plot_relative_weight_details(
         dq_color = "orange"
         dq_face = "yellow"
     else:
-        dq_msg = f"Good data quality\n({finite_count}/{total_elements} finite, {data_quality:.1%})"
+        dq_msg = " "
         dq_color = "green"
         dq_face = "lightgreen"
 
-    ax.text(
-        0.5,
-        1.02,
-        dq_msg,
-        ha="center",
-        va="bottom",
-        fontsize=10,
-        color=dq_color,
-        transform=ax.transAxes,
-        bbox=dict(boxstyle="round", facecolor=dq_face, alpha=0.3),
-        clip_on=False,
-    )
+    if debug := True:
+        ax.text(
+            0.5,
+            1.02,
+            dq_msg,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            color=dq_color,
+            transform=ax.transAxes,
+            bbox=dict(boxstyle="round", facecolor=dq_face, alpha=0.3),
+            clip_on=False,
+        )
 
     im = ax.imshow(data, vmin=-1.0, vmax=1.0, cmap="coolwarm", interpolation="nearest")
 

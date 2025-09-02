@@ -80,7 +80,7 @@ def test_plot_manager_integration():
                     "model": "svi",
                     "T_days": 30,
                     "ci": 0.68,
-                    "overlay_synth": False,
+                    "overlay_composite": False,
                     "overlay_peers": False,
                     "peers": [],
                     "max_expiries": 6

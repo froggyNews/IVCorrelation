@@ -22,16 +22,16 @@ def _fetch_target_atm(
     return out[["asof_date", "pillar_days", "iv"]]
 
 
-def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: int = 60) -> pd.DataFrame:
+def _rv_metrics_join(target_iv: pd.DataFrame, composite_iv: pd.DataFrame, lookback: int = 60) -> pd.DataFrame:
     tgt = target_iv.rename(columns={"iv": "iv_target"})
-    syn = synth_iv.rename(columns={"iv": "iv_synth"})
+    syn = composite_iv.rename(columns={"iv": "iv_composite"})
     df = pd.merge(tgt, syn, on=["asof_date", "pillar_days"], how="inner").sort_values(["pillar_days", "asof_date"])
     if df.empty:
         return df
 
     def per_pillar(g: pd.DataFrame) -> pd.DataFrame:
         g = g.copy()
-        g["spread"] = g["iv_target"] - g["iv_synth"]
+        g["spread"] = g["iv_target"] - g["iv_composite"]
         roll = max(5, int(lookback // 5))
         m = g["spread"].rolling(lookback, min_periods=roll).mean()
         s = g["spread"].rolling(lookback, min_periods=roll).std(ddof=1)
@@ -67,12 +67,12 @@ def relative_value_atm_report_corrweighted(
         power=weight_power,
     )
     if w.empty:
-        empty_cols = ["asof_date", "pillar_days", "iv_target", "iv_synth", "spread", "z", "pct_rank"]
+        empty_cols = ["asof_date", "pillar_days", "iv_target", "iv_composite", "spread", "z", "pct_rank"]
         return pd.DataFrame(columns=empty_cols), w
 
-    synth = build_composite_iv_series(weights=w.to_dict(), pillar_days=pillar_days, tolerance_days=tolerance_days)
+    composite = build_composite_iv_series(weights=w.to_dict(), pillar_days=pillar_days, tolerance_days=tolerance_days)
     tgt = _fetch_target_atm(target, pillar_days=pillar_days, tolerance_days=tolerance_days)
-    rv = _rv_metrics_join(tgt, synth, lookback=lookback)
+    rv = _rv_metrics_join(tgt, composite, lookback=lookback)
     return rv, w
 
 

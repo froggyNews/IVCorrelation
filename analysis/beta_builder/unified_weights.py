@@ -105,6 +105,15 @@ class WeightConfig:
             method_str, feature_str = mode, "iv_atm"
         method = method_map.get(method_str, WeightMethod.CORRELATION)
         feature_set = feature_map.get(feature_str, FeatureSet.ATM)
+
+        # Default: for PCA on UL, prefer factor-path unless explicitly overridden
+        if (
+            method == WeightMethod.PCA
+            and feature_set == FeatureSet.UNDERLYING_PX
+            and "pca_ul_via_factors" not in kwargs
+        ):
+            kwargs["pca_ul_via_factors"] = True
+
         return cls(method=method, feature_set=feature_set, **kwargs)
 
 def atm_feature_matrix(
@@ -490,7 +499,7 @@ class UnifiedWeightComputer:
                 feature_df = feature_df  # already built above
 
                 # --- ATM: unchanged (factorization weights) ---
-                if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS, FeatureSet.UNDERLYING_PX):
+                if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS):
                     return pca_weights_from_feature_df(feature_df, target, peers_list, k=config.pca_k, nonneg=True)
 
                 # --- SURFACE / SURFACE_VECTOR: LaTeX projection path (opt-in) ---
@@ -573,6 +582,18 @@ class UnifiedWeightComputer:
                 return pca_weights_from_feature_df(feature_df, target, peers_list, k=config.pca_k, nonneg=True)
                 raise ValueError(f"Unsupported method: {config.method}")
         except Exception:
+            # Prefer market-mode fallback over equal if peers present
+            try:
+                Xp = feature_df.loc[[p for p in peers_list if p in feature_df.index]].to_numpy(float)
+                if Xp.size > 0:
+                    w_m = pca_market_weights(Xp)
+                    import pandas as pd
+                    ser = pd.Series(w_m, index=[p for p in peers_list if p in feature_df.index]).clip(lower=0.0)
+                    ssum = float(ser.sum())
+                    ser = ser / ssum if ssum > 0 else ser
+                    return ser.reindex(peers_list).fillna(0.0)
+            except Exception:
+                pass
             return equal_weights(peers_list)
 
     def _build_feature_matrix(self, target: str, peers_list: list[str], asof: Optional[str], config: WeightConfig):
@@ -622,6 +643,12 @@ def compute_unified_weights(target: str, peers: Iterable[str], mode: Union[str, 
             "atm_band": cfg.atm_band,
             "atm_tol_days": cfg.atm_tol_days,
             "max_expiries": cfg.max_expiries,
+            "pca_project_surface": cfg.pca_project_surface,
+            "pca_energy": cfg.pca_energy,
+            "pca_k": cfg.pca_k,
+            "pca_ul_via_factors": cfg.pca_ul_via_factors,
+            "pca_ul_energy": cfg.pca_ul_energy,
+            "pca_ul_k": cfg.pca_ul_k,
         }
         
         def _builder():
@@ -664,3 +691,4 @@ def normalize(w: pd.Series, peers: Iterable[str]) -> pd.Series | None:
     if s <= 0 or not np.isfinite(s):
         return None
     return (w / s).reindex(peers).fillna(0.0).astype(float)
+

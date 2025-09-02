@@ -30,11 +30,9 @@ from analysis.model_params_logger import (
 )
 from analysis.analysis_pipeline import prepare_smile_data, prepare_term_data, get_smile_slice
 from display.plotting.relative_weight_plot import _relative_weight_by_expiry_rank
-from analysis.spillover.vol_spillover import run_spillover, load_iv_data
 from data import load_ticker_group
 from data.db_utils import get_conn, get_most_recent_date
 from data.data_downloader import save_for_tickers
-from analysis.analysis_composite_etf import compositeETFBuilder, compositeETFConfig
 
 
 def _warm_smile(task: Dict[str, Any]) -> None:
@@ -45,11 +43,11 @@ def _warm_smile(task: Dict[str, Any]) -> None:
     T_days = float(task.get("T_days", 30))
     model = task.get("model", "svi")
     ci = float(task.get("ci", 68.0))
-    overlay_synth = bool(task.get("overlay_synth", False))
+    overlay_composite = bool(task.get("overlay_composite", False))
     peers = task.get("peers")
     weights = task.get("weights")
     overlay_peers = bool(task.get("overlay_peers", False))
-    max_expiries = int(task.get("max_expiries", 6))
+    max_expiries = int(task.get("max_expiries", 10))
 
     # Check if ticker has any data, download if missing
     try:
@@ -90,7 +88,7 @@ def _warm_smile(task: Dict[str, Any]) -> None:
             T_days=T_days,
             model=model,
             ci=ci,
-            overlay_synth=overlay_synth,
+            overlay_composite=overlay_composite,
             peers=peers,
             weights=weights,
             overlay_peers=overlay_peers,
@@ -129,11 +127,11 @@ def _warm_term(task: Dict[str, Any]) -> None:
     ticker = task["ticker"].upper()
     asof = task["asof"]
     ci = float(task.get("ci", 68.0))
-    overlay_synth = bool(task.get("overlay_synth", True))
+    overlay_composite = bool(task.get("overlay_composite", True))
     peers = task.get("peers", [])
     weights = task.get("weights")
     atm_band = float(task.get("atm_band", 0.05))
-    max_expiries = int(task.get("max_expiries", 6))
+    max_expiries = int(task.get("max_expiries", 10))
     weight_mode = task.get("weight_mode", "corr_iv_atm")
 
     # Check if ticker has any data, download if missing
@@ -164,7 +162,7 @@ def _warm_term(task: Dict[str, Any]) -> None:
         "target": ticker,
         "asof": pd.to_datetime(asof).floor("min").isoformat(),
         "ci": ci,
-        "overlay_synth": overlay_synth,
+        "overlay_composite": overlay_composite,
         "peers": sorted(peers) if peers else [],
         "weights": weights,
         "atm_band": atm_band,
@@ -177,7 +175,7 @@ def _warm_term(task: Dict[str, Any]) -> None:
             target=ticker,
             asof=asof,
             ci=ci,
-            overlay_synth=overlay_synth,
+            overlay_composite=overlay_composite,
             peers=peers,
             weights=weights,
             atm_band=atm_band,
@@ -205,12 +203,12 @@ def _warm_term(task: Dict[str, Any]) -> None:
         return
 
 
-def _warm_synth(task: Dict[str, Any]) -> None:
+def _warm_composite(task: Dict[str, Any]) -> None:
     """Warm composite ETF surface cache for multiple weight modes."""
     target = task["target"].upper()
     peers = [p.upper() for p in task.get("peers", [])]
     weight_modes = task.get("weight_modes", ["corr"])
-    max_expiries = int(task.get("max_expiries", 6))
+    max_expiries = int(task.get("max_expiries", 10))
 
     for mode in weight_modes:
         cfg = compositeETFConfig(
@@ -240,7 +238,7 @@ def _warm_synth(task: Dict[str, Any]) -> None:
 def _warm_relative_weight(task: Dict[str, Any]) -> None:
     tickers = [t.upper() for t in task["tickers"]]
     asof = task["asof"]
-    max_expiries = int(task.get("max_expiries", 6))
+    max_expiries = int(task.get("max_expiries", 10))
     atm_band = float(task.get("atm_band", 0.05))
 
     payload = {
@@ -372,12 +370,12 @@ def main() -> None:
                     "ticker": t,
                     "asof": asof_t,
                     "peers": list(group["peer_tickers"]),
-                    "overlay_synth": True,
+                    "overlay_composite": True,
                     "ci": 68.0,
                 })
                 if t.upper() == group["target_ticker"].upper():
                     print("Warming composite ETF surfaces...")
-                    _warm_synth({
+                    _warm_composite({
                         "target": t,
                         "peers": list(group["peer_tickers"]),
                         "weight_modes": ["corr", "pca", "cosine", "equal"],

@@ -230,10 +230,10 @@ class PlotManager:
         weight_mode = (
             "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
         )
-        overlay_synth = settings.get("overlay_synth", True)
+        overlay_composite = settings.get("overlay_composite", True)
         overlay_peers = settings.get("overlay_peers", False)
         self.peers = settings["peers"]
-        max_expiries = settings.get("max_expiries", 6)
+        max_expiries = settings.get("max_expiries", 10)
 
         # invalidate surface cache if tickers or max_expiries changed
         prev = getattr(self, "last_settings", {}) or {}
@@ -278,7 +278,7 @@ class PlotManager:
                 "target": self.target,
                 "asof": pd.to_datetime(asof).floor("min").isoformat(),
                 "T_days": float(T_days),
-                "overlay_synth": overlay_synth,
+                "overlay_composite": overlay_composite,
                 "peers": sorted(self.peers),
                 "weights": weights.to_dict() if weights is not None else None,
                 "overlay_peers": overlay_peers,
@@ -293,7 +293,7 @@ class PlotManager:
                     T_days=T_days,
                     model=model,
                     ci=ci,
-                    overlay_synth=overlay_synth,
+                    overlay_composite=overlay_composite,
                     peers=self.peers,
                     weights=weights.to_dict() if weights is not None else None,
                     overlay_peers=overlay_peers,
@@ -325,7 +325,7 @@ class PlotManager:
                 "weights": weights,
                 "tgt_surface": data.get("tgt_surface"),
                 "syn_surface": data.get("syn_surface"),
-                "peer_slices": data.get("peer_slices", {}),
+                "composite_slices": data.get("composite_slices", {}),
                 "expiry_arr": data.get("expiry_arr"),
                 "fit_by_expiry": fit_map,
             }
@@ -349,7 +349,7 @@ class PlotManager:
                 "target": self.target,
                 "asof": pd.to_datetime(asof).floor("min").isoformat(),
                 "ci": ci,
-                "overlay_synth": overlay_synth,
+                "overlay_composite": overlay_composite,
                 "peers": sorted(self.peers),
                 "weights": weights.to_dict() if weights is not None else None,
                 "atm_band": atm_band,
@@ -362,7 +362,7 @@ class PlotManager:
                     target=self.target,
                     asof=asof,
                     ci=ci,
-                    overlay_synth=overlay_synth,
+                    overlay_composite=overlay_composite,
                     peers=self.peers,
                     weights=weights.to_dict() if weights is not None else None,
                     atm_band=atm_band,
@@ -538,12 +538,12 @@ class PlotManager:
 
 
     # -------------------- specific plotters --------------------
-    def _plot_smile(self, ax, df, target, asof, model, T_days, ci, overlay_synth, peers, weight_mode):
+    def _plot_smile(self, ax, df, target, asof, model, T_days, ci, overlay_composite, peers, weight_mode):
         # Prepare surfaces and weights for composite overlay if needed
         surfaces = None
         weights = None
 
-        if overlay_synth and peers:
+        if overlay_composite and peers:
             try:
                 # Use target ticker's actual expiries for weight computation
                 w = self.weights
@@ -564,7 +564,7 @@ class PlotManager:
             model=model,
             T_days=T_days,
             ci=ci,
-            overlay_synth=overlay_synth,
+            overlay_composite=overlay_composite,
             surfaces=surfaces,
             weights=weights
         )
@@ -705,7 +705,7 @@ class PlotManager:
         # overlay: composite smile at this T
         syn_surface = self._smile_ctx.get("syn_surface")
         tgt_surface = self._smile_ctx.get("tgt_surface")
-        if settings.get("overlay_synth"):
+        if settings.get("overlay_composite"):
             if syn_surface is None or tgt_surface is None:
                 try:
                     weights = self._smile_ctx.get("weights")
@@ -714,17 +714,17 @@ class PlotManager:
                         tgt_surface = surfaces[target][asof]
                         self._smile_ctx["tgt_surface"] = tgt_surface
                     if weights is not None:
-                        peer_surfaces = {p: surfaces[p] for p in (settings.get("peers") or []) if p in surfaces}
-                        synth_by_date = combine_surfaces(peer_surfaces, weights.to_dict())
-                        syn_surface = synth_by_date.get(asof)
+                        composite_surfaces = {p: surfaces[p] for p in (settings.get("peers") or []) if p in surfaces}
+                        composite_by_date = combine_surfaces(composite_surfaces, weights.to_dict())
+                        syn_surface = composite_by_date.get(asof)
                         self._smile_ctx["syn_surface"] = syn_surface
                 except Exception:
                     syn_surface = None
  
 
-        peer_slices = self._smile_ctx.get("peer_slices") or {}
-        if settings.get("overlay_peers") and peer_slices:
-            for p, d in peer_slices.items():
+        composite_slices = self._smile_ctx.get("composite_slices") or {}
+        if settings.get("overlay_peers") and composite_slices:
+            for p, d in composite_slices.items():
                 T_p = d["T_arr"]
                 K_p = d["K_arr"]
                 sigma_p = d["sigma_arr"]
@@ -841,8 +841,8 @@ class PlotManager:
                     asof=asof,
                     atm_band=atm_band,
                     show_values=True,
-                    clip_negative=clip_negative,
-                    weight_power=weight_power,
+                    clip_negative=True,
+                    weight_power=1.0,
                     target=target,
                     peers=self.peers,
                     max_expiries=max_exp,
@@ -853,11 +853,6 @@ class PlotManager:
                 )
                 ax1.set_title("Surface Corr (restricted)")
                 # Annotate restriction summary
-                try:
-                    ax1.text(0.01, 1.02, "common date, min_coverage=1.0, mny=[0.9,1.1]",
-                              transform=ax1.transAxes, fontsize=8, va="bottom")
-                except Exception:
-                    pass
 
                 # Wide: majority coverage, allow per‑ticker latest
                 atm_df2, weight_df2, _ = compute_and_plot_relative_weight(
@@ -867,8 +862,8 @@ class PlotManager:
                     asof=asof,
                     atm_band=atm_band,
                     show_values=True,
-                    clip_negative=clip_negative,
-                    weight_power=weight_power,
+                    clip_negative=True,
+                    weight_power=1.0,
                     target=target,
                     peers=self.peers,
                     max_expiries=max_exp,
@@ -894,15 +889,15 @@ class PlotManager:
                     asof=asof,
                     atm_band=atm_band,
                     show_values=True,
-                    clip_negative=clip_negative,
-                    weight_power=weight_power,
+                    clip_negative=True,
+                    weight_power=1.0,
                     target=target,
                     peers=self.peers,
                     max_expiries=max_exp,
                     weight_mode=weight_mode,
                 )
 
-            # cache for other plots
+            # cache for other plots (keep both legacy and new names for compatibility)
             self.last_corr_df = weight_df
             self.last_atm_df = atm_df
             self.last_corr_meta = {
@@ -911,6 +906,9 @@ class PlotManager:
                 "pillars": list(pillars or []),  # These are now dynamic target expiry pillars
                 "weight_mode": weight_mode,
             }
+            # Back-compat for weights_from_ui_or_matrix fallback
+            self.last_relative_weight_df = weight_df
+            self.last_relative_weight_meta = dict(self.last_corr_meta)
 
             # Better error reporting for empty results
             if atm_df is None or atm_df.empty:
@@ -962,17 +960,17 @@ class PlotManager:
             ),
         )
         title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
-        synth_bands = data.get("synth_bands")
-        if synth_bands is not None:
-            bands = synth_bands
+        composite_bands = data.get("composite_bands")
+        if composite_bands is not None:
+            bands = composite_bands
             if x_units != "days":
                 # Convert x-axis from days to years for the bands
-                bands = type(synth_bands)(
-                    x=synth_bands.x / 365.25,
-                    mean=synth_bands.mean,
-                    lo=synth_bands.lo,
-                    hi=synth_bands.hi,
-                    level=synth_bands.level,
+                bands = type(composite_bands)(
+                    x=composite_bands.x / 365.25,
+                    mean=composite_bands.mean,
+                    lo=composite_bands.lo,
+                    hi=composite_bands.hi,
+                    level=composite_bands.level,
                 )
             plot_composite_etf_term_structure(ax, bands)
             # restore axis labels overridden by composite plot

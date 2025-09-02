@@ -17,18 +17,18 @@ def get_target_and_composite_grid(self, target: str, peers: list[str], asof: str
         return None, None, None
 
     # build composite by date from peer surfaces if weights provided
-    synth_by_date = {}
+    composite_by_date = {}
     if peers and weights:
-        peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
+        composite_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
         try:
-            synth_by_date = combine_surfaces(peer_surfaces, weights)
+            composite_by_date = combine_surfaces(composite_surfaces, weights)
         except Exception:
-            synth_by_date = {}
+            composite_by_date = {}
 
     # choose a date
     asof_ts = pd.to_datetime(asof).floor("min")
     tgt_dates = sorted(surfaces[target].keys())
-    syn_dates = sorted(synth_by_date.keys())
+    syn_dates = sorted(composite_by_date.keys())
 
     # prefer common date
     common = sorted(set(tgt_dates).intersection(syn_dates))
@@ -36,17 +36,17 @@ def get_target_and_composite_grid(self, target: str, peers: list[str], asof: str
     if common:
         date_used = common[-1]
     else:
-        # fallback: prefer target date at/near asof, else latest target; and pick closest synth date
+        # fallback: prefer target date at/near asof, else latest target; and pick closest composite date
         date_used = asof_ts if asof_ts in surfaces[target] else (tgt_dates[-1] if tgt_dates else None)
-        if date_used and date_used not in synth_by_date and syn_dates:
-            # pick latest synth date as fallback
+        if date_used and date_used not in composite_by_date and syn_dates:
+            # pick latest composite date as fallback
             date_used = syn_dates[-1] if date_used is None else date_used
 
     if date_used is None:
         return None, None, None
 
     tgt_grid = surfaces[target].get(date_used)
-    syn_grid = synth_by_date.get(date_used)
+    syn_grid = composite_by_date.get(date_used)
     return tgt_grid, syn_grid, date_used
 
 def get_surface_grids(self, tickers, max_expiries):

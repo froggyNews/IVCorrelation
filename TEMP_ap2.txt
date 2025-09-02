@@ -1,5 +1,5 @@
     ci: float = 0.68,
-    overlay_synth: bool = False,
+    overlay_composite: bool = False,
     peers: Iterable[str] | None = None,
     weights: Optional[Mapping[str, float]] = None,
     overlay_peers: bool = False,
@@ -11,7 +11,7 @@
     Perf notes:
     - Single pass conversion to NumPy, group by expiry once.
     - Optional subsample per-expiry to cap solver work while preserving shape.
-    - Skip overlay surface building unless overlay_synth or overlay_peers is True.
+    - Skip overlay surface building unless overlay_composite or overlay_peers is True.
     - Avoid re-reading params cache per expiry.
     """
     peers = list(peers or [])
@@ -223,7 +223,7 @@
     # ---- optional overlays (do work only if requested) ---------------------
     tgt_surface = None
     syn_surface = None
-    if (overlay_synth or overlay_peers) and peers:
+    if (overlay_composite or overlay_peers) and peers:
         try:
             tickers = list({target, *peers})
             surfaces = build_surface_grids(
@@ -232,19 +232,19 @@
             if target in surfaces and asof in surfaces[target]:
                 tgt_surface = surfaces[target][asof]
 
-            if overlay_synth:
-                peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces and asof in surfaces[p]}
-                if peer_surfaces:
-                    w = ({p: float(weights.get(p, 1.0)) for p in peer_surfaces}
-                         if weights else {p: 1.0 for p in peer_surfaces})
-                    synth_by_date = combine_surfaces(peer_surfaces, w)
-                    syn_surface = synth_by_date.get(asof)
+            if overlay_composite:
+                composite_surfaces = {p: surfaces[p] for p in peers if p in surfaces and asof in surfaces[p]}
+                if composite_surfaces:
+                    w = ({p: float(weights.get(p, 1.0)) for p in composite_surfaces}
+                         if weights else {p: 1.0 for p in composite_surfaces})
+                    composite_by_date = combine_surfaces(composite_surfaces, w)
+                    syn_surface = composite_by_date.get(asof)
         except Exception:
             tgt_surface = None
             syn_surface = None
 
     # Optional peer smile overlays (uses same max_expiries cap)
-    peer_slices: Dict[str, Dict[str, np.ndarray]] = {}
+    composite_slices: Dict[str, Dict[str, np.ndarray]] = {}
     if overlay_peers and peers:
         for p in peers:
             df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
@@ -254,7 +254,7 @@
             K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float, copy=False)
             sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float, copy=False)
             S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float, copy=False)
-            peer_slices[p.upper()] = {"T_arr": T_p, "K_arr": K_p, "sigma_arr": sigma_p, "S_arr": S_p}
+            composite_slices[p.upper()] = {"T_arr": T_p, "K_arr": K_p, "sigma_arr": sigma_p, "S_arr": S_p}
 
     # Return the raw arrays from the (already converted) columns
     return {
@@ -266,7 +266,7 @@
         "idx0": idx0,
         "tgt_surface": tgt_surface,
         "syn_surface": syn_surface,
-        "peer_slices": peer_slices,
+        "composite_slices": composite_slices,
         "expiry_arr": expiry_col,
         "fit_info": fit_info,
         "fit_by_expiry": fit_by_expiry,
@@ -305,7 +305,7 @@ def prepare_term_data(
     weights: Optional[Mapping[str, float]] = None,
     atm_band: float = 0.05,
     max_expiries: int = 6,
-    overlay_synth: bool = True,
+    overlay_composite: bool = True,
     get_slice: Callable[[str, str, float, int], pd.DataFrame] = get_smile_slice,
 ) -> Dict[str, Any]:
     """

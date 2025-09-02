@@ -89,7 +89,7 @@ class InputPanel(ttk.Frame):
       - bind target-entry changes and button clicks
     """
 
-    def __init__(self, master, *, overlay_synth: bool = True, overlay_peers: bool = True,
+    def __init__(self, master, *, overlay_composite: bool = True, overlay_peers: bool = True,
                  ci_percent: float = 68.0):
         super().__init__(master)
         self.pack(side=tk.TOP, fill=tk.X, padx=8, pady=6)
@@ -255,10 +255,10 @@ class InputPanel(ttk.Frame):
         row4 = ttk.Frame(self); row4.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
 
         # Removed weight power and clip-negative inputs; clip is always on
-        self.var_overlay_synth = tk.BooleanVar(value=bool(overlay_synth))
-        self.chk_overlay_synth = ttk.Checkbutton(row4, text="Overlay composite", variable=self.var_overlay_synth)
-        self.chk_overlay_synth.grid(row=0, column=0, padx=8, sticky="w")
-        self.var_overlay_synth.trace_add("write", lambda *args: self._sync_settings())
+        self.var_overlay_composite = tk.BooleanVar(value=bool(overlay_composite))
+        self.chk_overlay_composite = ttk.Checkbutton(row4, text="Overlay composite", variable=self.var_overlay_composite)
+        self.chk_overlay_composite.grid(row=0, column=0, padx=8, sticky="w")
+        self.var_overlay_composite.trace_add("write", lambda *args: self._sync_settings())
 
         self.var_overlay_peers = tk.BooleanVar(value=bool(overlay_peers))
         self.chk_overlay_peers = ttk.Checkbutton(row4, text="Overlay peers", variable=self.var_overlay_peers)
@@ -328,15 +328,15 @@ class InputPanel(ttk.Frame):
             return []
         return [p.strip().upper() for p in txt.split(",") if p.strip()]
 
-    def get_overlay_synth(self) -> bool:
-        return bool(self.var_overlay_synth.get())
+    def get_overlay_composite(self) -> bool:
+        return bool(self.var_overlay_composite.get())
 
     def get_overlay_peers(self) -> bool:
         return bool(self.var_overlay_peers.get())
 
     def get_overlay(self) -> bool:
         """Backward-compatible composite overlay getter."""
-        return self.get_overlay_synth()
+        return self.get_overlay_composite()
 
     def get_max_exp(self) -> int:
         try:
@@ -451,7 +451,7 @@ class InputPanel(ttk.Frame):
                 x_units=self.get_x_units(),
                 weight_method=weight_method,
                 feature_mode=feature_mode,
-                overlay_synth=self.get_overlay_synth(),
+                overlay_composite=self.get_overlay_composite(),
                 overlay_peers=self.get_overlay_peers(),
                 max_expiries=self.get_max_exp(),
                 feature_scope=feature_scope,

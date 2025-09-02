@@ -699,16 +699,16 @@ def main() -> int:
                         tickers_for_surf = [target] + slide_peers
                         surfaces = build_surface_grids(tickers=tickers_for_surf, use_atm_only=False, max_expiries=args.max_expiries)
                         # Resolve composite by date
-                        peer_surfaces = {t: surfaces[t] for t in slide_peers if t in surfaces}
-                        synth_by_date = combine_surfaces(peer_surfaces, w_map)
+                        composite_surfaces = {t: surfaces[t] for t in slide_peers if t in surfaces}
+                        composite_by_date = combine_surfaces(composite_surfaces, w_map)
                         # Choose a common date
                         tgt_dates = set(surfaces.get(target, {}).keys())
-                        syn_dates = set(synth_by_date.keys())
+                        syn_dates = set(composite_by_date.keys())
                         common = sorted(tgt_dates & syn_dates)
                         if common:
                             date_use = common[-1]
                             tgt_grid = surfaces[target][date_use]
-                            syn_grid = synth_by_date[date_use]
+                            syn_grid = composite_by_date[date_use]
                             ok = plot_composite_smile_overlay(ax, tgt_grid, syn_grid, T_days)
                             if ok:
                                 handles, labels = ax.get_legend_handles_labels()

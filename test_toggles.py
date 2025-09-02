@@ -51,8 +51,6 @@ def test_toggles_all_models():
             result = fit_and_plot_smile(
                 ax, S, K, T_val, iv,
                 model=model,
-                enable_toggles=True,  # Enable toggles for all models
-                use_checkboxes=False,  # Keep checkboxes off by default
                 ci_level=0.68
             )
             

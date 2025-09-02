@@ -14,7 +14,7 @@
     last_fit_info = log_smile_parameters(asof, target, expiry_dt, all_results, S, T_used, dfe)
     
     # Add composite overlay if requested
-    if overlay_synth and surfaces and weights and target in surfaces:
+    if overlay_composite and surfaces and weights and target in surfaces:
         try:
             import pandas as pd
             # Resolve date keys robustly (surfaces dict uses pd.Timestamp keys)
@@ -37,15 +37,15 @@
 
             if peers_map and target_key is not None and target_key in surfaces[target]:
                 from analysis.compositeETFBuilder import combine_surfaces
-                synth_by_date = combine_surfaces(peers_map, weights)
+                composite_by_date = combine_surfaces(peers_map, weights)
 
-                # Choose date to use: prefer target_key if available; else latest in synth
-                date_used = target_key if target_key in synth_by_date else (max(synth_by_date.keys()) if synth_by_date else None)
+                # Choose date to use: prefer target_key if available; else latest in composite
+                date_used = target_key if target_key in composite_by_date else (max(composite_by_date.keys()) if composite_by_date else None)
                 if date_used is not None and date_used in surfaces[target]:
                     target_grid = surfaces[target][date_used]
-                    synthetic_grid = synth_by_date.get(date_used)
-                    if synthetic_grid is not None:
-                        success = plot_composite_smile_overlay(ax, target_grid, synthetic_grid, T_days)
+                    compositeetic_grid = composite_by_date.get(date_used)
+                    if compositeetic_grid is not None:
+                        success = plot_composite_smile_overlay(ax, target_grid, compositeetic_grid, T_days)
                         if success:
                             ax.legend(loc="best", fontsize=8)
         except Exception:

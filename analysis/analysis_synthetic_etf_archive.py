@@ -61,7 +61,7 @@ class compositeETFConfig:
     weight_power: float = 1.0
     clip_negative: bool = True
     use_atm_only_surface: bool = False
-    cache_dir: Optional[str] = "data/cache_synth_etf"
+    cache_dir: Optional[str] = "data/cache_composite_etf"
     # If True we require surfaces for EVERY peer date to include a date in composite output
     # DISABLED: Always False to prevent date filtering
     strict_date_intersection: bool = False
@@ -115,8 +115,8 @@ class compositeETFBuilder:
             self.cfg.weight_mode,
             tenors=self.cfg.tenors,
             mny_bins=self.cfg.mny_bins,
-            clip_negative=self.cfg.clip_negative,
-            power=self.cfg.weight_power,
+            clip_negative=True,
+            power=1.0,
             max_expiries=getattr(self.cfg, "max_expiries", 6),
         )
 
@@ -154,16 +154,16 @@ class compositeETFBuilder:
         if self._surfaces is None:
             raise RuntimeError("Surfaces not built yet. Call build_surfaces() first.")
 
-        peer_surfaces = {
+        composite_surfaces = {
             p: self._surfaces[p]
             for p in self.cfg.peers
             if p in self._surfaces
         }
-        composite = combine_surfaces(peer_surfaces, self._weights.to_dict())
+        composite = combine_surfaces(composite_surfaces, self._weights.to_dict())
 
         # Optionally restrict dates to intersection across all peer surfaces
         if self.cfg.strict_date_intersection:
-            date_sets = [set(dates_dict.keys()) for dates_dict in peer_surfaces.values()]
+            date_sets = [set(dates_dict.keys()) for dates_dict in composite_surfaces.values()]
             if date_sets:
                 common = set.intersection(*date_sets)
                 composite = {d: grid for d, grid in composite.items() if d in common}
@@ -197,9 +197,9 @@ class compositeETFBuilder:
         tgt_curve["rank"] = tgt_curve.index
 
         rv = tgt_curve.merge(syn, on="rank", how="inner")
-        rv["spread"] = rv["target_iv"] - rv["synth_iv"]
+        rv["spread"] = rv["target_iv"] - rv["composite_iv"]
         rv["asof_date"] = pd.to_datetime(asof)
-        rv = rv[["asof_date", "rank", "T", "target_iv", "synth_iv", "spread"]]
+        rv = rv[["asof_date", "rank", "T", "target_iv", "composite_iv", "spread"]]
         self._rv = rv
         return rv
 
@@ -213,7 +213,7 @@ class compositeETFBuilder:
         start = time.time()
         w = self.compute_weights(custom_weights=custom_weights)
         surfaces = self.build_surfaces()
-        synth = self.build_composite_surfaces()
+        composite = self.build_composite_surfaces()
         rv = self.compute_relative_value()
 
         meta = {
@@ -231,7 +231,7 @@ class compositeETFBuilder:
         return compositeETFArtifacts(
             weights=w,
             surfaces=surfaces,
-            composite_surfaces=synth,
+            composite_surfaces=composite,
             rv_metrics=rv,
             meta=meta,
         )

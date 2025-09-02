@@ -8,5 +8,5 @@
                     ivs.append(float(v))
                     ws.append(float(w_norm.get(t, 0.0)))
         if ws:
-            rows.append({"rank": int(r), "synth_iv": float(np.dot(ws, ivs)) / float(np.sum(ws))})
+            rows.append({"rank": int(r), "composite_iv": float(np.dot(ws, ivs)) / float(np.sum(ws))})
     return pd.DataFrame(rows)

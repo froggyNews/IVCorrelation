@@ -29,7 +29,7 @@ asof YYYY-MM-DD    - set active asof date (default: most recent)
 smile [T_days]     - build smile data (default uses nearest expiry to 30d)
 term               - build ATM term curve (+ optional composite overlay)
 weights            - compute peer weights with current config
-synth              - build composite ATM pillar series (weights required)
+composite              - build composite ATM pillar series (weights required)
 dump [what]        - write current artifacts to /tmp parquet/csv (see options)
 quit / exit        - leave
 """
@@ -126,7 +126,7 @@ class Session:
     smile_last: Dict[str, object] | None = None
     term_last: Dict[str, object] | None = None
     weights_last: pd.Series | None = None
-    synth_iv_last: pd.DataFrame | None = None
+    composite_iv_last: pd.DataFrame | None = None
 
     def ensure_asof(self):
         if self.asof:
@@ -165,7 +165,7 @@ def run_smile(sess: Session, T_days: float | None = 30.0):
         target=sess.target,
         asof=asof,
         T_days=T_days if T_days is not None else 30.0,
-        overlay_synth=False,
+        overlay_composite=False,
         peers=sess.peers,
         weights=(None if sess.weights_last is None else sess.weights_last.to_dict()),
         overlay_peers=True if sess.peers else False,
@@ -198,10 +198,10 @@ def run_term(sess: Session, ci: float = 68.0):
     )
     sess.term_last = out or {}
     atm = out.get("atm_curve", pd.DataFrame())
-    synth = out.get("synth_curve", pd.DataFrame())
+    composite = out.get("composite_curve", pd.DataFrame())
     logger.info("ATM curve: %s", _df_info(atm, cols=("T", "atm_vol")))
-    if not synth is None:
-        logger.info("composite ATM curve: %s", _df_info(synth, cols=("T", "atm_vol")))
+    if not composite is None:
+        logger.info("composite ATM curve: %s", _df_info(composite, cols=("T", "atm_vol")))
 
 
 def run_weights(sess: Session, asof: Optional[str] = None):
@@ -221,27 +221,27 @@ def run_weights(sess: Session, asof: Optional[str] = None):
     logger.info("Weights:\n%s", w.to_string())
 
 
-def run_synth_iv(sess: Session, pillar_days: Tuple[int, ...] | int = (7, 30, 60, 90), tolerance_days: float = 7.0):
+def run_composite_iv(sess: Session, pillar_days: Tuple[int, ...] | int = (7, 30, 60, 90), tolerance_days: float = 7.0):
     if sess.weights_last is None and (not sess.target or not sess.peers):
         logger.warning("Need weights or (target+peers) to build composite.")
         return
 
     if sess.weights_last is None:
-        logger.info("No precomputed weights; computing on-the-fly for synth...")
+        logger.info("No precomputed weights; computing on-the-fly for composite...")
         df, w = build_composite_iv_series_corrweighted(
             target=sess.target, peers=sess.peers, weight_mode=sess.weight_mode,
             pillar_days=pillar_days, tolerance_days=tolerance_days, asof=sess.ensure_asof(),
         )
         sess.weights_last = w
-        sess.synth_iv_last = df
+        sess.composite_iv_last = df
     else:
         df = build_composite_iv_series_weighted(
             weights=sess.weights_last.to_dict(),
             pillar_days=pillar_days, tolerance_days=tolerance_days,
         )
-        sess.synth_iv_last = df
+        sess.composite_iv_last = df
 
-    logger.info("composite ATM pillars: %s", _df_info(sess.synth_iv_last, cols=("pillar_days", "iv")))
+    logger.info("composite ATM pillars: %s", _df_info(sess.composite_iv_last, cols=("pillar_days", "iv")))
 
 
 def list_dates(sess: Session):
@@ -278,10 +278,10 @@ def dump(sess: Session, what: str = "smile"):
             logger.info("Wrote %s (%s)", p, _df_info(atm, cols=("T", "atm_vol")))
         return
 
-    if what == "synth" and sess.synth_iv_last is not None:
-        p = outdir / "debug_synth_pillars.parquet"
-        sess.synth_iv_last.to_parquet(p, index=False)
-        logger.info("Wrote %s (%s)", p, _df_info(sess.synth_iv_last))
+    if what == "composite" and sess.composite_iv_last is not None:
+        p = outdir / "debug_composite_pillars.parquet"
+        sess.composite_iv_last.to_parquet(p, index=False)
+        logger.info("Wrote %s (%s)", p, _df_info(sess.composite_iv_last))
         return
 
     if what == "surface":
@@ -305,7 +305,7 @@ def dump(sess: Session, what: str = "smile"):
             logger.info("Wrote %s (%s)", p, _df_info(df))
         return
 
-    logger.info("Nothing to dump for '%s'. Options: smile | term | synth | surface", what)
+    logger.info("Nothing to dump for '%s'. Options: smile | term | composite | surface", what)
 
 
 # -----------------------------------------------------------------------------
@@ -335,8 +335,8 @@ asof YYYY-MM-DD    - set active asof date (or 'asof latest')
 smile [T_days]     - build smile slice & fit (default 30)
 term               - build ATM term structure (+ composite if peers/weights set)
 weights            - compute peer weights with current config
-synth              - build composite ATM pillar series
-dump [what]        - write artifacts to /tmp (smile|term|synth|surface)
+composite              - build composite ATM pillar series
+dump [what]        - write artifacts to /tmp (smile|term|composite|surface)
 """)
             continue
 
@@ -362,8 +362,8 @@ dump [what]        - write artifacts to /tmp (smile|term|synth|surface)
         if cmd == "weights":
             run_weights(sess); continue
 
-        if cmd == "synth":
-            run_synth_iv(sess); continue
+        if cmd == "composite":
+            run_composite_iv(sess); continue
 
         if cmd == "dump":
             what = parts[1].lower() if len(parts) > 1 else "smile"
@@ -395,7 +395,7 @@ def parse_args(argv=None):
                 help="Tolerance in days when aligning expiries.")
     p.add_argument("--ci", type=float, default=68.0,
                 help="Confidence interval level for term/smile bands.")
-    p.add_argument("--dump", type=str, choices=["smile","term","synth","surface"], default=None,
+    p.add_argument("--dump", type=str, choices=["smile","term","composite","surface"], default=None,
                 help="Immediately dump an artifact to /tmp after run.")
     p.add_argument("--list-dates", action="store_true",
                 help="Just list available dates for tickers and exit.")

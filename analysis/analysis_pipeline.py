@@ -379,7 +379,7 @@ def prepare_smile_data(
     T_days: float,
     model: str = "svi",
     ci: float = 0.68,
-    overlay_synth: bool = False,
+    overlay_composite: bool = False,
     peers: Iterable[str] | None = None,
     weights: Optional[Mapping[str, float]] = None,
     overlay_peers: bool = False,
@@ -391,7 +391,7 @@ def prepare_smile_data(
     Perf notes:
     - Single pass conversion to NumPy, group by expiry once.
     - Optional subsample per-expiry to cap solver work while preserving shape.
-    - Skip overlay surface building unless overlay_synth or overlay_peers is True.
+    - Skip overlay surface building unless overlay_composite or overlay_peers is True.
     - Avoid re-reading params cache per expiry.
     """
     peers = list(peers or [])
@@ -614,7 +614,7 @@ def prepare_smile_data(
     # ---- optional overlays (do work only if requested) ---------------------
     tgt_surface = None
     syn_surface = None
-    if (overlay_synth or overlay_peers) and peers:
+    if (overlay_composite or overlay_peers) and peers:
         try:
             tickers = list({target, *peers})
             surfaces = build_surface_grids(
@@ -623,19 +623,19 @@ def prepare_smile_data(
             if target in surfaces and asof in surfaces[target]:
                 tgt_surface = surfaces[target][asof]
 
-            if overlay_synth:
-                peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces and asof in surfaces[p]}
-                if peer_surfaces:
-                    w = ({p: float(weights.get(p, 1.0)) for p in peer_surfaces}
-                         if weights else {p: 1.0 for p in peer_surfaces})
-                    synth_by_date = combine_surfaces(peer_surfaces, w)
-                    syn_surface = synth_by_date.get(asof)
+            if overlay_composite:
+                composite_surfaces = {p: surfaces[p] for p in peers if p in surfaces and asof in surfaces[p]}
+                if composite_surfaces:
+                    w = ({p: float(weights.get(p, 1.0)) for p in composite_surfaces}
+                         if weights else {p: 1.0 for p in composite_surfaces})
+                    composite_by_date = combine_surfaces(composite_surfaces, w)
+                    syn_surface = composite_by_date.get(asof)
         except Exception:
             tgt_surface = None
             syn_surface = None
 
     # Optional peer smile overlays (uses same max_expiries cap)
-    peer_slices: Dict[str, Dict[str, np.ndarray]] = {}
+    composite_slices: Dict[str, Dict[str, np.ndarray]] = {}
     if overlay_peers and peers:
         for p in peers:
             df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
@@ -645,7 +645,7 @@ def prepare_smile_data(
             K_p = pd.to_numeric(df_p["K"], errors="coerce").to_numpy(float, copy=False)
             sigma_p = pd.to_numeric(df_p["sigma"], errors="coerce").to_numpy(float, copy=False)
             S_p = pd.to_numeric(df_p["S"], errors="coerce").to_numpy(float, copy=False)
-            peer_slices[p.upper()] = {"T_arr": T_p, "K_arr": K_p, "sigma_arr": sigma_p, "S_arr": S_p}
+            composite_slices[p.upper()] = {"T_arr": T_p, "K_arr": K_p, "sigma_arr": sigma_p, "S_arr": S_p}
 
     # Return the raw arrays from the (already converted) columns
     return {
@@ -657,7 +657,7 @@ def prepare_smile_data(
         "idx0": idx0,
         "tgt_surface": tgt_surface,
         "syn_surface": syn_surface,
-        "peer_slices": peer_slices,
+        "composite_slices": composite_slices,
         "expiry_arr": expiry_col,
         "fit_info": fit_info,
         "fit_by_expiry": fit_by_expiry,
@@ -696,7 +696,7 @@ def prepare_term_data(
     weights: Optional[Mapping[str, float]] = None,
     atm_band: float = 0.05,
     max_expiries: int = 6,
-    overlay_synth: bool = True,
+    overlay_composite: bool = True,
     get_slice: Callable[[str, str, float, int], pd.DataFrame] = get_smile_slice,
 ) -> Dict[str, Any]:
     """
@@ -730,16 +730,16 @@ def prepare_term_data(
         ci_level=ci if ci else 0.0,
     )
 
-    synth_curve = None
-    synth_bands = None
+    composite_curve = None
+    composite_bands = None
 
     # Early out if overlay not requested and no peers
-    if not (overlay_synth or peers):
-        return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
+    if not (overlay_composite or peers):
+        return {"atm_curve": atm_curve, "composite_curve": composite_curve, "composite_bands": composite_bands}
 
     peers = list(peers or [])
     if not peers:
-        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
+        return {"atm_curve": atm_curve, "composite_curve": None, "composite_bands": None}
 
     # Normalize weights
     w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
@@ -748,7 +748,7 @@ def prepare_term_data(
     w = (w / w.sum()).astype(float)
     peers = [p for p in w.index if p in (peers or [])]
     if not peers:
-        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
+        return {"atm_curve": atm_curve, "composite_curve": None, "composite_bands": None}
 
     # Build each peer's ATM curve (median is faster + robust)
     curves: Dict[str, pd.DataFrame] = {}
@@ -766,7 +766,7 @@ def prepare_term_data(
             curves[p] = c
 
     if not curves:
-        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
+        return {"atm_curve": atm_curve, "composite_curve": None, "composite_bands": None}
 
     # Align on common T within tolerance (vectorized)
     tol_years = 10.0 / 365.25
@@ -783,7 +783,7 @@ def prepare_term_data(
             break
 
     if not common_mask.any():
-        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
+        return {"atm_curve": atm_curve, "composite_curve": None, "composite_bands": None}
 
     # Filter to common T points
     T_common = tgt_T[common_mask]
@@ -801,29 +801,29 @@ def prepare_term_data(
             atm_data[p] = Vp[j]
 
     if not atm_data:
-        return {"atm_curve": atm_curve, "synth_curve": None, "synth_bands": None}
+        return {"atm_curve": atm_curve, "composite_curve": None, "composite_bands": None}
 
     pillar_days = T_common * 365.25
     if ci and ci > 0:
-        synth_bands = composite_etf_pillar_bands(
+        composite_bands = composite_etf_pillar_bands(
             atm_data,
             w.to_dict(),
             pillar_days,
             level=ci,
             n_boot=max(n_boot, 1),
         )
-        synth_curve = pd.DataFrame(
-            {"T": T_common, "atm_vol": synth_bands.mean, "atm_lo": synth_bands.lo, "atm_hi": synth_bands.hi}
+        composite_curve = pd.DataFrame(
+            {"T": T_common, "atm_vol": composite_bands.mean, "atm_lo": composite_bands.lo, "atm_hi": composite_bands.hi}
         )
     else:
         # fast deterministic mean (no bootstrap)
         weights_vec = np.array([w.get(p, 0.0) for p in atm_data.keys()], dtype=float)
         mat = np.column_stack([atm_data[p] for p in atm_data.keys()])
         mean_curve = (mat * weights_vec).sum(axis=1)  # weights already sum to 1
-        synth_curve = pd.DataFrame({"T": T_common, "atm_vol": mean_curve})
-        synth_bands = None
+        composite_curve = pd.DataFrame({"T": T_common, "atm_vol": mean_curve})
+        composite_bands = None
 
-    return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
+    return {"atm_curve": atm_curve, "composite_curve": composite_curve, "composite_bands": composite_bands}
 
 
 # -----------------------------------------------------------------------------
@@ -909,7 +909,7 @@ if __name__ == "__main__":
         print("Built surfaces:", [k for k in surfaces.keys()])
         weights = compute_peer_weights("SPY", ["QQQ"], weight_mode="corr_iv_atm")
         print("Weights:\n", weights)
-        synth, w = build_composite_iv_series_corrweighted("SPY", ["QQQ"], weight_mode="corr_iv_atm")
-        print("composite ATM pillars len:", len(synth))
+        composite, w = build_composite_iv_series_corrweighted("SPY", ["QQQ"], weight_mode="corr_iv_atm")
+        print("composite ATM pillars len:", len(composite))
     except Exception as e:
         print("Demo error:", e)

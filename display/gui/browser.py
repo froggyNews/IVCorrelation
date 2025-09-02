@@ -25,7 +25,7 @@ from display.gui.parameters_tab import ParametersTab
 
 
 class BrowserApp(tk.Tk):
-    def __init__(self, *, overlay_synth: bool = True, overlay_peers: bool = True,
+    def __init__(self, *, overlay_composite: bool = True, overlay_peers: bool = True,
                  ci_percent: float = 68.0):
         super().__init__()
         self.title("Implied Volatility Browser")
@@ -42,7 +42,7 @@ class BrowserApp(tk.Tk):
         self.notebook.add(self.tab_browser, text="Parameter Explorer")
 
         # Inputs
-        self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
+        self.inputs = InputPanel(self.tab_browser, overlay_composite=overlay_composite,
                                  overlay_peers=overlay_peers,
                                  ci_percent=ci_percent)
         # Bind events
@@ -240,7 +240,7 @@ class BrowserApp(tk.Tk):
             x_units=self.inputs.get_x_units(),
             weight_method=self.inputs.get_weight_method(),
             feature_mode=self.inputs.get_feature_mode(),
-            overlay_synth=self.inputs.get_overlay_synth(),
+            overlay_composite=self.inputs.get_overlay_composite(),
             overlay_peers=self.inputs.get_overlay_peers(),
             peers=self.inputs.get_peers(),
             max_expiries=self.inputs.get_max_exp(),
@@ -300,12 +300,12 @@ class BrowserApp(tk.Tk):
 
 def main():
     parser = argparse.ArgumentParser(description="Vol Browser")
-    parser.add_argument("--overlay-synth", action="store_true", help="Overlay composite curves")
+    parser.add_argument("--overlay-composite", action="store_true", help="Overlay composite curves")
     parser.add_argument("--overlay-peers", action="store_true", help="Overlay peer curves")
     parser.add_argument("--ci", type=float, default=68.0,
                         help="Confidence interval percentage (e.g. 95 for 95%%)")
     args = parser.parse_args()
-    app = BrowserApp(overlay_synth=args.overlay_synth,
+    app = BrowserApp(overlay_composite=args.overlay_composite,
                      overlay_peers=args.overlay_peers,
                      ci_percent=args.ci)
     app.mainloop()

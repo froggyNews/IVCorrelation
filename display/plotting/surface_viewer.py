@@ -131,7 +131,7 @@ def show_surfaces_compare(target_df: pd.DataFrame,
     Side-by-side 3D surfaces (target vs composite) with optional diff.
     - Aligns grids to outer union to avoid shape errors.
     - If show_diff=True, computes (target - composite) and centers colormap.
-    - Optionally writes latest RV metrics (pillar_days / iv_target / iv_synth / spread / z / pct_rank)
+    - Optionally writes latest RV metrics (pillar_days / iv_target / iv_composite / spread / z / pct_rank)
       as a monospace text inset.
     """
     tgt, syn = _align_grids_like(target_df, composite_df)
@@ -162,11 +162,11 @@ def show_surfaces_compare(target_df: pd.DataFrame,
 
     # optional RV inset
     if isinstance(rv_table, pd.DataFrame) and not rv_table.empty:
-        needed = {"pillar_days", "iv_target", "iv_synth", "spread", "z", "pct_rank"}
+        needed = {"pillar_days", "iv_target", "iv_composite", "spread", "z", "pct_rank"}
         if needed.issubset(rv_table.columns):
             tail = rv_table.sort_values("asof_date").groupby("pillar_days", as_index=False).tail(1) \
                    if "asof_date" in rv_table.columns else rv_table.copy()
-            tail = tail.loc[:, ["pillar_days", "iv_target", "iv_synth", "spread", "z", "pct_rank"]]
+            tail = tail.loc[:, ["pillar_days", "iv_target", "iv_composite", "spread", "z", "pct_rank"]]
             tail["pillar_days"] = tail["pillar_days"].astype(int)
             txt = tail.to_string(index=False, float_format=lambda x: f"{x:0.4f}")
             fig.text(0.01, 0.02, f"Latest RV Metrics\n{txt}",
