@@ -204,14 +204,14 @@ def _warm_term(task: Dict[str, Any]) -> None:
 
 
 def _warm_composite(task: Dict[str, Any]) -> None:
-    """Warm composite ETF surface cache for multiple weight modes."""
+    """Warm composite Index surface cache for multiple weight modes."""
     target = task["target"].upper()
     peers = [p.upper() for p in task.get("peers", [])]
     weight_modes = task.get("weight_modes", ["corr"])
     max_expiries = int(task.get("max_expiries", 10))
 
     for mode in weight_modes:
-        cfg = compositeETFConfig(
+        cfg = compositeIndexConfig(
             target=target,
             peers=tuple(peers),
             max_expiries=max_expiries,
@@ -219,7 +219,7 @@ def _warm_composite(task: Dict[str, Any]) -> None:
         )
 
         def _builder() -> Any:
-            b = compositeETFBuilder(cfg)
+            b = compositeIndexBuilder(cfg)
             return b.build_all()
 
         payload = {
@@ -229,10 +229,10 @@ def _warm_composite(task: Dict[str, Any]) -> None:
             "max_expiries": max_expiries,
         }
         try:
-            compute_or_load("composite_etf", payload, _builder)
-            print(f"✓ Warmed composite ETF cache for {target} ({mode})")
+            compute_or_load("composite_index", payload, _builder)
+            print(f"✓ Warmed composite Index cache for {target} ({mode})")
         except Exception as e:
-            print(f"❌ Failed to warm composite ETF for {target} ({mode}): {e}")
+            print(f"❌ Failed to warm composite Index for {target} ({mode}): {e}")
 
 
 def _warm_relative_weight(task: Dict[str, Any]) -> None:
@@ -374,7 +374,7 @@ def main() -> None:
                     "ci": 68.0,
                 })
                 if t.upper() == group["target_ticker"].upper():
-                    print("Warming composite ETF surfaces...")
+                    print("Warming composite Index surfaces...")
                     _warm_composite({
                         "target": t,
                         "peers": list(group["peer_tickers"]),

@@ -170,7 +170,7 @@ def surface_feature_matrix(
     mny_range: Tuple[float, float] | None = None,  # optional numeric moneyness filter (inclusive)
 ) -> Tuple[Dict[str, Dict[pd.Timestamp, pd.DataFrame]], np.ndarray, List[str]]:
     # Use defaults if None were provided (some callers pass None explicitly)
-    from analysis.compositeETFBuilder import (
+    from analysis.compositeIndexBuilder import (
         build_surface_grids,
         DEFAULT_TENORS as _DEF_TENORS,
         DEFAULT_MNY_BINS as _DEF_MNY_BINS,

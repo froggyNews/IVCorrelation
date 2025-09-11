@@ -34,7 +34,7 @@ def plot_weights(ax: plt.Axes, weights: Mapping[str, float] | Sequence[float] | 
     s = s.sort_values(ascending=False)
     x = range(len(s))
     bars = ax.bar(x, s.values, color="steelblue")
-    ax.set_title("ETF Weights")
+    ax.set_title("Index Weights")
     ax.set_ylabel("Weight")
     ax.set_ylim(0, max(float(s.max()) * 1.1, 1.0))
     ax.set_xticks(list(x))

@@ -5,7 +5,7 @@ import pandas as pd
 
 from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 from .beta_builder.beta_builder import peer_weights_from_correlations
-from .compositeETFBuilder import DEFAULT_TENORS, DEFAULT_MNY_BINS, build_composite_iv_series
+from .compositeIndexBuilder import DEFAULT_TENORS, DEFAULT_MNY_BINS, build_composite_iv_series
 
 
 def _fetch_target_atm(

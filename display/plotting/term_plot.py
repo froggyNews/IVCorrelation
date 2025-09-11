@@ -50,19 +50,19 @@ def plot_atm_term_structure(
     ax.set_ylabel("Implied Vol (ATM)")
     ax.legend(loc="best", fontsize=8)
 
-def plot_composite_etf_term_structure(
+def plot_composite_index_term_structure(
     ax: plt.Axes,
     bands: Bands,
     *,
     label: str = "composite ATM",
     line_kwargs: Optional[Dict] = None,
 ) -> Bands:
-    """Plot composite ETF ATM term structure using pre-computed bands."""
+    """Plot composite Index ATM term structure using pre-computed bands."""
 
     ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(bands.level*100)}%)")
 
     line_kwargs = dict(line_kwargs or {})
-    line_kwargs.setdefault("lw", 2.5)  # More defined composite ETF line
+    line_kwargs.setdefault("lw", 2.5)  # More defined composite Index line
     line_kwargs.setdefault("alpha", 1.0)  # Full opacity
     ax.plot(bands.x, bands.mean, label=label, **line_kwargs)
 

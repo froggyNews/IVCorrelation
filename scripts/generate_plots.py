@@ -55,8 +55,8 @@ from display.plotting.smile_plot import (
     plot_smile_with_composite,)
 from volModel.sviFit import svi_smile_iv
 from display.plotting.surface_viewer import show_surfaces_compare
-from analysis.compositeETFBuilder import combine_surfaces
-from analysis.compositeETFBuilder import build_surface_grids
+from analysis.compositeIndexBuilder import combine_surfaces
+from analysis.compositeIndexBuilder import build_surface_grids
 from data.data_downloader import save_for_tickers
 from data.db_utils import get_conn, ensure_initialized, check_db_health, DB_PATH
 import shutil
@@ -336,7 +336,7 @@ def main() -> int:
             w = compute_unified_weights(target=target, peers=peers, mode=args.weight_mode, asof=asof)
             fig, ax = plt.subplots(figsize=(6, 4))
             plot_weights(ax, w)
-            ax.set_title(f"ETF Weights: {target} ({asof or 'latest'})")
+            ax.set_title(f"Index Weights: {target} ({asof or 'latest'})")
             _savefig(fig, out_dir / "weights.png")
         else:
             print("No peers provided; skipping weights plot.")

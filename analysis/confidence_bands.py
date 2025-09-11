@@ -16,9 +16,9 @@ __all__ = [
     "sabr_confidence_bands",
     "tps_confidence_bands",
     "generate_term_structure_confidence_bands",
-    "composite_etf_confidence_bands",
-    "composite_etf_weight_bands",
-    "composite_etf_pillar_bands",
+    "composite_index_confidence_bands",
+    "composite_index_weight_bands",
+    "composite_index_pillar_bands",
 ]
 
 @dataclass
@@ -278,7 +278,7 @@ def generate_term_structure_confidence_bands(
 
 
 # -----------------------------
-# composite ETF (deterministic)
+# composite Index (deterministic)
 # -----------------------------
 def _weighted_quantiles_across_components(
     component_values: np.ndarray, weights: np.ndarray, q_lo: float, q_hi: float
@@ -290,7 +290,7 @@ def _weighted_quantiles_across_components(
     )
 
 
-def composite_etf_pillar_bands(
+def composite_index_pillar_bands(
     atm_data: Dict[str, np.ndarray],
     weights: Dict[str, float],
     pillar_days: np.ndarray,

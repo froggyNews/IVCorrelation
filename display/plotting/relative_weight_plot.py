@@ -4,7 +4,7 @@ Relative-weight plotting without pillars, with configurable weighting modes.
 This module computes correlation-based relative weights across
 implied-volatility surfaces using the first few expiries for each ticker
 (as opposed to fixed pillar days).  It then provides a heatmap and
-optional ETF weight annotations.  You can specify how weights are
+optional Index weight annotations.  You can specify how weights are
 computed via the ``weight_mode`` parameter.
 """
 
@@ -350,7 +350,7 @@ def plot_relative_weight_details(
     Heatmap of the relative-weight (correlation) matrix; optionally show
     weights as annotation.
 
-    Adds a data-quality badge and, if supplied, lists the ETF weights on
+    Adds a data-quality badge and, if supplied, lists the Index weights on
     the right.  The heatmap is labelled “per expiries” to emphasize that
     no pillar selection is used.
     """

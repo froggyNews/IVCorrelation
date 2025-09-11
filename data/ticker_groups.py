@@ -225,19 +225,19 @@ def create_default_groups(conn: Optional[sqlite3.Connection] = None) -> None:
             "group_name": "Semiconductors vs SMH",
             "target_ticker": "SMH",
             "peer_tickers": ["NVDA", "AMD", "INTC", "TSM", "AVGO"],
-            "description": "Major semiconductor stocks vs SMH ETF"
+            "description": "Major semiconductor stocks vs SMH Index"
         },
         {
             "group_name": "QQQ vs Tech",
             "target_ticker": "QQQ",
             "peer_tickers": ["SPY", "XLK", "TQQQ", "IWM"],
-            "description": "QQQ vs other major indices and tech ETFs"
+            "description": "QQQ vs other major indices and tech Indexs"
         },
         {
             "group_name": "Financials vs XLF",
             "target_ticker": "XLF",
             "peer_tickers": ["JPM", "BAC", "WFC", "GS", "MS"],
-            "description": "Major banks vs Financial sector ETF"
+            "description": "Major banks vs Financial sector Index"
         }
     ]
     

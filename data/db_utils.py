@@ -199,7 +199,94 @@ def fetch_quotes(
     
     sql += " ORDER BY ticker, asof_date, expiry, strike, call_put"
     return conn.execute(sql, params).fetchall()
+def fetch_underlyings(
+    conn: sqlite3.Connection,
+    ticker: Optional[str] = None,
+    asof_date: Optional[str] = None,
+    use_most_recent: bool = True,
+    lookback_days: int = 365,
+) -> pd.DataFrame:
+    """
+    Return a time series DataFrame of underlying spots for the last ``lookback_days``.
 
+    Priority is given to the ``underlying_prices`` table (daily closes). If no
+    data is available there, falls back to aggregating ``options_quotes.spot``
+    by day (using AVG) over the same window.
+
+    Columns: [asof_date, ticker, spot]
+
+    Args:
+        conn: SQLite connection
+        ticker: Optional ticker filter (single symbol)
+        asof_date: End date (YYYY-MM-DD). If None and use_most_recent=True,
+            uses the most recent available date (first from underlying_prices,
+            else from options_quotes). If both are missing, uses today.
+        use_most_recent: If True and asof_date is None, resolve to latest
+            available date in DB before computing the lookback window.
+        lookback_days: Number of days to include ending at ``asof_date``.
+    """
+    # Resolve end date
+    if asof_date is None and use_most_recent:
+        # Prefer latest date from underlying_prices, else from options_quotes
+        try:
+            row = conn.execute(
+                "SELECT MAX(asof_date) FROM underlying_prices"
+            ).fetchone()
+            end_date = row[0] if row and row[0] else None
+        except sqlite3.OperationalError:
+            end_date = None
+        if not end_date:
+            end_date = get_most_recent_date(conn, ticker)
+    else:
+        end_date = asof_date
+
+    # Default to today if still None
+    if not end_date:
+        end_date = pd.Timestamp.today().strftime("%Y-%m-%d")
+
+    # Compute start date window
+    end_ts = pd.to_datetime(end_date)
+    start_ts = end_ts - pd.Timedelta(days=int(lookback_days))
+    start_date = start_ts.strftime("%Y-%m-%d")
+
+    # First try underlying_prices (preferred)
+    params = {"start": start_date, "end": end_date}
+    ul_sql = (
+        "SELECT asof_date, ticker, close AS spot "
+        "FROM underlying_prices "
+        "WHERE asof_date BETWEEN :start AND :end"
+    )
+    if ticker:
+        ul_sql += " AND ticker = :ticker"
+        params["ticker"] = ticker
+    ul_sql += " ORDER BY asof_date, ticker"
+
+    df = pd.DataFrame()
+    try:
+        df = pd.read_sql_query(ul_sql, conn, params=params)
+    except Exception:
+        df = pd.DataFrame()
+
+    # Fallback to options_quotes daily aggregation if no UL data
+    if df.empty:
+        oq_sql = (
+            "SELECT asof_date, ticker, AVG(spot) AS spot "
+            "FROM options_quotes "
+            "WHERE spot IS NOT NULL AND asof_date BETWEEN :start AND :end"
+        )
+        if ticker:
+            oq_sql += " AND ticker = :ticker"
+        oq_sql += " GROUP BY asof_date, ticker ORDER BY asof_date, ticker"
+        try:
+            df = pd.read_sql_query(oq_sql, conn, params=params)
+        except Exception:
+            df = pd.DataFrame()
+
+    # Ensure canonical column order/types
+    if not df.empty:
+        df["asof_date"] = pd.to_datetime(df["asof_date"]).dt.date.astype(str)
+        df = df[["asof_date", "ticker", "spot"]]
+    return df
 
 def fetch_vol_shifts(
     conn: sqlite3.Connection,

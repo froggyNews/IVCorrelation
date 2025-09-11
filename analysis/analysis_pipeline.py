@@ -5,7 +5,7 @@ GUI-ready analysis orchestrator (modern, slim).
 This module wires together:
 - ingest (download + persist)
 - surface grid building
-- composite ETF surface & ATM-pillar curves
+- composite Index surface & ATM-pillar curves
 - unified peer-weight computation
 - lightweight smile/term helpers for GUI
 
@@ -34,7 +34,7 @@ from data.interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
 
 from volModel.volModel import VolModel
 
-from .compositeETFBuilder import (
+from .compositeIndexBuilder import (
     build_surface_grids,
     DEFAULT_TENORS,
     DEFAULT_MNY_BINS,
@@ -50,7 +50,7 @@ from .pillars import (
 )
 from .confidence_bands import (
     Bands,
-    composite_etf_pillar_bands,
+    composite_index_pillar_bands,
     svi_confidence_bands,
     sabr_confidence_bands,
     tps_confidence_bands,
@@ -79,7 +79,10 @@ _RO_CONN = None
 @dataclass(frozen=True)
 class PipelineConfig:
     tenors: Tuple[int, ...] = field(default_factory=lambda: DEFAULT_TENORS)
-    mny_bins: Tuple[Tuple[float, float], ...] = field(default_factory=lambda: DEFAULT_MNY_BINS)
+    # Ensure hashable type for lru_cache (tuple of tuples, not list)
+    mny_bins: Tuple[Tuple[float, float], ...] = field(
+        default_factory=lambda: tuple(DEFAULT_MNY_BINS)
+    )
     pillar_days: Tuple[int, ...] = field(default_factory=lambda: tuple(DEFAULT_PILLARS_DAYS))
     use_atm_only: bool = False
     max_expiries: Optional[int] = None
@@ -194,14 +197,14 @@ def compute_peer_weights(
     )
 
 # -----------------------------------------------------------------------------
-# composite ETF constructions
+# composite Index constructions
 # -----------------------------------------------------------------------------
 def build_composite_surface(
     weights: Mapping[str, float],
     cfg: PipelineConfig = PipelineConfig(),
     most_recent_only: bool = True,
 ) -> Dict[pd.Timestamp, pd.DataFrame]:
-    """Create a composite ETF surface from ticker grids + weights."""
+    """Create a composite Index surface from ticker grids + weights."""
     w = {k.upper(): float(v) for k, v in weights.items()}
     surfaces = build_surfaces(tickers=list(w.keys()), cfg=cfg, most_recent_only=most_recent_only)
     return combine_surfaces(surfaces, w)
@@ -805,7 +808,7 @@ def prepare_term_data(
 
     pillar_days = T_common * 365.25
     if ci and ci > 0:
-        composite_bands = composite_etf_pillar_bands(
+        composite_bands = composite_index_pillar_bands(
             atm_data,
             w.to_dict(),
             pillar_days,

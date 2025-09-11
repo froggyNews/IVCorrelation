@@ -31,13 +31,13 @@ from display.plotting.smile_plot import (
     _mny_from_index_labels
 )
 from display.plotting.term_plot import (
-    plot_composite_etf_term_structure,
+    plot_composite_index_term_structure,
     plot_atm_term_structure as plot_atm_term_structure_df,
 )
 from display.plotting.weights_plot import plot_weights
 
 # Surfaces & composite construction
-from analysis.compositeETFBuilder import build_surface_grids, combine_surfaces
+from analysis.compositeIndexBuilder import build_surface_grids, combine_surfaces
 from display.plotting.surface_viewer import (
     show_whole_surface,         # single surface (3D or heatmap)
     show_smile_overlay,         # 2D smile overlay at nearest tenor
@@ -429,8 +429,8 @@ class PlotManager:
 
         # Removed: Target vs Composite (no longer available in UI)
 
-        # --- ETF Weights only ---
-        elif plot_type.startswith("ETF Weights"):
+        # --- Index Weights only ---
+        elif plot_type.startswith("Index Weights"):
             self._clear_correlation_colorbar(ax)
             plot_weights(ax, self.weights)
             return
@@ -972,7 +972,7 @@ class PlotManager:
                     hi=composite_bands.hi,
                     level=composite_bands.level,
                 )
-            plot_composite_etf_term_structure(ax, bands)
+            plot_composite_index_term_structure(ax, bands)
             # restore axis labels overridden by composite plot
             ax.set_xlabel("Time to Expiry (days)" if x_units == "days" else "Time to Expiry (years)")
             ax.set_ylabel("Implied Vol (ATM)")

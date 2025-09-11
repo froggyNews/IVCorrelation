@@ -256,7 +256,7 @@ def plot_composite_index_smile(
     return bands
 
 # Back-compat alias (old name)
-plot_composite_etf_smile = plot_composite_index_smile
+plot_composite_index_smile = plot_composite_index_smile
 
 
 def fit_smile_models_with_bands(S: float, K: np.ndarray, T: float, IV: np.ndarray, 
@@ -743,7 +743,7 @@ def plot_smile_with_composite(ax: plt.Axes, df: pd.DataFrame, target: str, asof:
                     peers_map[t.upper()] = {k: surfaces[t][k]}
 
             if peers_map and target_key is not None and target_key in surfaces[target]:
-                from analysis.compositeETFBuilder import combine_surfaces
+                from analysis.compositeIndexBuilder import combine_surfaces
                 composite_by_date = combine_surfaces(peers_map, weights)
                 
                 if target_key in composite_by_date:

@@ -51,7 +51,7 @@ DEFAULT_OVERLAY = False
 PLOT_TYPES = (
     "Smile (K/S vs IV)",
     "Relative Weight Matrix",
-    "ETF Weights",
+    "Index Weights",
     "ATM Term Structure",
     "Term Smile",
     "3D Vol Surface",
@@ -68,7 +68,7 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
         if feature_mode in ("iv_atm", "ul"):
             return "term"
         return "surface"
-    if plot_type.startswith("ETF Weights"):
+    if plot_type.startswith("Index Weights"):
         return "surface" if feature_mode.startswith("surface") else "term"
     if plot_type.startswith("ATM Term Structure"):
         return "term"

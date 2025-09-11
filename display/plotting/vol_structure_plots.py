@@ -319,7 +319,7 @@ def plot_3d_vol_surface(ticker: str, asof: str,
         matplotlib Figure or None if failed
     """
     try:
-        from analysis.compositeETFBuilder import build_surface_grids
+        from analysis.compositeIndexBuilder import build_surface_grids
         
         # Build surface grid
         surfaces = build_surface_grids(
@@ -413,7 +413,7 @@ def create_vol_dashboard(ticker: str, asof: str,
     ax3 = fig.add_subplot(gs[1, :], projection='3d')
     
     try:
-        from analysis.compositeETFBuilder import build_surface_grids
+        from analysis.compositeIndexBuilder import build_surface_grids
         surfaces = build_surface_grids(tickers=[ticker], use_atm_only=False, max_expiries=12)
         
         if ticker in surfaces:

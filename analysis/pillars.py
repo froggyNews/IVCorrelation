@@ -437,9 +437,11 @@ def _fit_smile_get_atm(
     # --- SVI path ---
     if use_svi and _HAS_SVI:
         try:
-            params = _fit_svi_smile(k, iv, T)  # (a,b,rho,m,sigma)
+            # Correct API: fit on strikes, not k; provide all required args
+            K_obs = np.asarray(mny * S, dtype=float)
+            params = _fit_svi_smile(S=float(S), K=K_obs, T=float(T), iv_obs=np.asarray(iv, dtype=float))  # (a,b,rho,m,sigma)
             def f(kx: float) -> float:
-                return float(_svi_iv(kx, T, *params))
+                return float(_svi_iv(kx, float(T), float(params["a"]), float(params["b"]), float(params["rho"]), float(params["m"]), float(params["sigma"])) )
             atm = f(0.0)
             sk, cu = _finite_diff(f, 0.0, 1e-3)
             yhat = np.array([f(kk) for kk in k])

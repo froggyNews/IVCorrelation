@@ -1,6 +1,6 @@
-from analysis.compositeETFBuilder import combine_surfaces
+from analysis.compositeIndexBuilder import combine_surfaces
 import pandas as pd
-from analysis.compositeETFBuilder import build_surface_grids
+from analysis.compositeIndexBuilder import build_surface_grids
 from analysis.pillars import get_feasible_expiry_pillars, get_target_expiry_pillars
 from analysis.model_params_logger import compute_or_load, WarmupWorker
 
